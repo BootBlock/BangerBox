@@ -13,6 +13,7 @@ import { useMixerStore, useUIStore } from '@/store';
 import { LEVEL_RANGE } from '@/core/project/schemas';
 import { installAudioProbe } from './audioProbe';
 import { MeterCanvas } from './primitives/MeterCanvas';
+import { SequencerTransport } from './SequencerTransport';
 
 type EngineStatus = 'idle' | 'starting' | 'running' | 'suspended';
 
@@ -150,6 +151,8 @@ export function AudioEnginePanel() {
               Metronome click
             </button>
           </div>
+
+          <SequencerTransport />
         </div>
       )}
     </section>

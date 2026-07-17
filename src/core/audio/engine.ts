@@ -54,6 +54,8 @@ export class AudioEngine {
   private demoBuffer: AudioBuffer | null = null;
   private playheadRaf: number | null = null;
   private lastCoarseAt = 0;
+  /** Count of scheduled notes the dispatcher has realised (test probe, §11.4). */
+  private scheduledNotes = 0;
   private initialised = false;
 
   constructor(readonly context: AudioContext) {
@@ -127,6 +129,11 @@ export class AudioEngine {
     return this.playheadReader.read().currentTick;
   }
 
+  /** Total scheduled notes realised by the dispatcher — for the §11.4 record/play smoke. */
+  scheduledNoteCount(): number {
+    return this.scheduledNotes;
+  }
+
   dispose(): void {
     if (this.playheadRaf !== null && typeof cancelAnimationFrame === 'function') {
       cancelAnimationFrame(this.playheadRaf);
@@ -148,12 +155,17 @@ export class AudioEngine {
 
   // --------------------------------------------------------------- internals ---
 
-  /** Clock sync source for the worker (spec §7.1.2). */
+  /**
+   * Clock sync source for the worker (spec §7.1.2). `performanceTime` is sent in the
+   * absolute-epoch domain (`timeOrigin + performance.now()`) so the offset survives the
+   * worker's independent `performance.timeOrigin` — the worker estimates in the same
+   * absolute domain (see `scheduler.worker.ts`). See spec §14 (2026-07-17 (f)).
+   */
   private clockPair(): { contextTime: number; performanceTime: number } {
     const timestamp = this.context.getOutputTimestamp();
     return {
       contextTime: timestamp.contextTime ?? this.context.currentTime,
-      performanceTime: timestamp.performanceTime ?? performance.now(),
+      performanceTime: performance.timeOrigin + (timestamp.performanceTime ?? performance.now()),
     };
   }
 
@@ -185,6 +197,7 @@ export class AudioEngine {
    */
   private triggerScheduledNote(event: ScheduledEvent): void {
     if (!this.demoBuffer || event.trackId === undefined || event.note === undefined) return;
+    this.scheduledNotes++;
     const track = this.graph.ensureTrackChannel(event.trackId);
     // STUB(phase-5): one demo pad channel per (track, note) — real program routing follows.
     const pad = this.graph.ensurePadChannel(`pad:${event.trackId}:${event.note}`, track.input);

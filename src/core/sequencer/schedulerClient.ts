@@ -94,7 +94,9 @@ export class SchedulerClient {
     this.#send({ kind: 'sequenceMeta', sequences, projectBpm, activeSequenceId, playbackMode });
   }
   sendLiveNote(note: number, velocity: number, on: boolean, timestamp: number, trackId: string): void {
-    this.#send({ kind: 'liveNote', note, velocity, on, timestamp, trackId });
+    // `timestamp` is a `performance.now()`-domain reading (spec §10.1); convert to the
+    // absolute-epoch domain the worker clock model uses (spec §14 2026-07-17 (f)).
+    this.#send({ kind: 'liveNote', note, velocity, on, timestamp: performance.timeOrigin + timestamp, trackId });
   }
   setNoteRepeat(enabled: boolean, division: NoteRepeatDivision): void {
     this.#send({ kind: 'noteRepeat', enabled, division });

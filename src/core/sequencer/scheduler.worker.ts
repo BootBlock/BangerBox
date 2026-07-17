@@ -93,7 +93,9 @@ function startLoop(): void {
 /** One scheduler wake (spec §7.1.4): estimate context time, tick, publish, post. */
 function wake(): void {
   if (!clock.hasSync) return; // no clock model yet — nothing to schedule against
-  const now = clock.estimateContextTime(performance.now());
+  // Estimate in the absolute-epoch domain so this worker's independent `timeOrigin`
+  // cancels against the main thread's (spec §7.1.2, §14 2026-07-17 (f)).
+  const now = clock.estimateContextTime(performance.timeOrigin + performance.now());
   const result = core.tick(now);
 
   if (result.batch.length > 0) post({ kind: 'scheduleBatch', events: result.batch });
