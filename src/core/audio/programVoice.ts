@@ -25,6 +25,7 @@ import type {
   Program,
   VelocityLayer,
 } from '@/core/project/schemas';
+import type { VoiceTriggerSpec } from './voicePool';
 
 /** The pad-channel mixer sub-object shared by pads and keygroup programs (spec §6). */
 interface VoiceMixer {
@@ -194,4 +195,46 @@ export function resolveVoice(program: Program, note: number, velocity: number): 
   return program.type === 'drum'
     ? resolveDrumVoice(program, note, velocity)
     : resolveKeygroupVoice(program, note, velocity);
+}
+
+/** Runtime particulars a {@link ResolvedVoice} needs to become a voice-pool trigger (spec §6). */
+export interface VoiceTriggerParams {
+  readonly id: string;
+  readonly buffer: AudioBuffer;
+  readonly destination: AudioNode;
+  readonly when: number;
+  readonly velocity: number;
+  readonly programId: string;
+}
+
+/**
+ * Map a resolved §6 voice + runtime particulars to a voice-pool trigger spec (spec §5.4).
+ * The whole coupled repitch is carried in `tuneCents`; the §6 sound-design surface (filter,
+ * envelopes, LFOs, mod matrix, polyphony, glide) is forwarded so the pool builds the voice.
+ * Shared by the engine dispatcher and the offline pitch renders so they never diverge.
+ */
+export function resolvedVoiceToTrigger(resolved: ResolvedVoice, params: VoiceTriggerParams): VoiceTriggerSpec {
+  return {
+    id: params.id,
+    buffer: params.buffer,
+    destination: params.destination,
+    when: params.when,
+    velocity: params.velocity,
+    playbackMode: resolved.playbackMode,
+    chokeGroup: resolved.chokeGroup,
+    programId: params.programId,
+    padKey: resolved.padKey,
+    amp: resolved.envelopes.amp,
+    gainDb: resolved.gainDb,
+    tuneSemitones: 0,
+    tuneCents: resolved.detuneCents,
+    filter: resolved.filter,
+    pitchEnv: resolved.envelopes.pitch,
+    filterEnv: resolved.envelopes.filter,
+    pitchEnvSemitones: resolved.pitchEnvSemitones,
+    lfos: resolved.lfos,
+    modMatrix: resolved.modMatrix,
+    programPolyphony: resolved.polyphony,
+    glideMs: resolved.glideMs,
+  };
 }

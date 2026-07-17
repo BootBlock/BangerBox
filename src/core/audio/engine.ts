@@ -27,7 +27,7 @@ import { MixerGraph } from './graph';
 import { MeterRegistry } from './metering';
 import { Metronome } from './metronome';
 import { PreviewChannel } from './preview';
-import { resolveVoice, type ResolvedVoice } from './programVoice';
+import { resolvedVoiceToTrigger, resolveVoice, type ResolvedVoice } from './programVoice';
 import { SampleCache } from './sampleCache';
 import { VoicePool } from './voicePool';
 
@@ -228,29 +228,16 @@ export class AudioEngine {
     const channel = this.ensureProgramChannel(trackId, resolved);
     const play = (buffer: AudioBuffer): void => {
       this.scheduledNotes++;
-      this.voicePool.trigger({
-        id: crypto.randomUUID(),
-        buffer,
-        destination: channel.input,
-        when: event.when,
-        velocity: event.velocity ?? 100,
-        playbackMode: resolved.playbackMode,
-        chokeGroup: resolved.chokeGroup,
-        programId,
-        padKey: resolved.padKey,
-        amp: resolved.envelopes.amp,
-        gainDb: resolved.gainDb,
-        tuneSemitones: 0,
-        tuneCents: resolved.detuneCents, // whole coupled repitch carried as cents (spec §6)
-        filter: resolved.filter,
-        pitchEnv: resolved.envelopes.pitch,
-        filterEnv: resolved.envelopes.filter,
-        pitchEnvSemitones: resolved.pitchEnvSemitones,
-        lfos: resolved.lfos,
-        modMatrix: resolved.modMatrix,
-        programPolyphony: resolved.polyphony,
-        glideMs: resolved.glideMs,
-      });
+      this.voicePool.trigger(
+        resolvedVoiceToTrigger(resolved, {
+          id: crypto.randomUUID(),
+          buffer,
+          destination: channel.input,
+          when: event.when,
+          velocity: event.velocity ?? 100,
+          programId,
+        }),
+      );
     };
     const cached = this.programBuffers.get(resolved.sampleId);
     if (cached) {

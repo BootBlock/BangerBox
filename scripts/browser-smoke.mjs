@@ -241,6 +241,31 @@ async function assertShellAndSelfTest(page, label) {
     }
   });
 
+  // Phase 5 exit criteria (spec §12): velocity-layer switching is audible and keygroup pitch
+  // is accurate — both proven by offline renders through the real resolution + voice path.
+  await step(`${label}: velocity switches the layer, changing pitch (spec §12)`, async () => {
+    const { soft, hard } = await page.evaluate(() =>
+      globalThis.__bangerboxAudioProbe.velocityLayerPitches(),
+    );
+    if (!(soft > 0) || !(hard > 0)) throw new Error(`layer render silent (soft ${soft}, hard ${hard})`);
+    // Hard layer is tuned +12 semitones → about one octave (2×) above the soft layer.
+    const ratio = hard / soft;
+    if (!(ratio > 1.8 && ratio < 2.2)) {
+      throw new Error(`velocity did not switch layers: hard/soft pitch ratio ${ratio.toFixed(3)} (expected ~2)`);
+    }
+  });
+
+  await step(`${label}: keygroup repitches accurately across an octave (spec §12)`, async () => {
+    const { root, octave } = await page.evaluate(() =>
+      globalThis.__bangerboxAudioProbe.keygroupPitches(),
+    );
+    if (!(root > 0) || !(octave > 0)) throw new Error(`keygroup render silent (root ${root}, octave ${octave})`);
+    const ratio = octave / root;
+    if (!(ratio > 1.94 && ratio < 2.06)) {
+      throw new Error(`keygroup octave pitch ratio ${ratio.toFixed(3)} (expected ~2.0)`);
+    }
+  });
+
   // The transport UI is wired end to end (spec §3.4): Play drives the scheduler and the
   // playhead SAB advances (spec §7.1.4).
   await step(`${label}: transport UI advances the playhead (spec §3.4)`, async () => {
