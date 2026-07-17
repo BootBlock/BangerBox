@@ -71,6 +71,11 @@ export function createAudioBridge({ graph, context }: BridgeTarget): AudioBridge
     applyAutomation: (targetPath, value, when) => {
       const target = parseParamTarget(targetPath);
       if (!target) return;
+      if (target.kind === 'programParam') {
+        // STUB(phase-7): per-voice program-parameter automation (spec §6/§7.8) applies with
+        // the Program mixer/automation surface; the address grammar is registered now (§7.8).
+        return;
+      }
       const channel = graph.getChannel(target.channelId);
       if (!channel) return;
       switch (target.kind) {
