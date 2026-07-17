@@ -6,11 +6,11 @@
 
 ## 0. Document Status, Authority & Maintenance
 
-* **Single source of truth.** This document is the absolute specification and implementation guide for an autonomous AI agent building BangerBox. All architectural plans, schemas, execution phases, and hardware integration requirements reside in this single file (`docs/todo/_spec.md`). Do not split it across multiple files. Companion *outputs* (e.g. `docs/dev/PHASE_HANDOVER.md`, §13.1) are permitted; companion *specifications* are not.
-* **Requirement language.** **MUST / MUST NOT** are binding; **SHOULD** is binding unless a documented reason to deviate is recorded in §14; **MAY** is optional. "Forbidden" means the agent halts rather than doing it.
-* **Completeness rule.** Every technical constraint, schema field, and execution step herein is binding. When editing this document, preserve all technical content — restructure freely, but never silently drop a constraint. Record every substantive change in the Changelog (§14).
-* **Conflict resolution.** If two sections appear to conflict, the more specific section wins; if still ambiguous, the Locked Decisions (§1.3) win; if still ambiguous, halt and ask the human developer (§13.3.2).
-* **Stable numbering.** Section numbers are permanent anchors — code comments reference them (`// spec §7.1.4`, §13.6). When editing, append new subsections rather than renumbering existing ones.
+- **Single source of truth.** This document is the absolute specification and implementation guide for an autonomous AI agent building BangerBox. All architectural plans, schemas, execution phases, and hardware integration requirements reside in this single file (`docs/todo/_spec.md`). Do not split it across multiple files. Companion _outputs_ (e.g. `docs/dev/PHASE_HANDOVER.md`, §13.1) are permitted; companion _specifications_ are not.
+- **Requirement language.** **MUST / MUST NOT** are binding; **SHOULD** is binding unless a documented reason to deviate is recorded in §14; **MAY** is optional. "Forbidden" means the agent halts rather than doing it.
+- **Completeness rule.** Every technical constraint, schema field, and execution step herein is binding. When editing this document, preserve all technical content — restructure freely, but never silently drop a constraint. Record every substantive change in the Changelog (§14).
+- **Conflict resolution.** If two sections appear to conflict, the more specific section wins; if still ambiguous, the Locked Decisions (§1.3) win; if still ambiguous, halt and ask the human developer (§13.3.2).
+- **Stable numbering.** Section numbers are permanent anchors — code comments reference them (`// spec §7.1.4`, §13.6). When editing, append new subsections rather than renumbering existing ones.
 
 ## 1. Introduction
 
@@ -20,17 +20,17 @@ BangerBox is an **offline-first, browser-based Digital Audio Workstation, sequen
 
 ### 1.2 Core Principles
 
-* **No monolithic files, no God objects.** Code is modular, separated by feature and responsibility (§2.5, §3.1).
-* **Performance first.** Sample-accurate timing, AudioWorklets for heavy DSP, SharedArrayBuffer for high-frequency Worklet→UI data, canvas + `requestAnimationFrame` for all metering and playheads (§3.3, §5.5).
-* **Offline first.** The application MUST function fully with the network disabled: Vite-built PWA, Service Worker precache, OPFS, WASM SQLite. No cloud dependency of any kind.
-* **Unidirectional data flow.** UI → Zustand → sync layer → audio graph. Nothing skips a step (§3.1).
-* **Strict phasing.** Every implementation phase (§12) completes its exit criteria and passes the Multi-Lens Review (§3.5) before the next begins.
-* **British English.** All source code identifiers, comments, documentation, and UI labels use British English spelling (initialisation, synchronise, behaviour, colour). The locale is `en-GB`.
-* **Premium, tactile aesthetic.** The interface must feel like high-end hardware, not a static web page: immediate touch feedback, purposeful motion, dense-but-legible layouts (§8.3).
+- **No monolithic files, no God objects.** Code is modular, separated by feature and responsibility (§2.5, §3.1).
+- **Performance first.** Sample-accurate timing, AudioWorklets for heavy DSP, SharedArrayBuffer for high-frequency Worklet→UI data, canvas + `requestAnimationFrame` for all metering and playheads (§3.3, §5.5).
+- **Offline first.** The application MUST function fully with the network disabled: Vite-built PWA, Service Worker precache, OPFS, WASM SQLite. No cloud dependency of any kind.
+- **Unidirectional data flow.** UI → Zustand → sync layer → audio graph. Nothing skips a step (§3.1).
+- **Strict phasing.** Every implementation phase (§12) completes its exit criteria and passes the Multi-Lens Review (§3.5) before the next begins.
+- **British English.** All source code identifiers, comments, documentation, and UI labels use British English spelling (initialisation, synchronise, behaviour, colour). The locale is `en-GB`.
+- **Premium, tactile aesthetic.** The interface must feel like high-end hardware, not a static web page: immediate touch feedback, purposeful motion, dense-but-legible layouts (§8.3).
 
 ### 1.3 Resolved Clarifications & Locked Decisions
 
-*The following decisions resolve every ambiguity in the superseded draft. They are **binding for all phases** and MUST be restated in every `PHASE_HANDOVER.md` (§13.1). Where a decision refines an earlier open option, the governing section is cited. They may be revised only by the human developer, recorded in §14.*
+_The following decisions resolve every ambiguity in the superseded draft. They are **binding for all phases** and MUST be restated in every `PHASE_HANDOVER.md` (§13.1). Where a decision refines an earlier open option, the governing section is cited. They may be revised only by the human developer, recorded in §14._
 
 1. **Project name: BangerBox.** Package name `bangerbox`. The working title "WEB-MPC" is retired.
 2. **Package manager: npm.** Committed `package-lock.json`; no pnpm/yarn/bun lockfiles. Node ≥ 24 (`engines` field; the dev machine runs Node 25).
@@ -54,34 +54,34 @@ BangerBox is an **offline-first, browser-based Digital Audio Workstation, sequen
 
 #### 1.3.1 Derived Defaults (Not Separately Polled)
 
-* 128 drum pads per drum program (8 banks × 16); pad index = MIDI note 0–127 (`bank × 16 + padIndex`).
-* 4 send/return channels; 4 insert slots per pad, per track, and on the master (configurable 1–8 via `globalInsertLimit`).
-* Default velocity layers per pad: up to 4 (soft-configurable to 8).
-* Minimum 4 concurrent keygroup programs (user-configurable upward).
-* Global polyphony 64 voices (§5.4).
-* Undo history capped at 100 entries (§4.5).
-* Q-Link hardware encoders: 4 by default, supported up to 16 (§10.3).
-* en-GB locale for all formatting (`Intl.*`; no date/number libraries).
-* UUIDs via `crypto.randomUUID()` — the `uuid` package is forbidden.
+- 128 drum pads per drum program (8 banks × 16); pad index = MIDI note 0–127 (`bank × 16 + padIndex`).
+- 4 send/return channels; 4 insert slots per pad, per track, and on the master (configurable 1–8 via `globalInsertLimit`).
+- Default velocity layers per pad: up to 4 (soft-configurable to 8).
+- Minimum 4 concurrent keygroup programs (user-configurable upward).
+- Global polyphony 64 voices (§5.4).
+- Undo history capped at 100 entries (§4.5).
+- Q-Link hardware encoders: 4 by default, supported up to 16 (§10.3).
+- en-GB locale for all formatting (`Intl.*`; no date/number libraries).
+- UUIDs via `crypto.randomUUID()` — the `uuid` package is forbidden.
 
 ### 1.4 Non-Goals (v1)
 
-Explicitly out of scope — the agent MUST NOT build bridging code for these: cloud sync or any network feature beyond PWA asset caching; multi-user collaboration; VST/plugin hosting; MIDI *output* to external gear; audio-interface input tracks beyond the Looper (§8.5.8); video; notation; internationalisation beyond en-GB (all strings are plain literals — no i18n framework); mobile-phone form factors (tablet/desktop only); Firefox/Safari support.
+Explicitly out of scope — the agent MUST NOT build bridging code for these: cloud sync or any network feature beyond PWA asset caching; multi-user collaboration; VST/plugin hosting; MIDI _output_ to external gear; audio-interface input tracks beyond the Looper (§8.5.8); video; notation; internationalisation beyond en-GB (all strings are plain literals — no i18n framework); mobile-phone form factors (tablet/desktop only); Firefox/Safari support.
 
 ### 1.5 Glossary
 
-| Term | Meaning |
-| --- | --- |
-| **PPQN** | Pulses Per Quarter Note — the sequencer's internal tick resolution (960). |
-| **Pad** | One of 128 trigger cells in a drum program, owning layers, envelopes, LFOs, mod matrix, and mixer parameters. |
-| **Program** | A playable instrument definition (Drum or Keygroup) targeted by tracks. |
-| **Sequence** | A pattern: a set of tracks with MIDI events and sequence-scoped automation, with its own length/tempo/swing. |
-| **Track** | A lane inside a sequence holding MIDI events, targeting one program, with its own mixer channel. |
-| **Q-Link** | A context-aware mapping from a hardware encoder to an application parameter (§10.3). |
-| **Choke group** | Pads sharing a group number cut each other off (e.g. closed hat chokes open hat). |
-| **OPFS** | Origin Private File System — browser-private persistent storage for audio blobs and the SQLite file. |
-| **SAB** | SharedArrayBuffer — shared memory between threads, used with `Atomics`. |
-| **PDC** | Plugin Delay Compensation — delaying parallel dry paths to match effect latency (§5.7.3). |
+| Term            | Meaning                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------- |
+| **PPQN**        | Pulses Per Quarter Note — the sequencer's internal tick resolution (960).                                     |
+| **Pad**         | One of 128 trigger cells in a drum program, owning layers, envelopes, LFOs, mod matrix, and mixer parameters. |
+| **Program**     | A playable instrument definition (Drum or Keygroup) targeted by tracks.                                       |
+| **Sequence**    | A pattern: a set of tracks with MIDI events and sequence-scoped automation, with its own length/tempo/swing.  |
+| **Track**       | A lane inside a sequence holding MIDI events, targeting one program, with its own mixer channel.              |
+| **Q-Link**      | A context-aware mapping from a hardware encoder to an application parameter (§10.3).                          |
+| **Choke group** | Pads sharing a group number cut each other off (e.g. closed hat chokes open hat).                             |
+| **OPFS**        | Origin Private File System — browser-private persistent storage for audio blobs and the SQLite file.          |
+| **SAB**         | SharedArrayBuffer — shared memory between threads, used with `Atomics`.                                       |
+| **PDC**         | Plugin Delay Compensation — delaying parallel dry paths to match effect latency (§5.7.3).                     |
 
 ## 2. Target Environment, Stack & Project Configuration
 
@@ -89,8 +89,8 @@ Explicitly out of scope — the agent MUST NOT build bridging code for these: cl
 
 On startup, **before** any store hydration or audio code, the app MUST run a capability gate that feature-detects:
 
-* **Hard requirements** (missing ⇒ render a friendly, styled blocking screen explaining exactly what is missing and which browser to use; nothing else loads): `crossOriginIsolated === true`, `SharedArrayBuffer`, `AudioWorklet`, `navigator.storage.getDirectory` (OPFS), `WebAssembly`, `Atomics`.
-* **Soft requirements** (missing ⇒ feature is hidden/disabled with an explanatory tooltip, app still runs): `navigator.bluetooth` (hardware mode), `navigator.mediaDevices.getUserMedia` (Looper mic source), `navigator.storage.persist`, Screen Wake Lock.
+- **Hard requirements** (missing ⇒ render a friendly, styled blocking screen explaining exactly what is missing and which browser to use; nothing else loads): `crossOriginIsolated === true`, `SharedArrayBuffer`, `AudioWorklet`, `navigator.storage.getDirectory` (OPFS), `WebAssembly`, `Atomics`.
+- **Soft requirements** (missing ⇒ feature is hidden/disabled with an explanatory tooltip, app still runs): `navigator.bluetooth` (hardware mode), `navigator.mediaDevices.getUserMedia` (Looper mic source), `navigator.storage.persist`, Screen Wake Lock.
 
 All feature detection lives in `src/core/platform/capabilities.ts` and is executed exactly once; results are frozen into `useUIStore.capabilities`.
 
@@ -100,17 +100,17 @@ The dependency surface is **closed**: only the packages below may appear in `pac
 
 **Runtime dependencies**
 
-| Package | Purpose |
-| --- | --- |
-| `react`, `react-dom` | UI (React 19, functional components + hooks only) |
-| `zustand` | State management (modular slices, `subscribeWithSelector`) |
-| `zod` | Runtime schema validation |
-| `@sqlite.org/sqlite-wasm` | Durable store (worker-hosted, OPFS VFS) |
-| `fflate` | `.mpcweb` zip pack/unpack in a worker |
-| `motion` | Animation (`motion/react`) |
-| `lucide-react` | Icons (via the `src/ui/icons.ts` registry only) |
-| `clsx`, `tailwind-merge`, `class-variance-authority` | Class composition for primitives |
-| `react-error-boundary` | Global error boundary / Safe Mode (§8.1) |
+| Package                                              | Purpose                                                    |
+| ---------------------------------------------------- | ---------------------------------------------------------- |
+| `react`, `react-dom`                                 | UI (React 19, functional components + hooks only)          |
+| `zustand`                                            | State management (modular slices, `subscribeWithSelector`) |
+| `zod`                                                | Runtime schema validation                                  |
+| `@sqlite.org/sqlite-wasm`                            | Durable store (worker-hosted, OPFS VFS)                    |
+| `fflate`                                             | `.mpcweb` zip pack/unpack in a worker                      |
+| `motion`                                             | Animation (`motion/react`)                                 |
+| `lucide-react`                                       | Icons (via the `src/ui/icons.ts` registry only)            |
+| `clsx`, `tailwind-merge`, `class-variance-authority` | Class composition for primitives                           |
+| `react-error-boundary`                               | Global error boundary / Safe Mode (§8.1)                   |
 
 **Dev dependencies:** `vite`, `@vitejs/plugin-react`, `typescript` (strict), `tailwindcss` + `@tailwindcss/vite`, `vite-plugin-pwa`, `assemblyscript`, `vitest`, `happy-dom`, `@testing-library/react` (+ `user-event`, `jest-dom`), `playwright`, `eslint` (+ `typescript-eslint`, `eslint-plugin-react-hooks`, `eslint-plugin-jsx-a11y`, `eslint-config-prettier`), `prettier`, `@types/*`.
 
@@ -134,11 +134,11 @@ The dependency surface is **closed**: only the packages below may appear in `pac
 
 ### 2.4 PWA Manifest & Service Worker
 
-* **Manifest:** `id`/`scope`/`start_url` `/`; `name` "BangerBox"; `short_name` "BangerBox"; `display: 'standalone'`; `orientation: 'landscape'` (primary form factor is a landscape tablet); `lang: 'en-GB'`; dark `theme_color`/`background_color` matching the design tokens; SVG master icon + 192/512 PNG + separate 512 maskable PNG (generated by a `scripts/generate-icons.mjs` from a single glyph — never reuse the `any` icon as `maskable`).
-* **Service worker (`src/sw.ts`):** custom `injectManifest` worker handling precache + offline navigation fallback. Update flow is **prompt-based**: a new build waits until the user accepts a "Reload to update" toast — never reload out from under an unsaved project.
-* **Update prompt component** registers via `virtual:pwa-register` in app code.
-* The SW MUST NOT intercept OPFS or blob URLs; it caches only the static app shell. Audio data never transits the SW.
-* **Wake Lock:** while the transport is playing or recording, request a Screen Wake Lock (feature-detected, released on stop/blur).
+- **Manifest:** `id`/`scope`/`start_url` `/`; `name` "BangerBox"; `short_name` "BangerBox"; `display: 'standalone'`; `orientation: 'landscape'` (primary form factor is a landscape tablet); `lang: 'en-GB'`; dark `theme_color`/`background_color` matching the design tokens; SVG master icon + 192/512 PNG + separate 512 maskable PNG (generated by a `scripts/generate-icons.mjs` from a single glyph — never reuse the `any` icon as `maskable`).
+- **Service worker (`src/sw.ts`):** custom `injectManifest` worker handling precache + offline navigation fallback. Update flow is **prompt-based**: a new build waits until the user accepts a "Reload to update" toast — never reload out from under an unsaved project.
+- **Update prompt component** registers via `virtual:pwa-register` in app code.
+- The SW MUST NOT intercept OPFS or blob URLs; it caches only the static app shell. Audio data never transits the SW.
+- **Wake Lock:** while the transport is playing or recording, request a Screen Wake Lock (feature-detected, released on stop/blur).
 
 ### 2.5 Repository Layout (Strict)
 
@@ -187,67 +187,67 @@ Pure logic (PPQN maths, swing, groove, BLE parsing, mod-matrix evaluation, AST-f
 
 All timing/behaviour constants live in `src/core/constants.ts` — never as magic numbers at call sites:
 
-| Constant | Value | Meaning |
-| --- | --- | --- |
-| `PPQN` | 960 | Sequencer resolution |
-| `LOOKAHEAD_MS` | 100 | Scheduler lookahead window |
-| `SCHEDULER_INTERVAL_MS` | 25 | Worker scheduling wake interval |
-| `CLOCK_SYNC_INTERVAL_MS` | 250 | Main→worker clock model refresh |
-| `VOICE_STEAL_FADE_MS` | 5 | Fade applied to a stolen voice |
-| `CHOKE_FADE_MS` | 20 | Fade applied to choked pads |
-| `PARAM_RAMP_MS` | 10 | Dezipper ramp for live parameter changes |
-| `MAX_VOICES` | 64 | Global voice pool size |
-| `AUTOSAVE_DEBOUNCE_MS` | 2000 | Write-behind autosave debounce |
-| `CC_THROTTLE_MS` | 16 | Min interval between applied CC updates per controller |
-| `UNDO_LIMIT` | 100 | Undo stack depth |
+| Constant                 | Value | Meaning                                                |
+| ------------------------ | ----- | ------------------------------------------------------ |
+| `PPQN`                   | 960   | Sequencer resolution                                   |
+| `LOOKAHEAD_MS`           | 100   | Scheduler lookahead window                             |
+| `SCHEDULER_INTERVAL_MS`  | 25    | Worker scheduling wake interval                        |
+| `CLOCK_SYNC_INTERVAL_MS` | 250   | Main→worker clock model refresh                        |
+| `VOICE_STEAL_FADE_MS`    | 5     | Fade applied to a stolen voice                         |
+| `CHOKE_FADE_MS`          | 20    | Fade applied to choked pads                            |
+| `PARAM_RAMP_MS`          | 10    | Dezipper ramp for live parameter changes               |
+| `MAX_VOICES`             | 64    | Global voice pool size                                 |
+| `AUTOSAVE_DEBOUNCE_MS`   | 2000  | Write-behind autosave debounce                         |
+| `CC_THROTTLE_MS`         | 16    | Min interval between applied CC updates per controller |
+| `UNDO_LIMIT`             | 100   | Undo stack depth                                       |
 
 ### 2.7 Pinned API Contract (Anti-Hallucination Reference)
 
-LLM agents reliably hallucinate *plausible* API shapes from outdated training data. The forms below are the **only** correct ones for this project's dependency majors. The general rule is binding: **never write a library call from memory** — when uncertain, read the installed package's `.d.ts` under `node_modules/`, or the working usage in the Gubbins reference repo (`P:\Source\TypeScript\Gubbins`), before writing the call site. If reality (installed types, runtime behaviour) contradicts this table, that is a Halt & Query (§13.3.2) — correct the table via §14, never silently improvise.
+LLM agents reliably hallucinate _plausible_ API shapes from outdated training data. The forms below are the **only** correct ones for this project's dependency majors. The general rule is binding: **never write a library call from memory** — when uncertain, read the installed package's `.d.ts` under `node_modules/`, or the working usage in the Gubbins reference repo (`P:\Source\TypeScript\Gubbins`), before writing the call site. If reality (installed types, runtime behaviour) contradicts this table, that is a Halt & Query (§13.3.2) — correct the table via §14, never silently improvise.
 
-| Concern | Canonical form | Known hallucination to avoid |
-| --- | --- | --- |
-| Animation | `import { motion, AnimatePresence } from 'motion/react'` | `from 'framer-motion'` (retired package name) |
-| SQLite init (worker only) | `import sqlite3InitModule from '@sqlite.org/sqlite-wasm'` → `const sqlite3 = await sqlite3InitModule(...)` → `new sqlite3.oo1.OpfsDb('/bangerbox.sqlite3')` — see Gubbins' DB worker for the proven bootstrap | wa-sqlite / sql.js API shapes; opening the OPFS DB outside the worker |
-| Tailwind 4 | CSS-first: `@import 'tailwindcss';` + `@theme { … }` token blocks in `src/styles/index.css`; Vite plugin `@tailwindcss/vite` | v3-era `tailwind.config.js`, `content` arrays, `@tailwind base/components/utilities` directives |
-| Zustand 5 | `export const useXStore = create<XState>()(subscribeWithSelector((set, get) => ({ … })))` (curried `create`) | v3/v4 non-curried middleware patterns; default-export stores |
-| React 19 | `createRoot(el).render(<App />)`; function components + hooks only | `ReactDOM.render`, class components, `PropTypes` |
-| PWA registration | `virtual:pwa-register` module imported in app code (see §2.4) | hand-rolled inline `navigator.serviceWorker.register` scripts |
-| Worklet loading | `audioContext.audioWorklet.addModule(new URL('./x.worklet.ts', import.meta.url))` | blob-URL workers/worklets (break under strict COEP) |
-| WASM → worklet | compile `WebAssembly.Module` on the main thread; pass it via `processorOptions`; instantiate inside the processor constructor (§5.6.2) | `fetch()` inside `AudioWorkletGlobalScope` (does not exist there) |
-| Clock sync source | `audioContext.getOutputTimestamp()` → `{ contextTime, performanceTime }` (§7.1.2) | reading `audioContext.currentTime` from a worker |
-| AssemblyScript build | `asc` with `--runtime stub -O3` (release); manual buffer lifetime via `heap.alloc` / `heap.free` | the default incremental-GC runtime (GC in the render path defeats the purpose) |
-| UUIDs | `crypto.randomUUID()` | the `uuid` package |
-| Playwright | `chromium.launch({ channel: 'msedge' })` (system browser) | downloading a bundled Chromium |
+| Concern                   | Canonical form                                                                                                                                                                                                | Known hallucination to avoid                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Animation                 | `import { motion, AnimatePresence } from 'motion/react'`                                                                                                                                                      | `from 'framer-motion'` (retired package name)                                                   |
+| SQLite init (worker only) | `import sqlite3InitModule from '@sqlite.org/sqlite-wasm'` → `const sqlite3 = await sqlite3InitModule(...)` → `new sqlite3.oo1.OpfsDb('/bangerbox.sqlite3')` — see Gubbins' DB worker for the proven bootstrap | wa-sqlite / sql.js API shapes; opening the OPFS DB outside the worker                           |
+| Tailwind 4                | CSS-first: `@import 'tailwindcss';` + `@theme { … }` token blocks in `src/styles/index.css`; Vite plugin `@tailwindcss/vite`                                                                                  | v3-era `tailwind.config.js`, `content` arrays, `@tailwind base/components/utilities` directives |
+| Zustand 5                 | `export const useXStore = create<XState>()(subscribeWithSelector((set, get) => ({ … })))` (curried `create`)                                                                                                  | v3/v4 non-curried middleware patterns; default-export stores                                    |
+| React 19                  | `createRoot(el).render(<App />)`; function components + hooks only                                                                                                                                            | `ReactDOM.render`, class components, `PropTypes`                                                |
+| PWA registration          | `virtual:pwa-register` module imported in app code (see §2.4)                                                                                                                                                 | hand-rolled inline `navigator.serviceWorker.register` scripts                                   |
+| Worklet loading           | `audioContext.audioWorklet.addModule(new URL('./x.worklet.ts', import.meta.url))`                                                                                                                             | blob-URL workers/worklets (break under strict COEP)                                             |
+| WASM → worklet            | compile `WebAssembly.Module` on the main thread; pass it via `processorOptions`; instantiate inside the processor constructor (§5.6.2)                                                                        | `fetch()` inside `AudioWorkletGlobalScope` (does not exist there)                               |
+| Clock sync source         | `audioContext.getOutputTimestamp()` → `{ contextTime, performanceTime }` (§7.1.2)                                                                                                                             | reading `audioContext.currentTime` from a worker                                                |
+| AssemblyScript build      | `asc` with `--runtime stub -O3` (release); manual buffer lifetime via `heap.alloc` / `heap.free`                                                                                                              | the default incremental-GC runtime (GC in the render path defeats the purpose)                  |
+| UUIDs                     | `crypto.randomUUID()`                                                                                                                                                                                         | the `uuid` package                                                                              |
+| Playwright                | `chromium.launch({ channel: 'msedge' })` (system browser)                                                                                                                                                     | downloading a bundled Chromium                                                                  |
 
 ## 3. Strict Engineering Guardrails
 
 ### 3.1 Architecture Rules
 
-* **Unidirectional flow (strict):** UI components MUST NEVER mutate AudioNodes, worker state, or the DB directly. Correct flow: *UI action → Zustand store action → sync layer (`subscribeWithSelector` subscribers) → audio graph / scheduler worker / repository*. The single exception is read-only rAF rendering (meters/playheads) reading SABs (§3.3).
-* **Composition over inheritance.** React functional components with custom hooks; instruments composed from small pure DSP nodes and factories, never large classes with inheritance trees.
-* **Repository pattern.** React code never contains SQL. All SQL lives in `src/core/storage/repositories/*`, called through the typed RPC bridge into the DB worker.
-* **Strategic YAGNI.** Implement the extensible architecture defined here; do not write bridging code for unrequested large-scale features (see §1.4). Shared utilities that serve modularity/performance (event bus, ring buffers, debouncers, math mappers, clamp/scale helpers) are explicitly permitted.
+- **Unidirectional flow (strict):** UI components MUST NEVER mutate AudioNodes, worker state, or the DB directly. Correct flow: _UI action → Zustand store action → sync layer (`subscribeWithSelector` subscribers) → audio graph / scheduler worker / repository_. The single exception is read-only rAF rendering (meters/playheads) reading SABs (§3.3).
+- **Composition over inheritance.** React functional components with custom hooks; instruments composed from small pure DSP nodes and factories, never large classes with inheritance trees.
+- **Repository pattern.** React code never contains SQL. All SQL lives in `src/core/storage/repositories/*`, called through the typed RPC bridge into the DB worker.
+- **Strategic YAGNI.** Implement the extensible architecture defined here; do not write bridging code for unrequested large-scale features (see §1.4). Shared utilities that serve modularity/performance (event bus, ring buffers, debouncers, math mappers, clamp/scale helpers) are explicitly permitted.
 
 ### 3.2 Memory & Resource Management (Crucial Audio Guardrails)
 
-* Every node-creating factory MUST have a paired `destroy` that calls `disconnect()` on every node it created, cancels scheduled `AudioParam` events, and drops all references. Orphaned nodes are a critical failure. Pad clear, program change, project close, and mode unmount all route through these destroys.
-* Temporary `AudioBuffer`s (decode intermediates, editor previews) MUST be actively dereferenced when replaced.
-* **WASM linear memory** allocated for a worklet kernel (reverb tails, granular windows) MUST be freed via the kernel's exported `free()` when the node is destroyed (§5.6.3). Kernel instances are per-node, never shared.
-* SABs are allocated once per concern (meter bus, playhead, looper ring) and pooled — never allocated per frame.
-* `AudioBufferSourceNode`s self-release on `ended`; the voice pool (§5.4) removes registry entries in the `ended` handler.
+- Every node-creating factory MUST have a paired `destroy` that calls `disconnect()` on every node it created, cancels scheduled `AudioParam` events, and drops all references. Orphaned nodes are a critical failure. Pad clear, program change, project close, and mode unmount all route through these destroys.
+- Temporary `AudioBuffer`s (decode intermediates, editor previews) MUST be actively dereferenced when replaced.
+- **WASM linear memory** allocated for a worklet kernel (reverb tails, granular windows) MUST be freed via the kernel's exported `free()` when the node is destroyed (§5.6.3). Kernel instances are per-node, never shared.
+- SABs are allocated once per concern (meter bus, playhead, looper ring) and pooled — never allocated per frame.
+- `AudioBufferSourceNode`s self-release on `ended`; the voice pool (§5.4) removes registry entries in the `ended` handler.
 
 ### 3.3 React Render Optimisation (Anti-Lag)
 
-* High-frequency values (playhead tick, VU levels, waveform scroll, XY touch position, knob drag angle mid-gesture) MUST NEVER pass through React state or Zustand-driven React re-renders. They render via rAF onto `<canvas>` or via direct ref style writes.
-* Zustand consumers select the narrowest slice (`useStore(s => s.bpm)`) — never whole-store subscriptions in components.
-* Knob/fader drags update the audio graph continuously (through the store's *transient* channel, §4.3) but commit a single undo entry on gesture end.
+- High-frequency values (playhead tick, VU levels, waveform scroll, XY touch position, knob drag angle mid-gesture) MUST NEVER pass through React state or Zustand-driven React re-renders. They render via rAF onto `<canvas>` or via direct ref style writes.
+- Zustand consumers select the narrowest slice (`useStore(s => s.bpm)`) — never whole-store subscriptions in components.
+- Knob/fader drags update the audio graph continuously (through the store's _transient_ channel, §4.3) but commit a single undo entry on gesture end.
 
 ### 3.4 Definition of Done & Wiring Rules
 
-* **Scaffolding policy:** iterative development is expected. State + audio graph may be built and verified with stub UI first; the polished UI follows (§12 sequencing). However, **dead final UI is a critical failure**: every shipped control is wired end-to-end.
-* **Orphan-proofing:** every exported function, store, or component is imported and used within the live application tree. No speculative exports.
-* **State-to-graph verification:** on mount, every control reflects the *current* store value, and the store value reflects the actual node state (hydration order: DB → store → graph → UI).
+- **Scaffolding policy:** iterative development is expected. State + audio graph may be built and verified with stub UI first; the polished UI follows (§12 sequencing). However, **dead final UI is a critical failure**: every shipped control is wired end-to-end.
+- **Orphan-proofing:** every exported function, store, or component is imported and used within the live application tree. No speculative exports.
+- **State-to-graph verification:** on mount, every control reflects the _current_ store value, and the store value reflects the actual node state (hydration order: DB → store → graph → UI).
 
 ### 3.5 Multi-Lens Feature Gating & Review Protocol
 
@@ -261,9 +261,9 @@ Every feature passes all five lenses before the next task begins; failing any le
 
 ### 3.6 Styling Discipline & Design Tokens
 
-* **Tailwind CSS only** — no bespoke CSS files beyond `src/styles/index.css` (token definitions + keyframes), no CSS-in-JS.
-* Every colour, easing, radius, shadow, and animation value comes from a **design token** defined in `src/styles/index.css` and exposed as Tailwind utilities. Raw hex/`oklch()` literals or ad-hoc palette classes (`bg-red-500`) in components are forbidden. Dark theme is the default aesthetic; tokens carry both themes.
-* Reusable visual behaviour (velocity glow, pad press, meter gradient) is a primitive variant, never re-styled at call sites — ZERO DRY violations in `src/ui/primitives/`.
+- **Tailwind CSS only** — no bespoke CSS files beyond `src/styles/index.css` (token definitions + keyframes), no CSS-in-JS.
+- Every colour, easing, radius, shadow, and animation value comes from a **design token** defined in `src/styles/index.css` and exposed as Tailwind utilities. Raw hex/`oklch()` literals or ad-hoc palette classes (`bg-red-500`) in components are forbidden. Dark theme is the default aesthetic; tokens carry both themes.
+- Reusable visual behaviour (velocity glow, pad press, meter gradient) is a primitive variant, never re-styled at call sites — ZERO DRY violations in `src/ui/primitives/`.
 
 ### 3.7 Language Standardisation
 
@@ -273,14 +273,14 @@ British English everywhere: identifiers (`initialiseAudioContext`, `colourScheme
 
 ### 4.1 Principles
 
-* One file per slice under `src/store/`, each created with `subscribeWithSelector` middleware.
-* Stores hold **runtime truth**; SQLite holds **durable truth** (§1.3 #16). Hydration on project load; write-behind autosave on mutation (§4.4).
-* Stores expose **actions** (named methods) — components never call `setState` directly. Actions validate inputs (clamp ranges) before committing.
-* A lightweight **transient channel** exists per store for continuous gestures: `setTransient(path, value)` updates subscribers (sync layer) without creating undo entries or autosave writes; `commit(path, value)` finalises (undo + autosave). Both flow through the same sync layer.
+- One file per slice under `src/store/`, each created with `subscribeWithSelector` middleware.
+- Stores hold **runtime truth**; SQLite holds **durable truth** (§1.3 #16). Hydration on project load; write-behind autosave on mutation (§4.4).
+- Stores expose **actions** (named methods) — components never call `setState` directly. Actions validate inputs (clamp ranges) before committing.
+- A lightweight **transient channel** exists per store for continuous gestures: `setTransient(path, value)` updates subscribers (sync layer) without creating undo entries or autosave writes; `commit(path, value)` finalises (undo + autosave). Both flow through the same sync layer.
 
 ### 4.2 Store Catalogue
 
-All interfaces below are binding (fields may be *added* with a changelog entry; never removed).
+All interfaces below are binding (fields may be _added_ with a changelog entry; never removed).
 
 **`useTransportStore`**
 
@@ -290,15 +290,15 @@ interface TransportState {
   isRecording: boolean;
   countInBars: 0 | 1 | 2;
   metronomeEnabled: boolean;
-  metronomeLevel: number;            // 0..1
+  metronomeLevel: number; // 0..1
   recordMode: 'overdub' | 'replace';
   playbackMode: 'sequence' | 'song';
   activeSequenceId: string | null;
-  bpm: number;                       // effective tempo (follows active sequence, §7.9)
-  swingAmount: number;               // 50..75 (%)
-  swingDivision: 8 | 16;             // swung subdivision (1/8 or 1/16)
+  bpm: number; // effective tempo (follows active sequence, §7.9)
+  swingAmount: number; // 50..75 (%)
+  swingDivision: 8 | 16; // swung subdivision (1/8 or 1/16)
   loopEnabled: boolean;
-  loopStartTick: number;             // 960 PPQN
+  loopStartTick: number; // 960 PPQN
   loopEndTick: number;
   // NOTE: currentTick is NOT stored here — the playhead position lives in the
   // scheduler SAB (§7.1.4) and is read by canvases via rAF. The store keeps only
@@ -314,11 +314,11 @@ interface TransportState {
 
 ```ts
 interface SequenceState {
-  sequences: Record<string, Sequence>;      // metadata: name, lengthBars, timeSig, tempo?, swing
-  tracks: Record<string, Track>;            // per-sequence lanes: programId, position, name, type
-  events: Record<string, MidiEvent[]>;      // keyed by trackId, sorted by tickStart
+  sequences: Record<string, Sequence>; // metadata: name, lengthBars, timeSig, tempo?, swing
+  tracks: Record<string, Track>; // per-sequence lanes: programId, position, name, type
+  events: Record<string, MidiEvent[]>; // keyed by trackId, sorted by tickStart
   automation: Record<string, AutomationPoint[]>; // keyed by `${scope}:${ownerId}:${targetPath}`
-  songEntries: SongEntry[];                 // song mode playlist (§8.5.12)
+  songEntries: SongEntry[]; // song mode playlist (§8.5.12)
   // actions: CRUD for all of the above; every mutation also posts an incremental
   // diff to the scheduler worker (§7.1.3) and an undo entry (§4.5).
 }
@@ -330,13 +330,13 @@ interface SequenceState {
 
 ```ts
 interface ChannelStrip {
-  id: string;                       // 'pad:<programId>:<padIndex>' | 'track:<id>' | 'return:0..3' | 'master'
-  level: number;                    // 0..1.2 (fader law defined in §8.5.6)
-  pan: number;                      // -1..1 (equal-power)
+  id: string; // 'pad:<programId>:<padIndex>' | 'track:<id>' | 'return:0..3' | 'master'
+  level: number; // 0..1.2 (fader law defined in §8.5.6)
+  pan: number; // -1..1 (equal-power)
   mute: boolean;
   solo: boolean;
   sendLevels: [number, number, number, number];
-  inserts: InsertSlotState[];       // { id, effectType, enabled, params: Record<string, number> }
+  inserts: InsertSlotState[]; // { id, effectType, enabled, params: Record<string, number> }
 }
 ```
 
@@ -350,33 +350,33 @@ interface ChannelStrip {
 
 `src/store/syncLayer/` contains the **only** code allowed to touch audio nodes in response to state. One subscriber module per domain (mixer, program, transport, hardware), each using `subscribeWithSelector` with narrow selectors. Rules:
 
-* Native `AudioParam` targets: apply via ramp helpers (`setTargetAtTime`/`linearRampToValueAtTime` with `PARAM_RAMP_MS` dezipper). Never set `.value` directly during playback.
-* Worklet parameters: via the node's `AudioParam`s (from `parameterDescriptors`) with the same ramp helpers; bulk/config changes via the node's `port` with typed messages.
-* Transport/sequence changes: forwarded to the scheduler worker as typed messages (§7.1.3).
-* The sync layer is idempotent and diff-based: it compares previous/next selector values and touches only what changed.
+- Native `AudioParam` targets: apply via ramp helpers (`setTargetAtTime`/`linearRampToValueAtTime` with `PARAM_RAMP_MS` dezipper). Never set `.value` directly during playback.
+- Worklet parameters: via the node's `AudioParam`s (from `parameterDescriptors`) with the same ramp helpers; bulk/config changes via the node's `port` with typed messages.
+- Transport/sequence changes: forwarded to the scheduler worker as typed messages (§7.1.3).
+- The sync layer is idempotent and diff-based: it compares previous/next selector values and touches only what changed.
 
 ### 4.4 Persistence Lifecycle & Autosave
 
-* **Hydration:** `loadProject(id)` reads all rows via repositories, Zod-validates payloads, populates stores, then builds the audio graph, then mounts UI. A load failure falls back to Safe Mode (§8.1) — never a white screen.
-* **Autosave:** every committed mutation marks the owning entity dirty; a write-behind queue flushes dirty entities via repositories after `AUTOSAVE_DEBOUNCE_MS` of quiet, and immediately on `visibilitychange → hidden` and before project switch/export. The transport bar shows an unobtrusive unsaved-dot until flushed.
-* **Explicit save:** `saveNow()` flushes synchronously (awaited) and is surfaced in the UI.
-* Autosave writes MUST NOT jank playback: repository calls are already off-main-thread; the queue coalesces per-entity.
+- **Hydration:** `loadProject(id)` reads all rows via repositories, Zod-validates payloads, populates stores, then builds the audio graph, then mounts UI. A load failure falls back to Safe Mode (§8.1) — never a white screen.
+- **Autosave:** every committed mutation marks the owning entity dirty; a write-behind queue flushes dirty entities via repositories after `AUTOSAVE_DEBOUNCE_MS` of quiet, and immediately on `visibilitychange → hidden` and before project switch/export. The transport bar shows an unobtrusive unsaved-dot until flushed.
+- **Explicit save:** `saveNow()` flushes synchronously (awaited) and is surfaced in the UI.
+- Autosave writes MUST NOT jank playback: repository calls are already off-main-thread; the queue coalesces per-entity.
 
 ### 4.5 Undo / Redo
 
-* Command-pattern core in `src/store/undo/`: each undoable action records `{ label, undo(), redo() }` closures capturing minimal diffs (not full snapshots).
-* **Undoable:** note/automation edits, program parameter commits, track/sequence structure changes, mixer commits, sample-editor destructive operations (via file-version pointers, §8.5.4), pad assignment, Q-Link binding edits.
-* **Not undoable:** transport actions, live performance gestures (pad hits, note repeat), BLE connection state, autosave.
-* Depth `UNDO_LIMIT` (100); gesture coalescing per §3.3; UI exposure via toolbar buttons + `Ctrl+Z`/`Ctrl+Y`.
+- Command-pattern core in `src/store/undo/`: each undoable action records `{ label, undo(), redo() }` closures capturing minimal diffs (not full snapshots).
+- **Undoable:** note/automation edits, program parameter commits, track/sequence structure changes, mixer commits, sample-editor destructive operations (via file-version pointers, §8.5.4), pad assignment, Q-Link binding edits.
+- **Not undoable:** transport actions, live performance gestures (pad hits, note repeat), BLE connection state, autosave.
+- Depth `UNDO_LIMIT` (100); gesture coalescing per §3.3; UI exposure via toolbar buttons + `Ctrl+Z`/`Ctrl+Y`.
 
 ## 5. The Audio Engine
 
 ### 5.1 Context Bootstrap & Start Gate
 
-* A single `AudioContext` (`latencyHint: 'interactive'`, `sampleRate` = project sample rate) created once in `src/core/audio/context.ts`.
-* **Browser autoplay policy:** the UI presents an explicit styled **Start screen/button**; `audioContext.resume()` is called from that user gesture before any audio code runs. The app also listens for `statechange` and re-surfaces the gate if the context is externally suspended.
-* All worklet modules (`audioWorklet.addModule`) and DSP wasm fetches complete during the start gate with a progress indicator; failures render actionable errors, not console noise.
-* If the device's hardware rate differs from the project rate, the `AudioContext` is created at the project rate and the browser resamples at the hardware boundary; this is accepted and logged, never a crash.
+- A single `AudioContext` (`latencyHint: 'interactive'`, `sampleRate` = project sample rate) created once in `src/core/audio/context.ts`.
+- **Browser autoplay policy:** the UI presents an explicit styled **Start screen/button**; `audioContext.resume()` is called from that user gesture before any audio code runs. The app also listens for `statechange` and re-surfaces the gate if the context is externally suspended.
+- All worklet modules (`audioWorklet.addModule`) and DSP wasm fetches complete during the start gate with a progress indicator; failures render actionable errors, not console noise.
+- If the device's hardware rate differs from the project rate, the `AudioContext` is created at the project rate and the browser resamples at the hardware boundary; this is accepted and logged, never a crash.
 
 ### 5.2 Graph Topology (Strict Signal Hierarchy)
 
@@ -393,13 +393,13 @@ Every signal path follows this exact hierarchy for total mixing control:
 9. **Master inserts:** e.g. mix-bus compressor, limiter.
 10. **Hardware out:** `audioContext.destination`.
 
-Additional fixed infrastructure: **metering taps** (§5.8) after stages 5 and 8 and on each return; and a dedicated **monitor bus** (metronome + Browser-mode audition, §5.9) that merges directly into stage 10, *after* the master inserts, so the click and auditioning are never coloured or compressed by master FX.
+Additional fixed infrastructure: **metering taps** (§5.8) after stages 5 and 8 and on each return; and a dedicated **monitor bus** (metronome + Browser-mode audition, §5.9) that merges directly into stage 10, _after_ the master inserts, so the click and auditioning are never coloured or compressed by master FX.
 
 **Edge cases (binding):**
 
-* **Feedback prevention:** the routing matrix MUST programmatically forbid a return channel's sends from targeting any return (returns have no sends in v1 — their strips omit send controls), eliminating feedback loops structurally.
-* **Phase coherence / PDC:** every insert slot reports `latencySamples` (0 for native nodes; declared by worklet kernels). The insert wrapper delays its dry path by the wet path's latency (§5.7.3); chains sum their reported latency for display.
-* **Solo logic:** solo is implemented as computed mutes (solo-in-place across pads/tracks/returns), evaluated in the sync layer, never in the UI.
+- **Feedback prevention:** the routing matrix MUST programmatically forbid a return channel's sends from targeting any return (returns have no sends in v1 — their strips omit send controls), eliminating feedback loops structurally.
+- **Phase coherence / PDC:** every insert slot reports `latencySamples` (0 for native nodes; declared by worklet kernels). The insert wrapper delays its dry path by the wet path's latency (§5.7.3); chains sum their reported latency for display.
+- **Solo logic:** solo is implemented as computed mutes (solo-in-place across pads/tracks/returns), evaluated in the sync layer, never in the UI.
 
 ### 5.3 Node Factory & Lifecycle
 
@@ -407,22 +407,22 @@ Additional fixed infrastructure: **metering taps** (§5.8) after stages 5 and 8 
 
 ### 5.4 Voice Management
 
-* Global pool of `MAX_VOICES` (64). A "voice" = one source + its pad DSP chain instance.
-* Per-pad playback modes: `poly` (default), `mono` (retrigger cuts previous), `oneShot` (ignores note-off, plays to sample end).
-* **Voice stealing:** when the pool is exhausted, steal the oldest *released* voice, else the oldest voice overall; stolen voices get a `VOICE_STEAL_FADE_MS` linear fade before disconnect — never a hard cut/click.
-* **Choke groups (0–16):** triggering a pad with `chokeGroup > 0` applies a `CHOKE_FADE_MS` fade-out + stop to all sounding voices of other pads in the same group within the program.
-* Note-off applies the amp envelope release; the `ended` event finalises voice teardown.
+- Global pool of `MAX_VOICES` (64). A "voice" = one source + its pad DSP chain instance.
+- Per-pad playback modes: `poly` (default), `mono` (retrigger cuts previous), `oneShot` (ignores note-off, plays to sample end).
+- **Voice stealing:** when the pool is exhausted, steal the oldest _released_ voice, else the oldest voice overall; stolen voices get a `VOICE_STEAL_FADE_MS` linear fade before disconnect — never a hard cut/click.
+- **Choke groups (0–16):** triggering a pad with `chokeGroup > 0` applies a `CHOKE_FADE_MS` fade-out + stop to all sounding voices of other pads in the same group within the program.
+- Note-off applies the amp envelope release; the `ended` event finalises voice teardown.
 
 ### 5.5 AudioWorklet & Threading Rules (Strict)
 
-* **Worklet mandate:** real-time DSP beyond native nodes MUST be an `AudioWorkletProcessor`: granular time-stretch/pitch-shift (independent time/pitch — plain `playbackRate` is only used where coupled repitching is the *intended* behaviour, i.e. keygroups and pad tune), algorithmic reverb (Phase 6+), multiband compression, lookahead limiter, the looper recorder, and the metering tap.
-* **Oversampling:** any custom non-linear worklet (saturation/clipping) MUST oversample internally 2×/4× and downsample before output. (v1's saturator uses the native `WaveShaperNode` with `oversample: '4x'`, which satisfies this; a custom worklet version inherits the requirement.)
-* **No allocation in `process()`:** worklet processors pre-allocate all buffers at construction; the render quantum allocates nothing and never touches `postMessage` except at ≥ 60 ms intervals for non-critical telemetry.
-* **SharedArrayBuffer (targeted use only):**
-  * *Worklet→UI (metering, §5.8) and worker→UI (playhead, §7.1.4):* lock-free single-writer SAB regions with `Atomics` — never `postMessage` streams.
-  * *Standard automation:* native `AudioParam` scheduling methods — SAB is architectural overkill there and MUST NOT be used for it.
-* **Worker distinction rule:** AudioWorklets ONLY for real-time sample streaming/processing. Sequencer timing, transient detection, WAV encode, DB, and packing run in standard Web Workers. Sequencer logic inside an AudioWorklet is forbidden.
-* **Ring buffer utility:** one shared, tested `RingBuffer` implementation (`Float32Array` data + `Int32Array` read/write indices via `Atomics`) in `src/core/dsp/ringBuffer.ts`, used by looper capture and any worklet→worker streaming.
+- **Worklet mandate:** real-time DSP beyond native nodes MUST be an `AudioWorkletProcessor`: granular time-stretch/pitch-shift (independent time/pitch — plain `playbackRate` is only used where coupled repitching is the _intended_ behaviour, i.e. keygroups and pad tune), algorithmic reverb (Phase 6+), multiband compression, lookahead limiter, the looper recorder, and the metering tap.
+- **Oversampling:** any custom non-linear worklet (saturation/clipping) MUST oversample internally 2×/4× and downsample before output. (v1's saturator uses the native `WaveShaperNode` with `oversample: '4x'`, which satisfies this; a custom worklet version inherits the requirement.)
+- **No allocation in `process()`:** worklet processors pre-allocate all buffers at construction; the render quantum allocates nothing and never touches `postMessage` except at ≥ 60 ms intervals for non-critical telemetry.
+- **SharedArrayBuffer (targeted use only):**
+  - _Worklet→UI (metering, §5.8) and worker→UI (playhead, §7.1.4):_ lock-free single-writer SAB regions with `Atomics` — never `postMessage` streams.
+  - _Standard automation:_ native `AudioParam` scheduling methods — SAB is architectural overkill there and MUST NOT be used for it.
+- **Worker distinction rule:** AudioWorklets ONLY for real-time sample streaming/processing. Sequencer timing, transient detection, WAV encode, DB, and packing run in standard Web Workers. Sequencer logic inside an AudioWorklet is forbidden.
+- **Ring buffer utility:** one shared, tested `RingBuffer` implementation (`Float32Array` data + `Int32Array` read/write indices via `Atomics`) in `src/core/dsp/ringBuffer.ts`, used by looper capture and any worklet→worker streaming.
 
 ### 5.6 WASM DSP Kernels (AssemblyScript)
 
@@ -438,16 +438,16 @@ Additional fixed infrastructure: **metering taps** (§5.8) after stages 5 and 8 
 
 Insert effects are created by `createInsert(effectType)` and expose a uniform wrapper: `enabled` (true bypass via routing, not zero-gain), `mix` (equal-power dry/wet with PDC on the dry leg — §5.7.3), and typed params (all ranges validated in the store action layer).
 
-| ID | Engine | Parameters (all automatable, §7.8) |
-| --- | --- | --- |
-| `eq4` | native (4 biquads in series) | lowShelf `{freq 20–500, gain ±15 dB}`, peak1/peak2 `{freq 50–16k, gain ±15, q 0.1–10}`, highShelf `{freq 1k–20k, gain ±15}` |
-| `filter` | native biquad | type `lp/hp/bp/notch`, cutoff 20–20 kHz (log), resonance 0.1–20 |
-| `delay` | native (`DelayNode` + feedback loop w/ LP filter) | time: free 1–2000 ms **or** synced division (1/32–1/2, dotted/triplet); feedback 0–0.95; tone 200 Hz–18 kHz; mix |
-| `compressor` | native `DynamicsCompressorNode` + makeup gain | threshold −60–0 dB, ratio 1–20, attack 0.1–100 ms, release 10–1000 ms, knee 0–40, makeup 0–24 dB |
-| `saturator` | native `WaveShaperNode`, `oversample: '4x'` | drive 0–36 dB, curve `soft/hard/tube`, output trim, mix |
-| `reverb` | v1: native `ConvolverNode` with procedurally generated IRs; Phase 6+: `fdnReverb` worklet | size 0.2–10 s, damping, pre-delay 0–200 ms (DelayNode), mix. IR regeneration is debounced and rendered in a worker, never on param drag |
-| `multibandComp` | worklet + WASM (Phase 6) | 3 bands, crossovers 40–500 / 500–8k Hz, per-band threshold/ratio/attack/release/makeup |
-| `limiter` | worklet + WASM (Phase 6) | ceiling −6–0 dBFS, release 10–500 ms; fixed 1.5 ms lookahead reported as latency (PDC) |
+| ID              | Engine                                                                                    | Parameters (all automatable, §7.8)                                                                                                      |
+| --------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `eq4`           | native (4 biquads in series)                                                              | lowShelf `{freq 20–500, gain ±15 dB}`, peak1/peak2 `{freq 50–16k, gain ±15, q 0.1–10}`, highShelf `{freq 1k–20k, gain ±15}`             |
+| `filter`        | native biquad                                                                             | type `lp/hp/bp/notch`, cutoff 20–20 kHz (log), resonance 0.1–20                                                                         |
+| `delay`         | native (`DelayNode` + feedback loop w/ LP filter)                                         | time: free 1–2000 ms **or** synced division (1/32–1/2, dotted/triplet); feedback 0–0.95; tone 200 Hz–18 kHz; mix                        |
+| `compressor`    | native `DynamicsCompressorNode` + makeup gain                                             | threshold −60–0 dB, ratio 1–20, attack 0.1–100 ms, release 10–1000 ms, knee 0–40, makeup 0–24 dB                                        |
+| `saturator`     | native `WaveShaperNode`, `oversample: '4x'`                                               | drive 0–36 dB, curve `soft/hard/tube`, output trim, mix                                                                                 |
+| `reverb`        | v1: native `ConvolverNode` with procedurally generated IRs; Phase 6+: `fdnReverb` worklet | size 0.2–10 s, damping, pre-delay 0–200 ms (DelayNode), mix. IR regeneration is debounced and rendered in a worker, never on param drag |
+| `multibandComp` | worklet + WASM (Phase 6)                                                                  | 3 bands, crossovers 40–500 / 500–8k Hz, per-band threshold/ratio/attack/release/makeup                                                  |
+| `limiter`       | worklet + WASM (Phase 6)                                                                  | ceiling −6–0 dBFS, release 10–500 ms; fixed 1.5 ms lookahead reported as latency (PDC)                                                  |
 
 **5.7.3 PDC rule:** the insert wrapper reads the effect's `latencySamples` and inserts a matching `DelayNode` on its dry leg; chain latency totals are shown in the mixer strip tooltip. Native effects report 0; the limiter reports its lookahead.
 
@@ -455,96 +455,123 @@ Insert effects are created by `createInsert(effectType)` and expose a uniform wr
 
 ### 5.8 Metering
 
-* A single `meterTap.worklet.ts` class instantiated per metered point (pad-selected, per-track, per-return, master L/R) writing `[peak, rms]` per channel into its assigned slot of one global meter SAB (`Float32Array`; slot registry in `src/core/audio/metering.ts`; an `Int32Array` header carries a generation counter via `Atomics`).
-* UI meter canvases read the SAB in a shared rAF loop (one loop for all meters, not one per component), applying peak-hold and clip-latch presentation client-side. React re-renders: zero.
+- A single `meterTap.worklet.ts` class instantiated per metered point (pad-selected, per-track, per-return, master L/R) writing `[peak, rms]` per channel into its assigned slot of one global meter SAB (`Float32Array`; slot registry in `src/core/audio/metering.ts`; an `Int32Array` header carries a generation counter via `Atomics`).
+- UI meter canvases read the SAB in a shared rAF loop (one loop for all meters, not one per component), applying peak-hold and clip-latch presentation client-side. React re-renders: zero.
 
 ### 5.9 Metronome & Preview Channel
 
-* Metronome: scheduled by the sequencer worker like any event (accented beat 1), synthesised via a tiny pre-rendered click buffer (no network asset), routed to the monitor bus with its own level control; supports count-in (§7.7).
-* Preview channel: Browser-mode auditioning plays through a dedicated gain on the monitor bus, never through pad/track chains.
+- Metronome: scheduled by the sequencer worker like any event (accented beat 1), synthesised via a tiny pre-rendered click buffer (no network asset), routed to the monitor bus with its own level control; supports count-in (§7.7).
+- Preview channel: Browser-mode auditioning plays through a dedicated gain on the monitor bus, never through pad/track chains.
 
 ## 6. Programs, Pads & Sound Design (Data Schemas)
 
 All program payloads are plain JSON (stored in `programs.payload`, §9.3), Zod-validated on load and import. Binding TypeScript model:
 
 ```ts
-interface AhdsrEnvelope {                 // times in ms, levels 0..1
-  attack: number; hold: number; decay: number;
-  sustain: number; release: number;
+interface AhdsrEnvelope {
+  // times in ms, levels 0..1
+  attack: number;
+  hold: number;
+  decay: number;
+  sustain: number;
+  release: number;
   curve: 'linear' | 'exponential';
 }
 
 interface LfoConfig {
-  rate: number;                            // Hz when sync = 'free'
-  sync: 'free' | NoteDivision;             // NoteDivision: '1/1'..'1/32' incl. dotted/triplet
+  rate: number; // Hz when sync = 'free'
+  sync: 'free' | NoteDivision; // NoteDivision: '1/1'..'1/32' incl. dotted/triplet
   shape: 'sine' | 'triangle' | 'sawUp' | 'sawDown' | 'square' | 'sampleHold' | 'drift';
-  phaseOffset: number;                     // 0..1
-  retrigger: boolean;                      // restart on note-on
+  phaseOffset: number; // 0..1
+  retrigger: boolean; // restart on note-on
 }
 
 type ModSource = 'lfo1' | 'lfo2' | 'ampEnv' | 'pitchEnv' | 'filterEnv' | 'velocity' | 'random' | 'noteNumber';
 type ModTarget =
-  | 'pitch' | 'filterCutoff' | 'filterResonance' | 'pan' | 'amp'
-  | 'layerStart' | 'lfo1Rate' | 'lfo2Rate'
-  | `insert${1|2|3|4}:${string}`;          // insert parameter address
-interface ModRoute { source: ModSource; target: ModTarget; amount: number /* -1..1 */; }
+  | 'pitch'
+  | 'filterCutoff'
+  | 'filterResonance'
+  | 'pan'
+  | 'amp'
+  | 'layerStart'
+  | 'lfo1Rate'
+  | 'lfo2Rate'
+  | `insert${1 | 2 | 3 | 4}:${string}`; // insert parameter address
+interface ModRoute {
+  source: ModSource;
+  target: ModTarget;
+  amount: number /* -1..1 */;
+}
 
 interface VelocityLayer {
-  sampleId: string;                        // FK → samples table (OPFS-backed)
-  velocityStart: number; velocityEnd: number;   // 0..127, layers may not overlap
-  tuneSemitones: number;                   // ±36 (coupled repitch)
-  tuneCents: number;                       // ±100
-  gainDb: number;                          // ±24
-  startFrame: number; endFrame: number;    // non-destructive trim (0 = defaults)
+  sampleId: string; // FK → samples table (OPFS-backed)
+  velocityStart: number;
+  velocityEnd: number; // 0..127, layers may not overlap
+  tuneSemitones: number; // ±36 (coupled repitch)
+  tuneCents: number; // ±100
+  gainDb: number; // ±24
+  startFrame: number;
+  endFrame: number; // non-destructive trim (0 = defaults)
   reverse: boolean;
 }
 
 interface Pad {
-  padIndex: number;                        // 0..127 (bank = index >> 4)
+  padIndex: number; // 0..127 (bank = index >> 4)
   name: string;
-  chokeGroup: number;                      // 0..16 (0 = none)
+  chokeGroup: number; // 0..16 (0 = none)
   playbackMode: 'poly' | 'mono' | 'oneShot';
-  warp: boolean;                           // true = granularStretch source (§5.7.9)
-  layers: VelocityLayer[];                 // 0..maxLayers (default cap 4, configurable to 8)
+  warp: boolean; // true = granularStretch source (§5.7.9)
+  layers: VelocityLayer[]; // 0..maxLayers (default cap 4, configurable to 8)
   envelopes: { amp: AhdsrEnvelope; pitch: AhdsrEnvelope; filter: AhdsrEnvelope };
-  pitchEnvSemitones: number;               // pitch env depth
+  pitchEnvSemitones: number; // pitch env depth
   filter: { type: 'lp' | 'hp' | 'bp' | 'off'; cutoff: number; resonance: number; envDepth: number };
-  lfos: [LfoConfig, LfoConfig];            // minimum 2 per pad
-  modMatrix: ModRoute[];                   // unbounded schema; validated cap 32 routes
+  lfos: [LfoConfig, LfoConfig]; // minimum 2 per pad
+  modMatrix: ModRoute[]; // unbounded schema; validated cap 32 routes
   mixer: { level: number; pan: number; sendLevels: [number, number, number, number] };
-  inserts: InsertSlotState[];              // default 4 slots
+  inserts: InsertSlotState[]; // default 4 slots
 }
 
 interface DrumProgram {
-  id: string; name: string; type: 'drum';
-  pads: Pad[];                             // sparse — only assigned pads present
+  id: string;
+  name: string;
+  type: 'drum';
+  pads: Pad[]; // sparse — only assigned pads present
 }
 
-interface KeygroupZone {                   // extends the layer idea across the keyboard
+interface KeygroupZone {
+  // extends the layer idea across the keyboard
   sampleId: string;
-  rootNote: number;                        // MIDI note of unity pitch
-  lowNote: number; highNote: number;       // key range
-  lowVelocity: number; highVelocity: number;
-  tuneCents: number; gainDb: number;
+  rootNote: number; // MIDI note of unity pitch
+  lowNote: number;
+  highNote: number; // key range
+  lowVelocity: number;
+  highVelocity: number;
+  tuneCents: number;
+  gainDb: number;
 }
 
 interface KeygroupProgram {
-  id: string; name: string; type: 'keygroup';
+  id: string;
+  name: string;
+  type: 'keygroup';
   zones: KeygroupZone[];
   // shares Pad's sound-design surface at program scope:
-  envelopes: Pad['envelopes']; filter: Pad['filter'];
-  lfos: Pad['lfos']; modMatrix: ModRoute[];
-  mixer: Pad['mixer']; inserts: InsertSlotState[];
-  polyphony: number;                       // 1..32 voices from the global pool
-  glideMs: number;                         // mono glide (0 = off)
-  pitchBendRange: number;                  // semitones applied by pitch bend (default 2, 1..12)
+  envelopes: Pad['envelopes'];
+  filter: Pad['filter'];
+  lfos: Pad['lfos'];
+  modMatrix: ModRoute[];
+  mixer: Pad['mixer'];
+  inserts: InsertSlotState[];
+  polyphony: number; // 1..32 voices from the global pool
+  glideMs: number; // mono glide (0 = off)
+  pitchBendRange: number; // semitones applied by pitch bend (default 2, 1..12)
 }
 ```
 
-* **Drum programs:** 128 pads (8 banks × 16). Layer selection is velocity-switched (round-robin is out of scope v1).
-* **Keygroup pitching:** `playbackRate = 2^((note - rootNote + tuneCents/100) / 12)` via `AudioBufferSourceNode.detune`/`playbackRate` — coupled repitch is correct here by design.
-* **Mod matrix evaluation:** control-rate (per voice start + per rAF-scheduled block via `AudioParam` ramps for LFO-driven targets on native nodes; per-block inside worklet kernels for worklet targets). The evaluator is a pure function with unit tests (§11.1).
-* At least 4 keygroup programs MUST be able to sound concurrently.
+- **Drum programs:** 128 pads (8 banks × 16). Layer selection is velocity-switched (round-robin is out of scope v1).
+- **Keygroup pitching:** `playbackRate = 2^((note - rootNote + tuneCents/100) / 12)` via `AudioBufferSourceNode.detune`/`playbackRate` — coupled repitch is correct here by design.
+- **Mod matrix evaluation:** control-rate (per voice start + per rAF-scheduled block via `AudioParam` ramps for LFO-driven targets on native nodes; per-block inside worklet kernels for worklet targets). The evaluator is a pure function with unit tests (§11.1).
+- At least 4 keygroup programs MUST be able to sound concurrently.
 
 ## 7. Sequencer, Timing, Recording & Automation
 
@@ -556,28 +583,28 @@ interface KeygroupProgram {
 
 **7.1.3 Message protocol (typed, versioned):**
 
-* Main → worker: `init { playheadSab }`, `clockSync`, `transport { isPlaying, isRecording, startTick }`, `tempo`, `swing`, `loop`, `eventsDiff { trackId, upserts, deletes }` (incremental — never full re-sends during playback), `automationDiff`, `songSequence { orderedSequenceIds }`, `liveNote { note, velocity, on, timestamp }` (for note repeat + record capture), `noteRepeat { enabled, division }`, `metronome { enabled, countInBars }`.
-* Worker → main: `scheduleBatch { events: ScheduledEvent[] }` where `ScheduledEvent = { kind: 'noteOn'|'noteOff'|'click'|'automationRamp', trackId?, note?, velocity?, when /* context secs */, tick, durationSec?, target?, value?, rampEnd? }`; `recorded { trackId, events }` (on capture flush); `loopWrapped { tick }`; `songAdvanced { entryIndex }`.
+- Main → worker: `init { playheadSab }`, `clockSync`, `transport { isPlaying, isRecording, startTick }`, `tempo`, `swing`, `loop`, `eventsDiff { trackId, upserts, deletes }` (incremental — never full re-sends during playback), `automationDiff`, `songSequence { orderedSequenceIds }`, `liveNote { note, velocity, on, timestamp }` (for note repeat + record capture), `noteRepeat { enabled, division }`, `metronome { enabled, countInBars }`.
+- Worker → main: `scheduleBatch { events: ScheduledEvent[] }` where `ScheduledEvent = { kind: 'noteOn'|'noteOff'|'click'|'automationRamp', trackId?, note?, velocity?, when /* context secs */, tick, durationSec?, target?, value?, rampEnd? }`; `recorded { trackId, events }` (on capture flush); `loopWrapped { tick }`; `songAdvanced { entryIndex }`.
 
-**7.1.4 Scheduling loop.** Every `SCHEDULER_INTERVAL_MS` the worker computes all events whose musical time falls in `[nowTick, nowTick + ticksIn(LOOKAHEAD_MS)]`, converts ticks→context seconds via the tempo map, applies swing (§7.4) and micro-offsets, and posts one `scheduleBatch`. The main-thread dispatcher calls `voicePool.trigger(...)`/`AudioParam` ramps with exact `when` values. The worker also writes `currentTick` (Float64) + transport flags into the **playhead SAB** every wake; canvases read it via rAF. When rendering, playhead canvases subtract `audioContext.outputLatency` (where reported) from the position so the drawn playhead matches what is *audible*, not what has merely been scheduled.
+**7.1.4 Scheduling loop.** Every `SCHEDULER_INTERVAL_MS` the worker computes all events whose musical time falls in `[nowTick, nowTick + ticksIn(LOOKAHEAD_MS)]`, converts ticks→context seconds via the tempo map, applies swing (§7.4) and micro-offsets, and posts one `scheduleBatch`. The main-thread dispatcher calls `voicePool.trigger(...)`/`AudioParam` ramps with exact `when` values. The worker also writes `currentTick` (Float64) + transport flags into the **playhead SAB** every wake; canvases read it via rAF. When rendering, playhead canvases subtract `audioContext.outputLatency` (where reported) from the position so the drawn playhead matches what is _audible_, not what has merely been scheduled.
 
 **7.1.5 Determinism & tests.** Tick↔seconds conversion, swing offsets, loop wrapping, and lookahead window maths are pure functions in `src/core/sequencer/` with exhaustive unit tests (including tempo changes mid-loop and loop-boundary double-scheduling protection — an event may be scheduled exactly once per loop pass).
 
 ### 7.2 Resolution & Musical Maths
 
-* **960 PPQN** internally everywhere. Positions/durations are integer ticks; the UI renders bars:beats:ticks using the sequence time signature (default 4/4; numerator 1–16, denominator 2/4/8/16).
-* Conversion: `secondsPerTick = 60 / (bpm × PPQN)`. Tempo is per-sequence (nullable → project default); song mode builds a tempo map across entries (§7.9).
+- **960 PPQN** internally everywhere. Positions/durations are integer ticks; the UI renders bars:beats:ticks using the sequence time signature (default 4/4; numerator 1–16, denominator 2/4/8/16).
+- Conversion: `secondsPerTick = 60 / (bpm × PPQN)`. Tempo is per-sequence (nullable → project default); song mode builds a tempo map across entries (§7.9).
 
 ### 7.3 Note Repeat & Arpeggiator
 
-* **Note repeat:** when active with a held pad (UI or BLE), the worker generates notes locked to the chosen division — 1/4, 1/8, 1/16, 1/32, 1/64, each straight or triplet — at the held velocity (or a fixed adjustable velocity), respecting swing. Latch option holds the last pad.
-* **Arpeggiator (keygroup tracks):** modes `up / down / upDown / played / random`, octave range 1–4, gate 5–100 %, division as above. Runs in the worker beside note repeat (shared subdivision clock).
+- **Note repeat:** when active with a held pad (UI or BLE), the worker generates notes locked to the chosen division — 1/4, 1/8, 1/16, 1/32, 1/64, each straight or triplet — at the held velocity (or a fixed adjustable velocity), respecting swing. Latch option holds the last pad.
+- **Arpeggiator (keygroup tracks):** modes `up / down / upDown / played / random`, octave range 1–4, gate 5–100 %, division as above. Runs in the worker beside note repeat (shared subdivision clock).
 
 ### 7.4 Swing & Quantisation
 
-* **Swing:** classic MPC algebra — 50–75 % shifting every *even-numbered* subdivision of the swing division (`swingDivision` 1/8 or 1/16). Offset ticks = `(swing − 50)/50 × (divisionTicks/2)`, applied at schedule time (non-destructive).
-* **Quantise (destructive, undoable):** snap selected events to a grid (1/4–1/64, straight/triplet) with strength 0–100 % and optional swing applied into the grid.
-* **Non-destructive capture:** recording never quantises at capture; raw 960 PPQN timing is stored, quantise is an explicit edit.
+- **Swing:** classic MPC algebra — 50–75 % shifting every _even-numbered_ subdivision of the swing division (`swingDivision` 1/8 or 1/16). Offset ticks = `(swing − 50)/50 × (divisionTicks/2)`, applied at schedule time (non-destructive).
+- **Quantise (destructive, undoable):** snap selected events to a grid (1/4–1/64, straight/triplet) with strength 0–100 % and optional swing applied into the grid.
+- **Non-destructive capture:** recording never quantises at capture; raw 960 PPQN timing is stored, quantise is an explicit edit.
 
 ### 7.5 Groove Extraction
 
@@ -585,23 +612,23 @@ The WASM `transientDetect` kernel (spectral flux with adaptive threshold; params
 
 ### 7.6 Live Input Path
 
-BLE/UI note input follows two parallel paths simultaneously (§10.2): (1) immediate audition — main thread triggers the voice pool directly with `when = now` (this is the *sole* sanctioned bypass of the store for latency reasons, and it mutates nothing); (2) `liveNote` message to the worker for note-repeat processing and record capture.
+BLE/UI note input follows two parallel paths simultaneously (§10.2): (1) immediate audition — main thread triggers the voice pool directly with `when = now` (this is the _sole_ sanctioned bypass of the store for latency reasons, and it mutates nothing); (2) `liveNote` message to the worker for note-repeat processing and record capture.
 
 ### 7.7 Recording Workflow
 
-* Arm via `record()`; playback starts after `countInBars` of metronome (0/1/2).
-* **Overdub** (default) merges captured events into the track each loop pass; **replace** clears the region being passed over while recording.
-* Capture applies input-latency compensation (§10.2) and stores raw ticks + velocity; note-off closes durations (min duration 1 tick).
-* While holding a pad + touching **Erase**, that pad's events are removed as the loop passes (MPC-style live erase).
-* Each recording pass commits one undo entry ("Recorded take").
+- Arm via `record()`; playback starts after `countInBars` of metronome (0/1/2).
+- **Overdub** (default) merges captured events into the track each loop pass; **replace** clears the region being passed over while recording.
+- Capture applies input-latency compensation (§10.2) and stores raw ticks + velocity; note-off closes durations (min duration 1 tick).
+- While holding a pad + touching **Erase**, that pad's events are removed as the loop passes (MPC-style live erase).
+- Each recording pass commits one undo entry ("Recorded take").
 
 ### 7.8 Hierarchical Automation
 
-* **Two scopes:** *sequence* automation (loops with the pattern; owner = sequence) and *track* automation (spans the song arrangement; owner = track). Track scope overrides sequence scope for the same target while both exist (last-writer at schedule time, track wins).
-* **Data model:** `AutomationPoint { id, scope, ownerId, targetPath, tick, value, curve: 'step'|'linear'|'exp' }`.
-* **Target addressing:** canonical string paths registered in `src/core/audio/params/registry.ts`, e.g. `mixer.track:<id>.level`, `mixer.pad:<prog>:<idx>.sendLevels.2`, `program:<id>.pad:<idx>.filter.cutoff`, `insert:track:<id>:slot2.mix`. Only registered, automatable parameters accept points (Zod-validated).
-* **Engine:** the worker schedules `automationRamp` events for the lookahead window; the dispatcher applies them as `AudioParam` ramps (native and worklet params alike). Non-AudioParam targets are not automatable in v1.
-* **Record automation:** Q-Link/knob movements while recording write points (thinned by minimum tick spacing + value epsilon).
+- **Two scopes:** _sequence_ automation (loops with the pattern; owner = sequence) and _track_ automation (spans the song arrangement; owner = track). Track scope overrides sequence scope for the same target while both exist (last-writer at schedule time, track wins).
+- **Data model:** `AutomationPoint { id, scope, ownerId, targetPath, tick, value, curve: 'step'|'linear'|'exp' }`.
+- **Target addressing:** canonical string paths registered in `src/core/audio/params/registry.ts`, e.g. `mixer.track:<id>.level`, `mixer.pad:<prog>:<idx>.sendLevels.2`, `program:<id>.pad:<idx>.filter.cutoff`, `insert:track:<id>:slot2.mix`. Only registered, automatable parameters accept points (Zod-validated).
+- **Engine:** the worker schedules `automationRamp` events for the lookahead window; the dispatcher applies them as `AudioParam` ramps (native and worklet params alike). Non-AudioParam targets are not automatable in v1.
+- **Record automation:** Q-Link/knob movements while recording write points (thinned by minimum tick spacing + value epsilon).
 
 ### 7.9 Song Mode Playback
 
@@ -611,22 +638,22 @@ BLE/UI note input follows two parallel paths simultaneously (§10.2): (1) immedi
 
 ### 8.1 Application Shell
 
-* Layout: persistent **transport bar** (play/stop/rec, position readout, BPM, swing, metronome, save-dot, undo/redo), persistent **mode rail** (12 modes, touch-large), content area for the active mode. All sized with fluid units (`dvh`, `rem`, grid `gap`).
-* **Global error boundary + Safe Mode:** a top-level `react-error-boundary` fallback offering: Export project (`.mpcweb`), Download raw SQLite binary, and Hard Reset (purge OPFS + DB after double confirmation). The user must never be trapped in a white screen.
-* **Multi-tab guard:** Web Locks claim at startup; a second tab shows a styled "BangerBox is already open in another tab" screen (§9.7).
+- Layout: persistent **transport bar** (play/stop/rec, position readout, BPM, swing, metronome, save-dot, undo/redo), persistent **mode rail** (12 modes, touch-large), content area for the active mode. All sized with fluid units (`dvh`, `rem`, grid `gap`).
+- **Global error boundary + Safe Mode:** a top-level `react-error-boundary` fallback offering: Export project (`.mpcweb`), Download raw SQLite binary, and Hard Reset (purge OPFS + DB after double confirmation). The user must never be trapped in a white screen.
+- **Multi-tab guard:** Web Locks claim at startup; a second tab shows a styled "BangerBox is already open in another tab" screen (§9.7).
 
 ### 8.2 Accessibility (WCAG) Standards
 
-* Every interactive element: correct role, `aria-label`, and for continuous controls `aria-valuemin/max/now` + `aria-valuetext` (human units — "−6.0 dB", "1.2 kHz").
-* Full keyboard operation: logical Tab order per mode, arrow-key increments on knobs/faders (fine with Shift), Space/Enter triggers pads, distinct high-contrast focus rings (token-based).
-* Contrast AA minimum; live announcements (transport state, save confirmations) through a single polite `LiveRegion`.
-* `prefers-reduced-motion`: all motion collapses to opacity/instant transforms.
+- Every interactive element: correct role, `aria-label`, and for continuous controls `aria-valuemin/max/now` + `aria-valuetext` (human units — "−6.0 dB", "1.2 kHz").
+- Full keyboard operation: logical Tab order per mode, arrow-key increments on knobs/faders (fine with Shift), Space/Enter triggers pads, distinct high-contrast focus rings (token-based).
+- Contrast AA minimum; live announcements (transport state, save confirmations) through a single polite `LiveRegion`.
+- `prefers-reduced-motion`: all motion collapses to opacity/instant transforms.
 
 ### 8.3 Visual Flair & Animation Standards
 
-* The interface must feel like premium tactile hardware, not a dry web page: `motion/react` for layout shifts, modal/tab transitions (shared layout IDs for the mode rail), spring-based micro-interactions.
-* Pads/buttons: immediate press feedback (`whileTap` scale ≈ 0.95) plus velocity-driven glow (box-shadow intensity from hit velocity, decaying via CSS transition — not React state).
-* 60 fps is the budget: animations use transform/opacity only (GPU-composited); anything animating layout properties continuously is a review failure.
+- The interface must feel like premium tactile hardware, not a dry web page: `motion/react` for layout shifts, modal/tab transitions (shared layout IDs for the mode rail), spring-based micro-interactions.
+- Pads/buttons: immediate press feedback (`whileTap` scale ≈ 0.95) plus velocity-driven glow (box-shadow intensity from hit velocity, decaying via CSS transition — not React state).
+- 60 fps is the budget: animations use transform/opacity only (GPU-composited); anything animating layout properties continuously is a review failure.
 
 ### 8.4 Canvas Rendering Rules
 
@@ -662,11 +689,11 @@ All OPFS access goes through the typed wrapper `src/core/storage/opfs.ts` (path 
 
 ### 9.2 SQLite Worker Orchestration
 
-* The `@sqlite.org/sqlite-wasm` instance lives entirely in `db.worker.ts` on the OPFS VFS; the main thread never imports the wasm.
-* A strictly typed promise-based RPC bridge (`rpc.ts`) carries parameterised statements only — string-concatenated SQL is forbidden.
-* The worker serialises writes through an internal queue (OPFS holds an exclusive lock; rapid successive writes must never surface `SQLITE_BUSY`).
-* Repositories (main thread) are the only RPC clients; unpaginated `SELECT *` over unbounded tables is forbidden — browser queries page at 200 rows.
-* **Migrations:** `PRAGMA user_version`-driven sequential migration scripts, each wrapped in a transaction with rollback-on-failure; destructive table changes use the safe recreation pattern (create-new → copy → drop-old → rename). Querying `sqlite_master` to guess schema state is forbidden.
+- The `@sqlite.org/sqlite-wasm` instance lives entirely in `db.worker.ts` on the OPFS VFS; the main thread never imports the wasm.
+- A strictly typed promise-based RPC bridge (`rpc.ts`) carries parameterised statements only — string-concatenated SQL is forbidden.
+- The worker serialises writes through an internal queue (OPFS holds an exclusive lock; rapid successive writes must never surface `SQLITE_BUSY`).
+- Repositories (main thread) are the only RPC clients; unpaginated `SELECT *` over unbounded tables is forbidden — browser queries page at 200 rows.
+- **Migrations:** `PRAGMA user_version`-driven sequential migration scripts, each wrapped in a transaction with rollback-on-failure; destructive table changes use the safe recreation pattern (create-new → copy → drop-old → rename). Querying `sqlite_master` to guess schema state is forbidden.
 
 ### 9.3 Database Schema (v1 DDL, binding)
 
@@ -775,13 +802,13 @@ CREATE TABLE app_settings ( key TEXT PRIMARY KEY, value TEXT NOT NULL );
 3. **Standardise:** resample to the project sample rate via `OfflineAudioContext` if needed; mixdown >2 channels to stereo.
 4. Encode to WAV at the project bit depth (16/24-bit int or 32-bit float; encoder is a pure, unit-tested function running in a worker) and write to OPFS.
 5. Insert the `samples` row (+ inferred tags: source folder name, "imported").
-6. Reject files that would breach the storage headroom check (§9.7) *before* writing.
+6. Reject files that would breach the storage headroom check (§9.7) _before_ writing.
 
 ### 9.5 Bounce & Mixdown
 
-* Rendering uses **`OfflineAudioContext` on the main thread** (it renders asynchronously without blocking the realtime graph; plain workers cannot host it — the superseded draft's "render in a worker" is corrected to: *render* on main, *encode + write* in a worker).
-* The bounce builder reconstructs the full graph (sources scheduled from the DB via the same pure scheduling maths — code shared with the live scheduler) inside the offline context, renders, then ships the buffer to a worker for WAV encode → `/bounces/`.
-* Available as: bounce sequence, bounce song, bounce selected track (post-insert, pre-master), resample-to-pad.
+- Rendering uses **`OfflineAudioContext` on the main thread** (it renders asynchronously without blocking the realtime graph; plain workers cannot host it — the superseded draft's "render in a worker" is corrected to: _render_ on main, _encode + write_ in a worker).
+- The bounce builder reconstructs the full graph (sources scheduled from the DB via the same pure scheduling maths — code shared with the live scheduler) inside the offline context, renders, then ships the buffer to a worker for WAV encode → `/bounces/`.
+- Available as: bounce sequence, bounce song, bounce selected track (post-insert, pre-master), resample-to-pad.
 
 ### 9.6 Project Packing (`.mpcweb` Interchange Format)
 
@@ -795,54 +822,55 @@ project.json     Versioned JSON snapshot: project row + sequences + tracks + mid
 samples/<sampleId>.wav   Every sample referenced by the project (global-library refs are copied in).
 ```
 
-* **Export:** flush autosave → repositories dump → worker zips (streamed) → browser download. Raw `.sqlite` binaries are never the interchange format (schema-portability lesson from Gubbins); the Safe-Mode raw download (§8.1) is a rescue hatch, not interchange.
-* **Import:** Zod-validate manifest + snapshot (reject unknown `formatVersion` with a friendly error); remap all UUIDs on collision; write samples to OPFS; insert rows; open the project. Import is transactional — a failure mid-way leaves no partial project.
+- **Export:** flush autosave → repositories dump → worker zips (streamed) → browser download. Raw `.sqlite` binaries are never the interchange format (schema-portability lesson from Gubbins); the Safe-Mode raw download (§8.1) is a rescue hatch, not interchange.
+- **Import:** Zod-validate manifest + snapshot (reject unknown `formatVersion` with a friendly error); remap all UUIDs on collision; write samples to OPFS; insert rows; open the project. Import is transactional — a failure mid-way leaves no partial project.
 
 ### 9.7 Storage Safeguards
 
-* `navigator.storage.persist()` requested at first run; if refused, show a persistent dismissible warning that the browser may evict data.
-* **Quota hard-stop:** before any sample write/bounce, check `navigator.storage.estimate()`; if the write would push usage beyond 90 % of quota, refuse gracefully with a storage-management prompt (Browser mode purge tools) — never corrupt a half-written file (write to temp name, atomic rename on completion).
-* **Multi-tab guard:** `navigator.locks.request('bangerbox-db', { ifAvailable: true }, ...)` at startup; on failure show the already-open screen (§8.1). The OPFS SQLite lock makes this mandatory, not cosmetic.
+- `navigator.storage.persist()` requested at first run; if refused, show a persistent dismissible warning that the browser may evict data.
+- **Quota hard-stop:** before any sample write/bounce, check `navigator.storage.estimate()`; if the write would push usage beyond 90 % of quota, refuse gracefully with a storage-management prompt (Browser mode purge tools) — never corrupt a half-written file (write to temp name, atomic rename on completion).
+- **Multi-tab guard:** `navigator.locks.request('bangerbox-db', { ifAvailable: true }, ...)` at startup; on failure show the already-open screen (§8.1). The OPFS SQLite lock makes this mandatory, not cosmetic.
 
 ## 10. Hardware Interfacing
 
 ### 10.1 BLE-MIDI Transport & Parsing
 
-* `navigator.bluetooth.requestDevice` filtered on the BLE-MIDI service UUID `03B80E5A-EDE8-4B33-A751-6CE34EC4C700`; characteristic `7772E5DB-3868-4112-A1A9-F2669D106BF3`; subscribe to notifications.
-* **Packet parsing (pure, unit-tested, `src/core/midi/parser.ts`):** BLE-MIDI framing — header byte (bit 7 set; bits 0–5 = timestamp high), per-message timestamp byte (bit 7 set; bits 0–6 = timestamp low) forming a 13-bit millisecond clock that wraps every 8 192 ms (unwrap against arrival time); **running status** support; multiple messages per packet. v1 handles Note On (velocity 0 ⇒ Note Off), Note Off, Control Change, Pitch Bend; SysEx is skipped safely (never crashes the parser).
-* Parsed messages carry a reconstructed `performance.now()`-domain timestamp.
+- `navigator.bluetooth.requestDevice` filtered on the BLE-MIDI service UUID `03B80E5A-EDE8-4B33-A751-6CE34EC4C700`; characteristic `7772E5DB-3868-4112-A1A9-F2669D106BF3`; subscribe to notifications.
+- **Packet parsing (pure, unit-tested, `src/core/midi/parser.ts`):** BLE-MIDI framing — header byte (bit 7 set; bits 0–5 = timestamp high), per-message timestamp byte (bit 7 set; bits 0–6 = timestamp low) forming a 13-bit millisecond clock that wraps every 8 192 ms (unwrap against arrival time); **running status** support; multiple messages per packet. v1 handles Note On (velocity 0 ⇒ Note Off), Note Off, Control Change, Pitch Bend; SysEx is skipped safely (never crashes the parser).
+- Parsed messages carry a reconstructed `performance.now()`-domain timestamp.
 
 ### 10.2 Input Routing, Latency & Execution Flow
 
-* **Note messages** follow the dual path of §7.6: immediate audition (zero added latency, bypasses React entirely) + worker delivery for note-repeat/recording. A configurable **input latency offset** (default 15 ms, settable 0–50 ms in Q-Link Edit's settings pane) is subtracted from BLE timestamps when recording, compensating BLE transmission delay.
-* **CC messages** MUST flow: BLE listener → binding lookup → mapped value → **Zustand store action** → sync layer → node. Directly mutating the audio graph from the MIDI listener is forbidden (auditioned *notes* are the sole exception, and they touch the voice pool, not graph parameters).
-* **Pitch bend** applies to the active keygroup program's sounding voices via per-voice `detune` ramps, scaled by the program's `pitchBendRange` (§6; default ±2 semitones). Drum programs ignore pitch bend. Like note audition, this is a voice-pool path (throttled per §10.4), not a store mutation.
+- **Note messages** follow the dual path of §7.6: immediate audition (zero added latency, bypasses React entirely) + worker delivery for note-repeat/recording. A configurable **input latency offset** (default 15 ms, settable 0–50 ms in Q-Link Edit's settings pane) is subtracted from BLE timestamps when recording, compensating BLE transmission delay.
+- **CC messages** MUST flow: BLE listener → binding lookup → mapped value → **Zustand store action** → sync layer → node. Directly mutating the audio graph from the MIDI listener is forbidden (auditioned _notes_ are the sole exception, and they touch the voice pool, not graph parameters).
+- **Pitch bend** applies to the active keygroup program's sounding voices via per-voice `detune` ramps, scaled by the program's `pitchBendRange` (§6; default ±2 semitones). Drum programs ignore pitch bend. Like note audition, this is a voice-pool path (throttled per §10.4), not a store mutation.
 
 ### 10.3 Dynamic Q-Link Architecture (Context-Aware Encoders)
 
-* **Modes** (`useHardwareStore.qLinkMode`): `screen` (encoders map to the currently focused UI panel — components register their parameters via a `useQLinkFocus(params[])` hook into `useUIStore`'s focus registry; e.g. opening a Delay insert maps knobs to Time/Feedback/Mix/Tone), `pad` (selected pad's Pitch / Filter Cutoff / Amp Attack / Amp Release by default), `program` (program macros), `project` (global macros: master level, global swing, master filter).
-* **Binding schema (binding):**
+- **Modes** (`useHardwareStore.qLinkMode`): `screen` (encoders map to the currently focused UI panel — components register their parameters via a `useQLinkFocus(params[])` hook into `useUIStore`'s focus registry; e.g. opening a Delay insert maps knobs to Time/Feedback/Mix/Tone), `pad` (selected pad's Pitch / Filter Cutoff / Amp Attack / Amp Release by default), `program` (program macros), `project` (global macros: master level, global swing, master filter).
+- **Binding schema (binding):**
 
 ```ts
 interface QLinkBinding {
-  encoderIndex: number;          // 0..15 (4 physical by default)
-  cc: number;                    // raw CC number from ccMappings
+  encoderIndex: number; // 0..15 (4 physical by default)
+  cc: number; // raw CC number from ccMappings
   targetStore: 'mixer' | 'program' | 'transport' | 'project';
-  targetParameterPath: string;   // §7.8 registry address
-  minValue: number; maxValue: number;
+  targetParameterPath: string; // §7.8 registry address
+  minValue: number;
+  maxValue: number;
   curve: 'linear' | 'log';
   mode: 'absolute' | 'relative'; // relative = two's-complement increment encoders
 }
 ```
 
-* **Execution flow (strict):** CC in → look up binding for current mode → scale into `[min,max]` per curve → dispatch to the target store action (transient during turn, commit on 250 ms idle) → sync layer updates the node → UI reacts concurrently. Bindings persist per mode in `app_settings`.
+- **Execution flow (strict):** CC in → look up binding for current mode → scale into `[min,max]` per curve → dispatch to the target store action (transient during turn, commit on 250 ms idle) → sync layer updates the node → UI reacts concurrently. Bindings persist per mode in `app_settings`.
 
 ### 10.4 ESP32 / DIY Controller Constraints
 
-* **CC jitter throttling:** per-CC coalescing — keep only the latest value, apply at most every `CC_THROTTLE_MS` (rAF-aligned), with ±1 value hysteresis, preventing render thrash and AudioParam spam from noisy analogue pots (software-side even if the firmware has hysteresis).
-* **Connection lifecycle:** listen for `gattserverdisconnected`; set `connectionState: 'reconnecting'`; attempt automatic `device.gatt.connect()` retries with backoff (3 attempts) before prompting. A drop MUST NOT crash the graph, pause playback, or lose Q-Link bindings.
-* **Windows pairing quirk:** the connect dialog includes a help note telling Windows users to pair the ESP32 in **Windows Settings → Bluetooth** *before* using Connect in the app.
-* **Timestamping:** always schedule from reconstructed BLE timestamps (§10.1) — never "on receipt" — feeding the lookahead engine for recording accuracy.
+- **CC jitter throttling:** per-CC coalescing — keep only the latest value, apply at most every `CC_THROTTLE_MS` (rAF-aligned), with ±1 value hysteresis, preventing render thrash and AudioParam spam from noisy analogue pots (software-side even if the firmware has hysteresis).
+- **Connection lifecycle:** listen for `gattserverdisconnected`; set `connectionState: 'reconnecting'`; attempt automatic `device.gatt.connect()` retries with backoff (3 attempts) before prompting. A drop MUST NOT crash the graph, pause playback, or lose Q-Link bindings.
+- **Windows pairing quirk:** the connect dialog includes a help note telling Windows users to pair the ESP32 in **Windows Settings → Bluetooth** _before_ using Connect in the app.
+- **Timestamping:** always schedule from reconstructed BLE timestamps (§10.1) — never "on receipt" — feeding the lookahead engine for recording accuracy.
 
 ### 10.5 Roadmap (Recorded, Not In Scope)
 
@@ -860,9 +888,9 @@ Each DSP kernel and effect ships a renders-under-`OfflineAudioContext` test (run
 
 ### 11.3 Worker & Worklet Mocking
 
-* The DB worker is bypassed in unit tests via an injected in-memory driver behind the same `IDatabaseDriver` interface (repositories never touch `postMessage` directly).
-* The scheduler worker's logic is a pure class (`SchedulerCore`) instantiated directly in tests with a fake clock; the worker file is a thin message shell.
-* Worklet-dependent components mock the node wrappers; `src/test/mocks/` provides a fake `AudioContext` sufficient for factory lifecycle tests (create/destroy call accounting).
+- The DB worker is bypassed in unit tests via an injected in-memory driver behind the same `IDatabaseDriver` interface (repositories never touch `postMessage` directly).
+- The scheduler worker's logic is a pure class (`SchedulerCore`) instantiated directly in tests with a fake clock; the worker file is a thin message shell.
+- Worklet-dependent components mock the node wrappers; `src/test/mocks/` provides a fake `AudioContext` sufficient for factory lifecycle tests (create/destroy call accounting).
 
 ### 11.4 Real-Browser Smoke (Playwright, system Edge)
 
@@ -870,12 +898,12 @@ Each DSP kernel and effect ships a renders-under-`OfflineAudioContext` test (run
 
 ### 11.5 Performance Budgets (Review-Gated)
 
-* Touch-to-sound < 30 ms (UI path); zero audible underruns during 8 tracks + 4 inserts playback on the target tablet; UI holds 60 fps with all meters live; cold load < 3 s with warm SW; main JS chunk < 500 KB gzip (wasm/sqlite excluded, lazily loaded).
-* A dev-only perf HUD (frame time, audio underrun counter via `audioContext.outputLatency` monitoring, voice count) toggles with a keyboard shortcut.
+- Touch-to-sound < 30 ms (UI path); zero audible underruns during 8 tracks + 4 inserts playback on the target tablet; UI holds 60 fps with all meters live; cold load < 3 s with warm SW; main JS chunk < 500 KB gzip (wasm/sqlite excluded, lazily loaded).
+- A dev-only perf HUD (frame time, audio underrun counter via `audioContext.outputLatency` monitoring, voice count) toggles with a keyboard shortcut.
 
 ## 12. Implementation Phases
 
-*Each phase is a strict boundary: the agent executes it autonomously end-to-end (§13.3), and MUST satisfy every exit criterion — including the Multi-Lens Review (§3.5) and the listed tests — before the next phase begins. UI beyond stubs is deferred to Phase 7 except where a phase names it.*
+_Each phase is a strict boundary: the agent executes it autonomously end-to-end (§13.3), and MUST satisfy every exit criterion — including the Multi-Lens Review (§3.5) and the listed tests — before the next phase begins. UI beyond stubs is deferred to Phase 7 except where a phase names it._
 
 **Phase 0 — Toolchain & Scaffold.**
 Objective: a verified empty shell. Deliverables: `git init`; Vite + React + TS strict scaffold; Tailwind 4 + token file; ESLint/Prettier; `vite.config.ts` per §2.3; PWA manifest + `sw.ts` + update prompt; capability gate screen (§2.1); constants registry; Vitest + Playwright harness (smoke asserts `crossOriginIsolated`); `npm run build:wasm` pipeline with a trivial AssemblyScript kernel proving the worklet-module-transfer path (§5.6.2); enforcement scripts `check:deps`, `check:lang`, `check:stubs` aggregated as `npm run verify` (§13.6).
@@ -929,15 +957,15 @@ For every domain feature: write the failing tests first (unit or offline-render 
 
 **13.3.1** Within a phase the agent proceeds continuously without asking permission between tasks, self-correcting lint/type/test failures up to the two-strike limit.
 **13.3.2 Halt & Query thresholds** (the only reasons to stop): genuine architectural ambiguity where guessing risks structural debt; scope bleeding into a future phase or §1.4 non-goal; destructive schema/data changes beyond the migration pattern; a needed dependency outside the closed matrix (§2.2); phase completion.
-**13.3.3 Patch hygiene:** surgical edits only; never write truncation placeholders ("… rest unchanged") to disk; keep the build green at every commit; commit messages describe *what/why*, never internal process.
+**13.3.3 Patch hygiene:** surgical edits only; never write truncation placeholders ("… rest unchanged") to disk; keep the build green at every commit; commit messages describe _what/why_, never internal process.
 
 **13.3.4 Concurrent-Agent Worktree Discipline.** Multiple agents may work on this repository concurrently. All phase work therefore happens in a dedicated **git worktree**, never in the main checkout:
 
-* Create branch `phase-<N>-<slug>` and worktree `.claude/worktrees/phase-<N>` (this path is gitignored and excluded from the test sweep, §2.3). Every file operation for the phase uses absolute paths inside that worktree.
-* **Phase 0 bootstrap exception:** the repository does not exist yet — first `git init` + an initial commit on `main` in the project root (`.gitignore`, this spec as-is), then immediately create the phase-0 worktree and do all scaffold work there.
-* Each worktree runs its **own `npm install`**. No junctions/symlinks to the root `node_modules`; if one is ever created for speed, it MUST be removed *before* `git worktree remove` (Windows junction + worktree removal is a known data-loss trap).
-* Never modify the main checkout or another agent's worktree; expect `main` to have advanced while you worked.
-* **Completion sequence:** merge `main` into the phase branch (trivial conflicts resolved; non-trivial conflicts are a Halt & Query, §13.3.2) → re-run full verification green **inside the worktree** → from the main checkout, `git merge --no-ff phase-<N>-<slug>` → `git worktree remove` the worktree → delete the branch.
+- Create branch `phase-<N>-<slug>` and worktree `.claude/worktrees/phase-<N>` (this path is gitignored and excluded from the test sweep, §2.3). Every file operation for the phase uses absolute paths inside that worktree.
+- **Phase 0 bootstrap exception:** the repository does not exist yet — first `git init` + an initial commit on `main` in the project root (`.gitignore`, this spec as-is), then immediately create the phase-0 worktree and do all scaffold work there.
+- Each worktree runs its **own `npm install`**. No junctions/symlinks to the root `node_modules`; if one is ever created for speed, it MUST be removed _before_ `git worktree remove` (Windows junction + worktree removal is a known data-loss trap).
+- Never modify the main checkout or another agent's worktree; expect `main` to have advanced while you worked.
+- **Completion sequence:** merge `main` into the phase branch (trivial conflicts resolved; non-trivial conflicts are a Halt & Query, §13.3.2) → re-run full verification green **inside the worktree** → from the main checkout, `git merge --no-ff phase-<N>-<slug>` → `git worktree remove` the worktree → delete the branch.
 
 ### 13.4 Protocol Delta — Blast Radius & Rollback
 
@@ -951,16 +979,16 @@ The `:memory:`-driver unit path and mocked bridges (§11.3) are for logic; they 
 
 Prose rules do not stop drift; gates do. The following are mechanical, not advisory:
 
-* **Naming freeze.** Every identifier this spec names — store names, file paths (§2.5), constants (§2.6), worker/worklet filenames, message `kind`s (§7.1.3), DB tables/columns (§9.3), effect IDs (§5.7), parameter address forms (§7.8) — is binding. The agent MUST NOT rename, "improve", or synonymise them. If a name proves genuinely wrong, that is a Halt & Query, then a §14 entry.
-* **Spec anchors in code.** Any implementation choice that is non-obvious without this document carries a `// spec §x.y` comment (house style proven in Gubbins). This is for the *reviewer's* traceability — it is the one sanctioned "why" comment form.
-* **Green-before-next.** `type-check`, `lint`, and the unit tests covering the touched area MUST pass before the next task begins; the full suite plus the browser smoke MUST pass at phase exit. Building on top of a red build is forbidden.
-* **Enforcement scripts** (Phase 0 deliverables, aggregated as `npm run verify`, run at every phase exit):
-  * `check:deps` — fails if `package.json` contains any package outside the §2.2 matrix, or any forbidden package.
-  * `check:lang` — scans identifiers and UI strings for American spellings (color/behavior/initialize/synchronize/normalize…) with an explicit allowlist file for platform API names (`AnalyserNode` is British already; `normalize()` the string method, `KeyboardEvent.getModifierState` etc. are platform-fixed and allowlisted).
-  * `check:stubs` — every temporary stub or deferred wiring is tagged `// STUB(phase-N): reason`. The script lists open stubs (they must appear in the handover) and **fails** from Phase 7 onward if any remain.
-* **Reference-implementation rule.** Before writing the DB worker, RPC bridge, `sw.ts`, `vite.config.ts`, or the PWA update prompt, the agent MUST read the corresponding working Gubbins file and adapt its proven pattern rather than designing from scratch. Never copy Gubbins-specific branding, licence headers, or domain logic.
-* **No invented documentation.** Uncertain API ⇒ read `node_modules` types or Gubbins usage (§2.7); still uncertain ⇒ Halt & Query. Writing a call site from memory that contradicts installed types is treated as a failed review, not a style issue.
-* **Commit cadence.** Small commits at each green milestone; the working tree is clean at every session end; messages describe *what/why* only.
+- **Naming freeze.** Every identifier this spec names — store names, file paths (§2.5), constants (§2.6), worker/worklet filenames, message `kind`s (§7.1.3), DB tables/columns (§9.3), effect IDs (§5.7), parameter address forms (§7.8) — is binding. The agent MUST NOT rename, "improve", or synonymise them. If a name proves genuinely wrong, that is a Halt & Query, then a §14 entry.
+- **Spec anchors in code.** Any implementation choice that is non-obvious without this document carries a `// spec §x.y` comment (house style proven in Gubbins). This is for the _reviewer's_ traceability — it is the one sanctioned "why" comment form.
+- **Green-before-next.** `type-check`, `lint`, and the unit tests covering the touched area MUST pass before the next task begins; the full suite plus the browser smoke MUST pass at phase exit. Building on top of a red build is forbidden.
+- **Enforcement scripts** (Phase 0 deliverables, aggregated as `npm run verify`, run at every phase exit):
+  - `check:deps` — fails if `package.json` contains any package outside the §2.2 matrix, or any forbidden package.
+  - `check:lang` — scans identifiers and UI strings for American spellings (color/behavior/initialize/synchronize/normalize…) with an explicit allowlist file for platform API names (`AnalyserNode` is British already; `normalize()` the string method, `KeyboardEvent.getModifierState` etc. are platform-fixed and allowlisted).
+  - `check:stubs` — every temporary stub or deferred wiring is tagged `// STUB(phase-N): reason`. The script lists open stubs (they must appear in the handover) and **fails** from Phase 7 onward if any remain.
+- **Reference-implementation rule.** Before writing the DB worker, RPC bridge, `sw.ts`, `vite.config.ts`, or the PWA update prompt, the agent MUST read the corresponding working Gubbins file and adapt its proven pattern rather than designing from scratch. Never copy Gubbins-specific branding, licence headers, or domain logic.
+- **No invented documentation.** Uncertain API ⇒ read `node_modules` types or Gubbins usage (§2.7); still uncertain ⇒ Halt & Query. Writing a call site from memory that contradicts installed types is treated as a failed review, not a style issue.
+- **Commit cadence.** Small commits at each green milestone; the working tree is clean at every session end; messages describe _what/why_ only.
 
 ### 13.7 Canonical Session Prompt Template
 
@@ -1019,7 +1047,7 @@ Every Phase <N> exit criterion in spec §12 is met, including the Multi-Lens Rev
 
 ## 14. Changelog
 
-* **2026-07-17 (d)** — Session-chain & concurrency hardening: Protocol Alpha now mandates that every phase ends by emitting the next phase's self-contained session prompt from the new canonical template (§13.7); added Concurrent-Agent Worktree Discipline (§13.3.4 — all phase work in `.claude/worktrees/phase-<N>` worktrees, Phase 0 bootstrap exception, no `node_modules` junctions at worktree removal, merge-back sequence); Vitest/`.gitignore` worktree exclusions added to §2.3.
-* **2026-07-17 (c)** — Hardening for autonomous implementation by an LLM agent (Opus 4.8): added the Pinned API Contract (§2.7) fixing the exact call forms for the dependency majors (motion/react import, sqlite-wasm `oo1.OpfsDb` bootstrap, Tailwind 4 CSS-first config, Zustand 5 curried `create`, WASM-via-`processorOptions`, AssemblyScript `--runtime stub`, etc.) with a binding "never write library calls from memory" rule; added Protocol Epsilon (§13.6) — naming freeze, `// spec §x.y` anchor comments, green-before-next gating, mechanical enforcement scripts (`check:deps`, `check:lang`, `check:stubs` via `npm run verify`, wired into Phase 0 and every phase exit), the Gubbins reference-implementation consultation rule, and commit cadence; added the stable section-numbering rule (§0).
-* **2026-07-17 (b)** — Post-rewrite review refinements: defined pitch-bend behaviour (keygroup-only, per-voice `detune`, new `pitchBendRange` field on `KeygroupProgram`, §6/§10.2); playhead rendering now compensates for `audioContext.outputLatency` (§7.1.4); waveform peak pyramids specified as worker-computed and cached (§8.5.4); tempo automation recorded as a roadmap item (§10.5). Tone.js reconsidered at the human developer's prompt and its exclusion **reaffirmed**: its Transport schedules on the main thread and cannot satisfy the §7.1 worker mandate, and the spec already forbids its use for state or nodes, leaving it nothing to contribute.
-* **2026-07-17** — Full rewrite of the 2026-07 draft: named the project (BangerBox); repaired the unreadable PPQN value (960, was an embedded image); removed Google-Docs export artefacts; resolved contradictions (Tone.js removed in favour of the worker scheduler; WASM toolchain locked to AssemblyScript after verifying no Rust/Emscripten on the dev machine; mixdown corrected to main-thread `OfflineAudioContext` + worker encode); locked the dependency matrix against the proven Gubbins stack; added everything required to be actionable — full store/program/automation TypeScript schemas, complete SQLite DDL, effects set with parameters, voice management, metronome/count-in/recording workflow, undo/redo, time signatures, `.mpcweb` format definition, BLE-MIDI packet-level parsing, capability gating, storage safeguards incl. multi-tab guard, testing strategy with per-phase exit criteria, and performance budgets. All technical constraints of the draft are preserved and tightened.
+- **2026-07-17 (d)** — Session-chain & concurrency hardening: Protocol Alpha now mandates that every phase ends by emitting the next phase's self-contained session prompt from the new canonical template (§13.7); added Concurrent-Agent Worktree Discipline (§13.3.4 — all phase work in `.claude/worktrees/phase-<N>` worktrees, Phase 0 bootstrap exception, no `node_modules` junctions at worktree removal, merge-back sequence); Vitest/`.gitignore` worktree exclusions added to §2.3.
+- **2026-07-17 (c)** — Hardening for autonomous implementation by an LLM agent (Opus 4.8): added the Pinned API Contract (§2.7) fixing the exact call forms for the dependency majors (motion/react import, sqlite-wasm `oo1.OpfsDb` bootstrap, Tailwind 4 CSS-first config, Zustand 5 curried `create`, WASM-via-`processorOptions`, AssemblyScript `--runtime stub`, etc.) with a binding "never write library calls from memory" rule; added Protocol Epsilon (§13.6) — naming freeze, `// spec §x.y` anchor comments, green-before-next gating, mechanical enforcement scripts (`check:deps`, `check:lang`, `check:stubs` via `npm run verify`, wired into Phase 0 and every phase exit), the Gubbins reference-implementation consultation rule, and commit cadence; added the stable section-numbering rule (§0).
+- **2026-07-17 (b)** — Post-rewrite review refinements: defined pitch-bend behaviour (keygroup-only, per-voice `detune`, new `pitchBendRange` field on `KeygroupProgram`, §6/§10.2); playhead rendering now compensates for `audioContext.outputLatency` (§7.1.4); waveform peak pyramids specified as worker-computed and cached (§8.5.4); tempo automation recorded as a roadmap item (§10.5). Tone.js reconsidered at the human developer's prompt and its exclusion **reaffirmed**: its Transport schedules on the main thread and cannot satisfy the §7.1 worker mandate, and the spec already forbids its use for state or nodes, leaving it nothing to contribute.
+- **2026-07-17** — Full rewrite of the 2026-07 draft: named the project (BangerBox); repaired the unreadable PPQN value (960, was an embedded image); removed Google-Docs export artefacts; resolved contradictions (Tone.js removed in favour of the worker scheduler; WASM toolchain locked to AssemblyScript after verifying no Rust/Emscripten on the dev machine; mixdown corrected to main-thread `OfflineAudioContext` + worker encode); locked the dependency matrix against the proven Gubbins stack; added everything required to be actionable — full store/program/automation TypeScript schemas, complete SQLite DDL, effects set with parameters, voice management, metronome/count-in/recording workflow, undo/redo, time signatures, `.mpcweb` format definition, BLE-MIDI packet-level parsing, capability gating, storage safeguards incl. multi-tab guard, testing strategy with per-phase exit criteria, and performance budgets. All technical constraints of the draft are preserved and tightened.
