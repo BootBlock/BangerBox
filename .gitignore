@@ -1,0 +1,20 @@
+# Dependencies (npm only — spec §1.3 #2)
+node_modules/
+
+# Build output
+dist/
+dev-dist/
+*.tsbuildinfo
+
+# Built WASM kernel artefacts (spec §2.5 — rebuilt via `npm run build:wasm`)
+src/core/dsp/dist/
+
+# Test artefacts
+coverage/
+scripts/smoke-artefacts/
+
+# Concurrent-agent worktrees (spec §2.3.9, §13.3.4)
+.claude/worktrees/
+
+# Local-only files
+*.local
