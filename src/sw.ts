@@ -87,23 +87,33 @@ sw.addEventListener('fetch', (event) => {
   event.respondWith(respond(event.request));
 });
 
+// `ignoreVary` matters: the precache was populated by install-time fetches with no
+// Origin header, while the page's `crossorigin` module-script requests carry one — a
+// `Vary` response header from the server would otherwise make every offline script
+// lookup miss. The precache is fully same-origin, so ignoring Vary is safe.
+const MATCH_OPTIONS: CacheQueryOptions = { ignoreSearch: true, ignoreVary: true };
+
 async function respond(request: Request): Promise<Response> {
   const cache = await caches.open(CACHE);
 
   // App navigations resolve to the precached shell (offline-first).
   if (request.mode === 'navigate') {
-    const index = await cache.match(INDEX_URL, { ignoreSearch: true });
+    const index = await cache.match(INDEX_URL, MATCH_OPTIONS);
     if (index) return index;
   }
 
-  const cached = await cache.match(request, { ignoreSearch: true });
+  const cached = await cache.match(request, MATCH_OPTIONS);
   if (cached) return cached;
 
   try {
     return await fetch(request);
   } catch {
-    const fallback = await cache.match(INDEX_URL, { ignoreSearch: true });
-    if (fallback) return fallback;
+    // The shell fallback applies to NAVIGATIONS only — serving index.html for a failed
+    // script/asset request would hand a module loader text/html (strict MIME failure).
+    if (request.mode === 'navigate') {
+      const fallback = await cache.match(INDEX_URL, MATCH_OPTIONS);
+      if (fallback) return fallback;
+    }
     return Response.error();
   }
 }

@@ -5,6 +5,11 @@ import {
   type KernelDisposeMessage,
 } from '@/core/dsp/gainProofKernel';
 import { loadKernelModule } from '@/core/dsp/kernelLoader';
+// spec §2.3.8/§2.7 (corrected via §14, 2026-07-17 (e)) — Vite's `?worker&url` suffix is
+// the sanctioned way to build a worklet module as a REAL emitted file (es format, never
+// an inline/blob URL): the bare `new URL('./x.worklet.ts', import.meta.url)` form has
+// no build-time worklet handling in Vite 8 and inlines raw TypeScript as a data: URL.
+import gainProofWorkletUrl from '../core/audio/worklets/gainProof.worklet.ts?worker&url';
 
 /**
  * Engine self-test panel — proves the §5.6.2 worklet-module-transfer path end-to-end
@@ -24,10 +29,8 @@ async function runEngineSelfTest(): Promise<string> {
   // spec §5.1 — interactive latency hint; created inside the click's user gesture.
   const audioContext = new AudioContext({ latencyHint: 'interactive' });
   try {
-    // spec §2.7 pinned form — worklet modules load as real files, never blob URLs.
-    await audioContext.audioWorklet.addModule(
-      new URL('../core/audio/worklets/gainProof.worklet.ts', import.meta.url),
-    );
+    // Worklet modules load as real files, never blob URLs (spec §2.3.8).
+    await audioContext.audioWorklet.addModule(gainProofWorkletUrl);
     const module = await loadKernelModule(gainProofWasmUrl());
     const node = new AudioWorkletNode(audioContext, 'gain-proof', {
       numberOfInputs: 0,

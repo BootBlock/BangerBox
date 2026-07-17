@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="BangerBox">
+  <defs><linearGradient id="sheen" gradientUnits="userSpaceOnUse" x1="48" y1="48" x2="464" y2="464">
+      <stop offset="0" stop-color="#ffd27a" />
+      <stop offset="0.5" stop-color="#f5a524" />
+      <stop offset="1" stop-color="#e07000" />
+    </linearGradient></defs>
+  
+    <rect x="48" y="48" width="416" height="416" rx="54.08" fill="#141317" />
+    <g fill="none" stroke="url(#sheen)" stroke-linejoin="round" stroke-linecap="round">
+      <rect x="48" y="48" width="416" height="416" rx="54.08" stroke-width="22.88" />
+      <g stroke-width="12.48"><rect x="106.24" y="106.24" width="63.96" height="63.96" rx="18.72" /><rect x="184.76" y="106.24" width="63.96" height="63.96" rx="18.72" /><rect x="263.28" y="106.24" width="63.96" height="63.96" rx="18.72" /><rect x="341.8" y="106.24" width="63.96" height="63.96" rx="18.72" fill="url(#sheen)" /><rect x="106.24" y="184.76" width="63.96" height="63.96" rx="18.72" /><rect x="184.76" y="184.76" width="63.96" height="63.96" rx="18.72" /><rect x="263.28" y="184.76" width="63.96" height="63.96" rx="18.72" /><rect x="341.8" y="184.76" width="63.96" height="63.96" rx="18.72" /><rect x="106.24" y="263.28" width="63.96" height="63.96" rx="18.72" /><rect x="184.76" y="263.28" width="63.96" height="63.96" rx="18.72" /><rect x="263.28" y="263.28" width="63.96" height="63.96" rx="18.72" /><rect x="341.8" y="263.28" width="63.96" height="63.96" rx="18.72" /><rect x="106.24" y="341.8" width="63.96" height="63.96" rx="18.72" /><rect x="184.76" y="341.8" width="63.96" height="63.96" rx="18.72" /><rect x="263.28" y="341.8" width="63.96" height="63.96" rx="18.72" /><rect x="341.8" y="341.8" width="63.96" height="63.96" rx="18.72" /></g>
+    </g>
+</svg>
