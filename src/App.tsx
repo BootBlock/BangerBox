@@ -5,12 +5,15 @@ import {
 } from '@/core/platform/capabilities';
 import { EngineSelfTest } from '@/ui/EngineSelfTest';
 import { PwaUpdatePrompt } from '@/ui/PwaUpdatePrompt';
+import { StoragePanel, type StoragePanelApi } from '@/ui/StoragePanel';
 import type { PwaUpdateApi } from '@/ui/usePwaUpdate';
 
 interface AppProps {
   capabilities: CapabilityReport;
   /** Test seam for the PWA update flow; production uses the browser seam. */
   pwaApiOverride?: PwaUpdateApi;
+  /** Test seam for the storage panel; production uses the real worker + OPFS. */
+  storageApiOverride?: StoragePanelApi;
 }
 
 /** Explanatory tooltip copy for soft capabilities — spec §2.1 (missing ⇒ disabled with tooltip). */
@@ -22,10 +25,11 @@ const SOFT_CAPABILITY_EXPLANATIONS: Readonly<Record<keyof SoftCapabilities, stri
 };
 
 /**
- * Phase 0 application shell: wordmark, version, soft-capability summary, and the
- * engine self-test. The 12-mode surface (§8.5) arrives in later phases.
+ * Phase 1 application shell: wordmark, version, soft-capability summary, the
+ * storage foundation panel, and the engine self-test. The 12-mode surface (§8.5)
+ * arrives in later phases.
  */
-export function App({ capabilities, pwaApiOverride }: AppProps) {
+export function App({ capabilities, pwaApiOverride, storageApiOverride }: AppProps) {
   const softEntries = (Object.keys(SOFT_CAPABILITY_LABELS) as (keyof SoftCapabilities)[]).map((key) => ({
     key,
     label: SOFT_CAPABILITY_LABELS[key],
@@ -46,11 +50,11 @@ export function App({ capabilities, pwaApiOverride }: AppProps) {
 
       <main className="flex flex-1 items-center justify-center p-6">
         <div className="w-full max-w-xl rounded-bb-lg border border-bb-line bg-bb-surface p-8 shadow-bb-raised">
-          <p className="text-sm font-semibold tracking-widest text-bb-accent uppercase">Phase 0</p>
-          <h2 className="mt-1 text-2xl font-bold">Verified empty shell</h2>
+          <p className="text-sm font-semibold tracking-widest text-bb-accent uppercase">Phase 1</p>
+          <h2 className="mt-1 text-2xl font-bold">Storage foundation</h2>
           <p className="mt-2 text-sm leading-relaxed text-bb-muted">
-            The toolchain, offline PWA shell, capability gate, and WASM worklet pipeline are in place. The
-            instrument arrives in the phases ahead.
+            The durable layer is live: SQLite in a worker on the Origin Private File System, migrations,
+            repositories, and storage safeguards. The instrument arrives in the phases ahead.
           </p>
 
           <section aria-labelledby="soft-capabilities-heading" className="mt-6">
@@ -75,6 +79,7 @@ export function App({ capabilities, pwaApiOverride }: AppProps) {
             </ul>
           </section>
 
+          <StoragePanel apiOverride={storageApiOverride} />
           <EngineSelfTest />
         </div>
       </main>
