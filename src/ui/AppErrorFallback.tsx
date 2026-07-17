@@ -1,15 +1,14 @@
 import { useRef, useState } from 'react';
 import type { FallbackProps } from 'react-error-boundary';
+import { projectService } from '@/core/project';
 import { disposeDatabase, getDatabaseDriver } from '@/core/storage/client';
 import { purgeAllStorage } from '@/core/storage/opfs';
 
 /**
  * Global error boundary fallback — Safe Mode (spec §8.1). The user must never be
  * trapped in a white screen: the rescue actions work even when the React tree
- * above has crashed, because they talk straight to the storage layer.
+ * above has crashed, because they talk straight to the storage/project layer.
  */
-// STUB(phase-6): the "Export project (.mpcweb)" rescue action needs the §9.6
-// pack pipeline; until then it renders disabled with an explanation.
 
 type ResetStage = 'idle' | 'confirming' | 'resetting';
 
@@ -33,6 +32,26 @@ export function AppErrorFallback({ error }: FallbackProps) {
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [resetStage, setResetStage] = useState<ResetStage>('idle');
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Export the active project as a portable `.mpcweb` archive (spec §8.1 / §9.6 rescue). */
+  const exportProject = async () => {
+    try {
+      setActionNote('Packing project export…');
+      const blob = await projectService.exportMpcweb();
+      const url = URL.createObjectURL(blob);
+      try {
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'bangerbox-project.mpcweb';
+        anchor.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      setActionNote('Project exported. Keep the .mpcweb file safe.');
+    } catch (err) {
+      setActionNote(`Export failed: ${err instanceof Error ? err.message : String(err)}.`);
+    }
+  };
 
   const downloadBackup = async () => {
     try {
@@ -94,9 +113,9 @@ export function AppErrorFallback({ error }: FallbackProps) {
           </button>
           <button
             type="button"
-            disabled
-            title="Project export arrives with the sample pipeline phase."
-            className="rounded-bb-md border border-bb-line px-4 py-2 text-sm font-semibold text-bb-muted opacity-60"
+            data-testid="safe-mode-export"
+            onClick={() => void exportProject()}
+            className="rounded-bb-md border border-bb-line px-4 py-2 text-sm font-semibold text-bb-text transition-colors duration-150 hover:bg-bb-raised"
           >
             Export project (.mpcweb)
           </button>
