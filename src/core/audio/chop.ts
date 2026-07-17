@@ -43,6 +43,24 @@ export function slicesFromMarkers(totalFrames: number, markers: readonly number[
 }
 
 /**
+ * Build one region per detected transient (spec §8.5.4 WASM-transient Chop): each region runs
+ * from an onset to the next (the last to the file end). The lead-in before the first onset is
+ * dropped — unlike {@link slicesFromMarkers}, onsets are region *starts*, not interior cuts.
+ * With no onsets the whole sample is one region.
+ */
+export function slicesFromOnsets(totalFrames: number, onsets: readonly number[]): SliceRegion[] {
+  const starts = [...new Set(onsets.map((o) => Math.round(o)))]
+    .filter((o) => o >= 0 && o < totalFrames)
+    .sort((a, b) => a - b);
+  if (starts.length === 0) return [{ startFrame: 0, endFrame: totalFrames }];
+  const regions: SliceRegion[] = [];
+  for (let i = 0; i < starts.length; i++) {
+    regions.push({ startFrame: starts[i]!, endFrame: i + 1 < starts.length ? starts[i + 1]! : totalFrames });
+  }
+  return regions;
+}
+
+/**
  * Thin a marker list so no two kept markers are closer than `minSpacingFrames` (spec §8.5.4 /
  * §7.5 min-spacing). Input is sorted; the earliest of each dense cluster is kept.
  */
