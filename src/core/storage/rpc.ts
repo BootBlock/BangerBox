@@ -35,8 +35,6 @@ export type DbRequest =
   | { readonly kind: 'transaction'; readonly statements: readonly SqlStatement[] }
   | { readonly kind: 'close' };
 
-export type DbRequestKind = DbRequest['kind'];
-
 /** Main thread → worker. */
 export interface RpcRequestEnvelope {
   readonly id: string;
@@ -76,7 +74,7 @@ const dbRequestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('close') }),
 ]);
 
-export const rpcRequestEnvelopeSchema = z.object({
+const rpcRequestEnvelopeSchema = z.object({
   id: z.string().min(1),
   request: dbRequestSchema,
 });
@@ -89,7 +87,7 @@ const serialisedDbErrorSchema = z.object({
   sql: z.string().optional(),
 });
 
-export const rpcResponseEnvelopeSchema = z.discriminatedUnion('ok', [
+const rpcResponseEnvelopeSchema = z.discriminatedUnion('ok', [
   z.object({ id: z.string().min(1), ok: z.literal(true), result: z.unknown() }),
   z.object({ id: z.string().min(1), ok: z.literal(false), error: serialisedDbErrorSchema }),
 ]);
