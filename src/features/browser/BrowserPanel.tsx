@@ -7,9 +7,10 @@
  */
 import { useEffect, useState } from 'react';
 import { getActiveRepositories, getAudioEngine, projectService } from '@/core/project';
-import { deleteFile } from '@/core/storage/opfs';
+import { bounceActiveSequence } from '@/core/audio/bounceService';
+import { deleteFile, readFile } from '@/core/storage/opfs';
 import { useBrowserStore, useProjectStore, useUIStore } from '@/store';
-import { refreshSamples } from '../sample-edit/sampleContext';
+import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
 
 /** Trigger a browser download of a Blob (spec §9.6 export → download). */
 function downloadBlob(blob: Blob, filename: string): void {
@@ -63,6 +64,21 @@ export function BrowserPanel() {
         setBusy(false);
       }
     })();
+  };
+
+  /** Bounce the active sequence to a `/bounces/` WAV and download it (spec §9.5). */
+  const bounce = async () => {
+    setBusy(true);
+    try {
+      const path = await bounceActiveSequence('bounce', sampleEditContext());
+      const file = await readFile(path);
+      downloadBlob(file, `${(projectName || 'project').replace(/\s+/g, '-')}-bounce.wav`);
+      pushToast('Sequence bounced.', 'success');
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Bounce failed.', 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   /** Delete samples not referenced by any program payload (spec §8.5.7 purge unused). */
@@ -119,6 +135,15 @@ export function BrowserPanel() {
             onChange={importProject}
           />
         </label>
+        <button
+          type="button"
+          disabled={busy || !projectId}
+          data-testid="bounce-sequence"
+          onClick={() => void bounce()}
+          className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs disabled:opacity-50"
+        >
+          Bounce sequence
+        </button>
         <button
           type="button"
           disabled={busy || samples.length === 0}

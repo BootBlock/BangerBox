@@ -9,6 +9,7 @@
 // spec §2.7 / §14 2026-07-17 (e): worklet modules load as real es-format files.
 import meterTapWorkletUrl from './worklets/meterTap.worklet.ts?worker&url';
 import dspEffectWorkletUrl from './worklets/dspEffect.worklet.ts?worker&url';
+import recorderWorkletUrl from './worklets/recorder.worklet.ts?worker&url';
 import { loadKernelModules } from '@/core/dsp/kernelModules';
 
 /** Create the single application AudioContext at the project sample rate (spec §5.1). */
@@ -22,7 +23,7 @@ export async function resumeAudioContext(context: AudioContext): Promise<void> {
 }
 
 /** Every AudioWorklet processor module the engine needs (loaded during the gate). */
-const WORKLET_MODULE_URLS: readonly string[] = [meterTapWorkletUrl, dspEffectWorkletUrl];
+const WORKLET_MODULE_URLS: readonly string[] = [meterTapWorkletUrl, dspEffectWorkletUrl, recorderWorkletUrl];
 
 /**
  * Load all worklet processor modules AND compile the WASM kernel modules the DSP-effect

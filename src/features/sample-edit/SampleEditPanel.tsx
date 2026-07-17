@@ -16,7 +16,8 @@ import {
   stretchSampleToNewSample,
 } from '@/core/audio/sampleEditService';
 import { importAudioFile } from '@/core/audio/sampleImport';
-import { useBrowserStore, useProjectStore, useUIStore } from '@/store';
+import { extractAndBakeGroove } from '@/core/audio/grooveService';
+import { useBrowserStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
 import { WaveformCanvas } from '@/ui/primitives/WaveformCanvas';
 import { refreshSamples, sampleEditContext } from './sampleContext';
 
@@ -199,6 +200,21 @@ export function SampleEditPanel() {
                   onClick={() =>
                     void run('Chop', () => chopSampleToNewSamples(selected, { sensitivity }, sampleEditContext()))
                   }
+                />
+                <ToolButton
+                  busy={busy}
+                  label="Groove → bake to track"
+                  testId="sample-groove"
+                  onClick={() => {
+                    const track = Object.values(useSequenceStore.getState().tracks)[0];
+                    if (!track) {
+                      pushToast('No track to bake the groove into.', 'warning');
+                      return;
+                    }
+                    void run('Groove bake', () =>
+                      extractAndBakeGroove(selected, track.id, useTransportStore.getState().bpm),
+                    );
+                  }}
                 />
               </div>
 

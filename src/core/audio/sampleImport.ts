@@ -98,6 +98,40 @@ export interface ImportContext {
   readonly projectBitDepth: BitDepth;
 }
 
+/** The subset needed to persist channels (no AudioContext) — shared by edit/looper writes. */
+export type SampleWriteContext = Pick<ImportContext, 'repos' | 'projectId' | 'projectBitDepth'>;
+
+/**
+ * Encode planar channels to canonical WAV, write them to a new OPFS sample, and insert the
+ * metadata row + tags (spec §9.4 steps 4–5). The shared write path for import, destructive
+ * sample edits, and Looper captures. Returns the new sample row.
+ */
+export async function saveChannelsAsSample(
+  channels: Float32Array[],
+  sampleRate: number,
+  name: string,
+  tags: readonly string[],
+  ctx: SampleWriteContext,
+): Promise<SampleRow> {
+  const bytes = await encodeWavInWorker(channels, sampleRate, ctx.projectBitDepth);
+  const sampleId = crypto.randomUUID();
+  const path = samplePath(ctx.projectId, sampleId);
+  // Fresh ArrayBuffer-backed view — the OPFS stream API rejects shared-buffer views.
+  await writeFileAtomic(path, new Uint8Array(bytes));
+  const row = await ctx.repos.samples.create({
+    id: sampleId,
+    project_id: ctx.projectId,
+    name,
+    opfs_path: path,
+    frames: channels[0]?.length ?? 0,
+    sample_rate: sampleRate,
+    channels: (channels.length === 1 ? 1 : 2) as 1 | 2,
+    root_note: 60,
+  });
+  await ctx.repos.samples.setTags(sampleId, [...new Set(tags)]);
+  return row;
+}
+
 /** Resample a decoded buffer to `targetRate` if needed, via an OfflineAudioContext (spec §9.4). */
 async function resampleIfNeeded(buffer: AudioBuffer, targetRate: number): Promise<Float32Array[]> {
   if (buffer.sampleRate === targetRate) return planarChannels(buffer);
@@ -123,26 +157,7 @@ export async function importDecodedSample(
   ctx: ImportContext,
 ): Promise<SampleRow> {
   const standardised = mixdownToStereo(await resampleIfNeeded(buffer, ctx.projectSampleRate));
-  const bytes = await encodeWavInWorker(standardised, ctx.projectSampleRate, ctx.projectBitDepth);
-
-  const sampleId = crypto.randomUUID();
-  const path = samplePath(ctx.projectId, sampleId);
-  // Fresh ArrayBuffer-backed view — the OPFS stream API rejects shared-buffer views.
-  await writeFileAtomic(path, new Uint8Array(bytes));
-
-  const row = await ctx.repos.samples.create({
-    id: sampleId,
-    project_id: ctx.projectId,
-    name,
-    opfs_path: path,
-    frames: standardised[0]?.length ?? 0,
-    sample_rate: ctx.projectSampleRate,
-    channels: (standardised.length === 1 ? 1 : 2) as 1 | 2,
-    root_note: 60,
-  });
-  const uniqueTags = [...new Set(['imported', ...tags])];
-  await ctx.repos.samples.setTags(sampleId, uniqueTags);
-  return row;
+  return saveChannelsAsSample(standardised, ctx.projectSampleRate, name, ['imported', ...tags], ctx);
 }
 
 /** Decode + import a picked file (spec §9.4 steps 1–5). Source folder name becomes a tag. */

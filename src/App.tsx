@@ -6,6 +6,7 @@ import {
 import { ProgramEditPanel } from '@/features/program-edit';
 import { SampleEditPanel } from '@/features/sample-edit';
 import { BrowserPanel } from '@/features/browser';
+import { LooperPanel } from '@/features/looper';
 import { AudioEnginePanel } from '@/ui/AudioEnginePanel';
 import { ProjectStatusBar } from '@/ui/ProjectStatusBar';
 import { PwaUpdatePrompt } from '@/ui/PwaUpdatePrompt';
@@ -90,6 +91,7 @@ export function App({ capabilities, pwaApiOverride, storageApiOverride }: AppPro
           <AudioEnginePanel />
           <ProgramEditPanel />
           <SampleEditPanel />
+          <LooperPanel />
           <BrowserPanel />
         </div>
       </main>

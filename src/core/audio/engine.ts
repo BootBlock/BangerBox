@@ -24,6 +24,7 @@ import { loadAudioWorklets } from './context';
 import { ensureDemoSampleInOpfs } from './demoSample';
 import type { ChannelHandle } from './factory';
 import { MixerGraph } from './graph';
+import { Looper } from './looper';
 import { MeterRegistry } from './metering';
 import { Metronome } from './metronome';
 import { PreviewChannel } from './preview';
@@ -124,6 +125,13 @@ export class AudioEngine {
       tuneSemitones: 0,
       tuneCents: 0,
     });
+  }
+
+  /** Create + attach a Looper capturing the master bus (spec §8.5.8). Caller owns disposal. */
+  createLooper(): Looper {
+    const looper = new Looper(this.context, this.graph.master.meterPoint, this.context.sampleRate);
+    looper.attach();
+    return looper;
   }
 
   /** Sound one metronome click now (test UI); the scheduler drives this in Phase 4. */

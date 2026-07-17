@@ -7,16 +7,15 @@
  * Browser-only (OPFS + WASM); the underlying transforms are unit-tested in their own modules.
  */
 import type { SampleRow } from '@/core/storage/repositories';
-import { readFile, samplePath, writeFileAtomic } from '@/core/storage/opfs';
+import { readFile } from '@/core/storage/opfs';
 import { slicesFromOnsets, type SliceRegion } from './chop';
 import { loadKernelModule } from '@/core/dsp/kernelLoader';
 import { GranularStretchKernel, granularStretchWasmUrl, type StretchParams } from '@/core/dsp/granularStretchKernel';
 import { TransientDetectKernel, transientDetectWasmUrl, type DetectOptions } from '@/core/dsp/transientDetectKernel';
-import { encodeWavInWorker } from './sampleImport';
+import { saveChannelsAsSample, type SampleWriteContext } from './sampleImport';
 import { decodeWav } from './wav';
-import type { ImportContext } from './sampleImport';
 
-type EditContext = Pick<ImportContext, 'repos' | 'projectId' | 'projectBitDepth'>;
+type EditContext = SampleWriteContext;
 
 /** Read a project sample's canonical WAV back into planar Float32 channels (spec §8.5.4). */
 export async function readSampleChannels(
@@ -28,33 +27,14 @@ export async function readSampleChannels(
 }
 
 /** Write processed channels as a new OPFS sample + row (spec §8.5.4 non-destructive result). */
-async function writeNewSample(
+function writeNewSample(
   channels: Float32Array[],
   sampleRate: number,
   name: string,
   tags: readonly string[],
   ctx: EditContext,
 ): Promise<SampleRow> {
-  const bytes = await encodeWavInWorker(channels, sampleRate, ctx.projectBitDepth);
-  const sampleId = crypto.randomUUID();
-  const path = samplePath(ctx.projectId, sampleId);
-  await writeFileAtomic(path, new Uint8Array(bytes));
-  const row = await ctx.repos.samples.create({
-    id: sampleId,
-    project_id: ctx.projectId,
-    name,
-    opfs_path: path,
-    frames: channels[0]?.length ?? 0,
-    sample_rate: sampleRate,
-    channels: (channels.length === 1 ? 1 : 2) as 1 | 2,
-    root_note: row_root(name),
-  });
-  await ctx.repos.samples.setTags(sampleId, [...new Set(['edited', ...tags])]);
-  return row;
-}
-
-function row_root(_name: string): number {
-  return 60; // default unity note (spec §9.3 default 60)
+  return saveChannelsAsSample(channels, sampleRate, name, ['edited', ...tags], ctx);
 }
 
 /** Apply a pure channel transform (Normalise/Reverse/Trim/Fade) to a new sample (spec §8.5.4). */
