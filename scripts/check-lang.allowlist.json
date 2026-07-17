@@ -46,8 +46,12 @@
       "reason": "CSS keyword is platform-fixed"
     },
     {
-      "pattern": "\\.normalize\\(",
-      "reason": "String.prototype.normalize is platform-fixed"
+      "pattern": "\\.normalize\\b",
+      "reason": "String.prototype.normalize and ConvolverNode.normalize are platform-fixed"
+    },
+    {
+      "pattern": "\\bnormalize\\b(?=\\s*[:=])",
+      "reason": "ConvolverNode.normalize property field (platform-fixed API name)"
     },
     {
       "pattern": "\\btransition-colors\\b",
