@@ -62,7 +62,9 @@ export class AudioEngine {
    * destination path (spec §12 audible proof; §5.4 pad playback from OPFS samples).
    */
   async triggerDemoPad(velocity = 110): Promise<void> {
-    const projectId = useProjectStore.getState().projectId;
+    // Fall back to the demo id if the project session has not hydrated yet, so the
+    // audible proof never depends on boot timing (the sample path just needs to be valid).
+    const projectId = useProjectStore.getState().projectId || DEMO_PROGRAM_ID;
     const path = await ensureDemoSampleInOpfs(projectId);
     const buffer = await this.sampleCache.get(path);
     const track = this.graph.ensureTrackChannel(DEMO_TRACK_ID);

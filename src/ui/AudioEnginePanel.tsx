@@ -11,6 +11,7 @@ import type { AudioEngine } from '@/core/audio/engine';
 import { startAudioEngine } from '@/core/project';
 import { useMixerStore, useUIStore } from '@/store';
 import { LEVEL_RANGE } from '@/core/project/schemas';
+import { installAudioProbe } from './audioProbe';
 import { MeterCanvas } from './primitives/MeterCanvas';
 
 type EngineStatus = 'idle' | 'starting' | 'running' | 'suspended';
@@ -35,7 +36,9 @@ export function AudioEnginePanel() {
   const start = async () => {
     setStatus('starting');
     try {
-      engineRef.current = await startAudioEngine();
+      const engine = await startAudioEngine();
+      engineRef.current = engine;
+      installAudioProbe(engine); // the smoke's §11.4 test seam
       setStatus('running');
     } catch (error) {
       setStatus('idle');

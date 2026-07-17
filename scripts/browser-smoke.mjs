@@ -5,9 +5,9 @@
 //   Section A (dev server, COOP/COEP headers):
 //     - `crossOriginIsolated === true`
 //     - the app shell boots past the capability gate
-//     - the engine self-test passes: worklet module loads as a real file and the WASM
-//       kernel, transferred via processorOptions, processes audio inside the worklet
-//       (spec §5.6.2)
+//     - the audio engine starts on the user gesture (§5.1), a pad plays an audible
+//       signal the master meter tracks (§5.4/§5.8), create/destroy churn is leak-free
+//       (§5.3), and OfflineAudioContext effect renders assert DSP properties (§11.2)
 //   Section B (production build + preview server):
 //     - the PWA manifest is served and linked
 //     - the service worker installs and takes control
@@ -104,7 +104,7 @@ async function assertShellAndSelfTest(page, label) {
 
   await step(`${label}: app shell boots past the capability gate`, async () => {
     await page.locator('h1', { hasText: 'BangerBox' }).waitFor({ timeout: 15_000 });
-    await page.locator('h2', { hasText: 'Storage foundation' }).waitFor({ timeout: 15_000 });
+    await page.locator('h2', { hasText: 'Audio core' }).waitFor({ timeout: 15_000 });
   });
 
   // Phase 1 exit criterion (spec §12): the real-OPFS path — SQLite worker boot +
@@ -138,16 +138,81 @@ async function assertShellAndSelfTest(page, label) {
     }
   });
 
-  await step(`${label}: engine self-test proves the worklet + WASM transfer path`, async () => {
-    await page.getByTestId('engine-self-test-run').click();
-    const status = page.getByTestId('engine-self-test-status');
-    await status.and(page.locator('[data-status="passed"], [data-status="failed"]')).waitFor({
-      timeout: 20_000,
+  // Phase 3 exit criteria (spec §12): audible end-to-end path, meters reflect real
+  // peaks, leak-free create/destroy churn (§5.3), OfflineAudioContext effect asserts
+  // (§11.2). The audio probe (window.__bangerboxAudioProbe) is the §11.4 test seam.
+  await step(`${label}: audio engine starts on the user gesture (spec §5.1)`, async () => {
+    await page.getByTestId('audio-start').click();
+    await page
+      .getByTestId('audio-engine-status')
+      .and(page.locator('[data-status="running"]'))
+      .waitFor({ timeout: 20_000 });
+    await page.waitForFunction(
+      () => typeof globalThis.__bangerboxAudioProbe?.masterPeak === 'function',
+      undefined,
+      { timeout: 10_000 },
+    );
+  });
+
+  await step(`${label}: a pad plays an audible signal and the master meter tracks it`, async () => {
+    await page.getByTestId('pad-trigger-0').click();
+    // The master meter SAB registers a real peak (audible path + meters reflect peaks).
+    await page.waitForFunction(
+      () => (globalThis.__bangerboxAudioProbe?.masterPeak() ?? 0) > 0.02,
+      undefined,
+      { timeout: 4_000, polling: 25 },
+    );
+    // The meter canvas surfaces that peak to assistive tech too.
+    await page.waitForFunction(
+      () =>
+        Number(
+          document.querySelector('[data-testid="meter-master"]')?.getAttribute('aria-valuenow') ?? '0',
+        ) > 0,
+      undefined,
+      { timeout: 4_000 },
+    );
+  });
+
+  await step(`${label}: create/destroy churn is leak-free (spec §5.3)`, async () => {
+    const before = await page.evaluate(() => performance.memory?.usedJSHeapSize ?? 0);
+    await page.evaluate(() => globalThis.__bangerboxAudioProbe.churn(24));
+    await page.waitForFunction(
+      () => (globalThis.__bangerboxAudioProbe?.liveVoiceCount() ?? -1) === 0,
+      undefined,
+      { timeout: 6_000 },
+    );
+    const after = await page.evaluate(() => performance.memory?.usedJSHeapSize ?? 0);
+    if (before > 0 && after - before > 12 * 1024 * 1024) {
+      throw new Error(`heap grew ${Math.round((after - before) / 1048576)} MiB across churn — possible node leak`);
+    }
+  });
+
+  await step(`${label}: offline effect renders assert DSP properties (spec §11.2)`, async () => {
+    const results = await page.evaluate(async () => {
+      const probe = globalThis.__bangerboxAudioProbe;
+      const nonSilent = {};
+      for (const fx of ['eq4', 'filter', 'delay', 'compressor', 'saturator', 'reverb']) {
+        nonSilent[fx] = await probe.renderEffect(fx);
+      }
+      const sat = await probe.renderEffect('saturator', { params: { drive: 36, curve: 1 } });
+      const filt = await probe.renderEffect('filter', {
+        toneHz: 6000,
+        params: { type: 0, cutoff: 200, resonance: 1 },
+      });
+      return { nonSilent, sat, filt };
     });
-    const outcome = await status.getAttribute('data-status');
-    if (outcome !== 'passed') {
-      const detail = await page.getByTestId('engine-self-test-detail').textContent();
-      throw new Error(`self-test ${outcome}: ${detail}`);
+    for (const [fx, r] of Object.entries(results.nonSilent)) {
+      if (!(r.outputRms > 0.0005) || !Number.isFinite(r.outputRms)) {
+        throw new Error(`${fx} rendered silence/NaN (rms ${r.outputRms})`);
+      }
+    }
+    if (results.sat.outputPeak > 1.05) {
+      throw new Error(`saturator peak ${results.sat.outputPeak} exceeds the unity bound`);
+    }
+    if (!(results.filt.outputRms < results.filt.inputRms * 0.6)) {
+      throw new Error(
+        `low-pass did not attenuate a 6 kHz tone (out ${results.filt.outputRms} vs in ${results.filt.inputRms})`,
+      );
     }
   });
 }
