@@ -1,0 +1,73 @@
+{
+  "name": "bangerbox",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "BangerBox — an offline-first, browser-based DAW, sequencer, and sampler (installable PWA).",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "config": {
+    "phase": "0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:wasm && tsc -b && vite build",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node scripts/browser-smoke.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "type-check": "tsc -b --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:deps": "node scripts/check-deps.mjs",
+    "check:lang": "node scripts/check-lang.mjs",
+    "check:stubs": "node scripts/check-stubs.mjs",
+    "verify": "npm run check:deps && npm run check:lang && npm run check:stubs",
+    "icons": "node scripts/generate-icons.mjs"
+  },
+  "dependencies": {
+    "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "fflate": "^0.8.3",
+    "lucide-react": "^1.25.0",
+    "motion": "^12.42.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-error-boundary": "^6.1.2",
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "assemblyscript": "^0.28.19",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.7.0",
+    "happy-dom": "^20.10.6",
+    "playwright": "^1.61.1",
+    "prettier": "^3.9.5",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.64.0",
+    "vite": "^8.1.5",
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^4.1.10"
+  }
+}
