@@ -10,7 +10,8 @@
  * §7.9), `liveNote.trackId` (record-capture destination), `eventsDiff.sequenceId` (the
  * owning sequence, needed to select a segment's tracks in song mode, §7.9), `liveErase`
  * request + `erased` response (MPC live erase, §7.7), and `ScheduledEvent.accented`
- * (metronome beat-1 accent, §5.9). New kinds extend the union; existing ones never change.
+ * (metronome beat-1 accent, §5.9). Phase 5 adds the `arp` request (keygroup arpeggiator,
+ * §7.3; spec §14 2026-07-17 (g)). New kinds extend the union; existing ones never change.
  */
 import { z } from 'zod';
 import {
@@ -20,6 +21,7 @@ import {
   type MidiEvent,
 } from '@/core/project/schemas';
 import type { NoteRepeatDivision } from './noteRepeat';
+import type { ArpMode } from './arpeggiator';
 
 /** Protocol version — bumped on any breaking change to the message shapes (spec §7.1.3). */
 export const SCHEDULER_PROTOCOL_VERSION = 1;
@@ -71,6 +73,7 @@ export type SchedulerRequest =
   | { readonly kind: 'sequenceMeta'; readonly sequences: Readonly<Record<string, SchedulerSequenceMeta>>; readonly projectBpm: number; readonly activeSequenceId: string | null; readonly playbackMode: 'sequence' | 'song' }
   | { readonly kind: 'liveNote'; readonly note: number; readonly velocity: number; readonly on: boolean; readonly timestamp: number; readonly trackId: string }
   | { readonly kind: 'noteRepeat'; readonly enabled: boolean; readonly division: NoteRepeatDivision }
+  | { readonly kind: 'arp'; readonly enabled: boolean; readonly mode: ArpMode; readonly octaves: number; readonly gate: number; readonly division: NoteRepeatDivision }
   | { readonly kind: 'metronome'; readonly enabled: boolean; readonly countInBars: 0 | 1 | 2 }
   | { readonly kind: 'liveErase'; readonly trackId: string; readonly note: number; readonly active: boolean };
 
@@ -110,6 +113,7 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
   z.object({ kind: z.literal('sequenceMeta'), sequences: z.record(z.string(), sequenceMetaSchema), projectBpm: z.number(), activeSequenceId: z.string().nullable(), playbackMode: z.enum(['sequence', 'song']) }),
   z.object({ kind: z.literal('liveNote'), note: z.number().int(), velocity: z.number().int(), on: z.boolean(), timestamp: z.number(), trackId: z.string() }),
   z.object({ kind: z.literal('noteRepeat'), enabled: z.boolean(), division: noteRepeatDivisionSchema }),
+  z.object({ kind: z.literal('arp'), enabled: z.boolean(), mode: z.enum(['up', 'down', 'upDown', 'played', 'random']), octaves: z.number().int(), gate: z.number(), division: noteRepeatDivisionSchema }),
   z.object({ kind: z.literal('metronome'), enabled: z.boolean(), countInBars: z.union([z.literal(0), z.literal(1), z.literal(2)]) }),
   z.object({ kind: z.literal('liveErase'), trackId: z.string(), note: z.number().int(), active: z.boolean() }),
 ]) as z.ZodType<SchedulerRequest>;

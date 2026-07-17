@@ -129,6 +129,37 @@ describe('SchedulerCore — note repeat (spec §7.3)', () => {
   });
 });
 
+describe('SchedulerCore — arpeggiator (spec §7.3)', () => {
+  it('arpeggiates a held chord across the division grid', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    core.setArpeggiator(true, { mode: 'up', octaves: 1, gate: 0.5, division: { value: 8, triplet: false } });
+    core.pushLiveNote(60, 100, true, 0, 't1');
+    core.pushLiveNote(64, 100, true, 0, 't1');
+    core.setTransport(true, false, 0);
+
+    const arped = notes(run(core, steps(1.0)));
+    // 1/8 grid (480 ticks): step 0 → 60, step 1 → 64, step 2 → 60 … cycling the 2-note chord.
+    const byTick = new Map(arped.map((e) => [e.tick, e.note]));
+    expect(byTick.get(0)).toBe(60);
+    expect(byTick.get(480)).toBe(64);
+    expect(byTick.get(960)).toBe(60);
+  });
+
+  it('does nothing when disabled or no note is held', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    core.setArpeggiator(false, { mode: 'up', octaves: 1, gate: 0.5, division: { value: 8, triplet: false } });
+    core.pushLiveNote(60, 100, true, 0, 't1');
+    core.setTransport(true, false, 0);
+    expect(notes(run(core, steps(1.0)))).toHaveLength(0);
+  });
+});
+
 describe('SchedulerCore — recording (spec §7.7)', () => {
   it('captures a played note and flushes it on stop', () => {
     const core = new SchedulerCore();
