@@ -155,22 +155,34 @@ async function assertShellAndSelfTest(page, label) {
   });
 
   await step(`${label}: a pad plays an audible signal and the master meter tracks it`, async () => {
+    // Prove the UI button is wired…
     await page.getByTestId('pad-trigger-0').click();
-    // The master meter SAB registers a real peak (audible path + meters reflect peaks).
-    await page.waitForFunction(
-      () => (globalThis.__bangerboxAudioProbe?.masterPeak() ?? 0) > 0.02,
-      undefined,
-      { timeout: 4_000, polling: 25 },
-    );
-    // The meter canvas surfaces that peak to assistive tech too.
-    await page.waitForFunction(
-      () =>
+    // …then retrigger through the probe, observing BOTH the master meter SAB peak
+    // (audible path) and the meter canvas aria-valuenow (meters reflect peaks) within a
+    // tight window of each hit — so the ~0.2 s peak is never missed by poll timing, and
+    // the aria check sees signal while it is still flowing (peak-hold has not decayed).
+    const result = await page.evaluate(async () => {
+      const probe = globalThis.__bangerboxAudioProbe;
+      const ariaNow = () =>
         Number(
           document.querySelector('[data-testid="meter-master"]')?.getAttribute('aria-valuenow') ?? '0',
-        ) > 0,
-      undefined,
-      { timeout: 4_000 },
-    );
+        );
+      let peakSeen = false;
+      let ariaSeen = false;
+      for (let attempt = 0; attempt < 60 && !(peakSeen && ariaSeen); attempt++) {
+        await probe.churn(1); // one demo pad hit (awaits decode + start)
+        const start = performance.now();
+        while (performance.now() - start < 350) {
+          if (probe.masterPeak() > 0.02) peakSeen = true;
+          if (ariaNow() > 0) ariaSeen = true;
+          if (peakSeen && ariaSeen) break;
+          await new Promise((r) => setTimeout(r, 10));
+        }
+      }
+      return { peakSeen, ariaSeen };
+    });
+    if (!result.peakSeen) throw new Error('master meter SAB never registered a peak after pad hits');
+    if (!result.ariaSeen) throw new Error('master meter canvas aria-valuenow never rose above 0');
   });
 
   await step(`${label}: create/destroy churn is leak-free (spec §5.3)`, async () => {

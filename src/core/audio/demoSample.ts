@@ -21,12 +21,24 @@ export function demoSampleBytes(): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** In-flight/completed write per project id, so concurrent triggers share one write. */
+const ensurePending = new Map<string, Promise<string>>();
+
 /**
  * Ensure the demo pluck exists at its canonical OPFS sample path for `projectId`
- * (spec §9.1) and return that path. Idempotent — writes only when absent.
+ * (spec §9.1) and return that path. Idempotent AND concurrency-safe: rapid pad hits
+ * would otherwise race two atomic writes onto the same locked destination, so the write
+ * promise is memoised per project (mirrors the sample-cache dedupe, spec §9.4).
  */
-export async function ensureDemoSampleInOpfs(projectId: string): Promise<string> {
+export function ensureDemoSampleInOpfs(projectId: string): Promise<string> {
+  const cached = ensurePending.get(projectId);
+  if (cached) return cached;
   const path = samplePath(projectId, DEMO_SAMPLE_ID);
-  if (!(await fileExists(path))) await writeFileAtomic(path, demoSampleBytes());
-  return path;
+  const pending = (async () => {
+    if (!(await fileExists(path))) await writeFileAtomic(path, demoSampleBytes());
+    return path;
+  })();
+  ensurePending.set(projectId, pending);
+  pending.catch(() => ensurePending.delete(projectId)); // allow a retry after failure
+  return pending;
 }
