@@ -71,9 +71,30 @@ export const EFFECT_PARAM_RANGES: Record<EffectType, Record<string, Range>> = {
     predelay: [0, 200],
     mix: MIX_RANGE,
   },
-  // Worklet + WASM effects arrive in Phase 6 (spec §5.7); no native params here yet.
-  multibandComp: {},
-  limiter: {},
+  // Worklet + WASM effects (spec §5.7): 3-band compressor and lookahead limiter.
+  multibandComp: {
+    crossoverLowMid: [40, 500],
+    crossoverMidHigh: [500, 8_000],
+    band0Threshold: [-60, 0],
+    band0Ratio: [1, 20],
+    band0Attack: [0.1, 100],
+    band0Release: [10, 1_000],
+    band0Makeup: [0, 24],
+    band1Threshold: [-60, 0],
+    band1Ratio: [1, 20],
+    band1Attack: [0.1, 100],
+    band1Release: [10, 1_000],
+    band1Makeup: [0, 24],
+    band2Threshold: [-60, 0],
+    band2Ratio: [1, 20],
+    band2Attack: [0.1, 100],
+    band2Release: [10, 1_000],
+    band2Makeup: [0, 24],
+  },
+  limiter: {
+    ceiling: [-6, 0],
+    release: [10, 500],
+  },
 };
 
 /** Neutral starting parameters for a freshly added insert of `effectType` (spec §5.7). */
@@ -102,6 +123,28 @@ export function defaultEffectParams(effectType: EffectType): Record<string, numb
       return { drive: 6, curve: 0, output: 0, mix: 1 };
     case 'reverb':
       return { size: 1.8, damping: 0.5, predelay: 12, mix: 0.3 };
+    case 'multibandComp':
+      return {
+        crossoverLowMid: 200,
+        crossoverMidHigh: 2_000,
+        band0Threshold: -24,
+        band0Ratio: 3,
+        band0Attack: 15,
+        band0Release: 150,
+        band0Makeup: 0,
+        band1Threshold: -24,
+        band1Ratio: 3,
+        band1Attack: 10,
+        band1Release: 120,
+        band1Makeup: 0,
+        band2Threshold: -24,
+        band2Ratio: 3,
+        band2Attack: 5,
+        band2Release: 80,
+        band2Makeup: 0,
+      };
+    case 'limiter':
+      return { ceiling: -0.3, release: 100 };
     default:
       return {};
   }

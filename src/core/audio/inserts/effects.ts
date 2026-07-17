@@ -8,8 +8,11 @@
  */
 import { clamp } from '@/core/math';
 import type { EffectType } from '@/core/project/schemas';
+import { getKernelModule, type WorkletKernelName } from '@/core/dsp/kernelModules';
 import { dbToGain } from '../params/faderLaw';
 import { rampParamTarget, setParamNow } from '../params/ramps';
+import type { DspEffectMessage } from '../worklets/dspEffectProtocol';
+import { DSP_EFFECT_PROCESSOR } from '../worklets/dspEffectProtocol';
 import { makeReverbImpulse, makeSaturatorCurve } from './dspCurves';
 import {
   EFFECT_PARAM_RANGES,
@@ -237,10 +240,53 @@ function buildReverb(context: BaseAudioContext, params: Record<string, number>):
   };
 }
 
-/** Passthrough core for effects whose DSP arrives in a later phase (spec §5.7). */
+/**
+ * Worklet + WASM core (spec §5.6.2 / §5.7) for the `multibandComp`, `limiter` and (Phase 6+)
+ * `fdnReverb` reverb engines. The precompiled kernel module is handed to the `dsp-effect`
+ * processor via processorOptions; params flow over the port (kernels apply directly — the
+ * native-node dezipper, §4.3, does not apply). The limiter reports its lookahead as latency for
+ * PDC (spec §5.7.3); the others report 0.
+ */
+function buildWorkletEffect(
+  context: BaseAudioContext,
+  kernel: WorkletKernelName,
+  effectType: EffectType,
+  module: WebAssembly.Module,
+  params: Record<string, number>,
+): EffectCore {
+  const clamped: Record<string, number> = {};
+  for (const [name, value] of Object.entries(params)) clamped[name] = clampParam(effectType, name, value);
+  const node = new AudioWorkletNode(context, DSP_EFFECT_PROCESSOR, {
+    numberOfInputs: 1,
+    numberOfOutputs: 1,
+    outputChannelCount: [2],
+    channelCount: 2,
+    channelCountMode: 'explicit',
+    processorOptions: { module, kernel, maxBlock: 128, params: clamped },
+  });
+  const latencySamples = kernel === 'limiter' ? Math.round(0.0015 * context.sampleRate) : 0;
+  return {
+    input: node,
+    output: node,
+    latencySamples,
+    setParam: (name, value) => {
+      const message: DspEffectMessage = { kind: 'param', name, value: clampParam(effectType, name, value) };
+      node.port.postMessage(message);
+    },
+    destroy: () => {
+      const dispose: DspEffectMessage = { kind: 'dispose' };
+      node.port.postMessage(dispose);
+      node.disconnect();
+    },
+  };
+}
+
+/**
+ * Passthrough fallback used only when the kernel modules have not been loaded (e.g. unit tests
+ * without the start gate). In the live app and offline renders the worklet cores above run the
+ * real WASM DSP (spec §5.7).
+ */
 function buildPassthrough(context: BaseAudioContext): EffectCore {
-  // STUB(phase-6): multibandComp/limiter are worklet + WASM effects (spec §5.7) — a
-  // clean passthrough keeps the graph robust if one is added before Phase 6 ships them.
   const node = context.createGain();
   return {
     input: node,
@@ -268,8 +314,24 @@ export function buildEffectCore(
       return buildCompressor(context, params);
     case 'saturator':
       return buildSaturator(context, params);
-    case 'reverb':
-      return buildReverb(context, params);
+    case 'reverb': {
+      // spec §5.7: v1 native ConvolverNode; Phase 6+ the fdnReverb worklet when its module is
+      // loaded (start gate / offline prepare). Native remains the fallback (e.g. unit tests).
+      const module = getKernelModule('fdnReverb');
+      return module
+        ? buildWorkletEffect(context, 'fdnReverb', 'reverb', module, params)
+        : buildReverb(context, params);
+    }
+    case 'multibandComp': {
+      const module = getKernelModule('multibandComp');
+      return module
+        ? buildWorkletEffect(context, 'multibandComp', 'multibandComp', module, params)
+        : buildPassthrough(context);
+    }
+    case 'limiter': {
+      const module = getKernelModule('limiter');
+      return module ? buildWorkletEffect(context, 'limiter', 'limiter', module, params) : buildPassthrough(context);
+    }
     default:
       return buildPassthrough(context);
   }
