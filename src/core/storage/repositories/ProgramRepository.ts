@@ -1,0 +1,66 @@
+/**
+ * Program persistence (spec §9.2, §9.3 `programs`).
+ *
+ * Payloads are opaque JSON here; the §6 DrumProgram/KeygroupProgram Zod schemas
+ * validate them at hydration (spec §4.4, Phase 2+).
+ */
+import { DbError } from '../errors';
+import { BaseRepository } from './base';
+import type { Page, PageParams, ProgramRow } from './types';
+
+export interface ProgramCreate {
+  readonly id?: string;
+  readonly project_id: string;
+  readonly name: string;
+  readonly type: ProgramRow['type'];
+  readonly payload: string;
+}
+
+export interface ProgramPatch {
+  readonly name?: string;
+  readonly payload?: string;
+}
+
+const PATCH_COLUMNS = ['name', 'payload'] as const;
+
+export class ProgramRepository extends BaseRepository {
+  async create(input: ProgramCreate): Promise<ProgramRow> {
+    const id = input.id ?? crypto.randomUUID();
+    await this.driver.execute(
+      'INSERT INTO programs (id, project_id, name, type, payload) VALUES (?, ?, ?, ?, ?);',
+      [id, input.project_id, input.name, input.type, input.payload],
+    );
+    return this.require(id);
+  }
+
+  getById(id: string): Promise<ProgramRow | undefined> {
+    return this.driver.queryOne<ProgramRow>('SELECT * FROM programs WHERE id = ?;', [id]);
+  }
+
+  async listByProject(projectId: string, page: PageParams = {}): Promise<Page<ProgramRow>> {
+    const { limit, offset } = this.resolvePage(page);
+    const rows = await this.driver.query<ProgramRow>(
+      'SELECT * FROM programs WHERE project_id = ? ORDER BY name, id LIMIT ? OFFSET ?;',
+      [projectId, limit, offset],
+    );
+    return this.toPage(rows, limit, offset);
+  }
+
+  async update(id: string, patch: ProgramPatch): Promise<ProgramRow> {
+    const { clause, params } = this.buildSet(patch, PATCH_COLUMNS);
+    if (clause.length === 0) return this.require(id);
+    await this.driver.execute(`UPDATE programs SET ${clause} WHERE id = ?;`, [...params, id]);
+    return this.require(id);
+  }
+
+  /** Delete the program; §9.3 sets referencing tracks' program_id to NULL. */
+  async remove(id: string): Promise<void> {
+    await this.driver.execute('DELETE FROM programs WHERE id = ?;', [id]);
+  }
+
+  private async require(id: string): Promise<ProgramRow> {
+    const row = await this.getById(id);
+    if (!row) throw new DbError('SQLITE_ERROR', `Program ${id} not found.`);
+    return row;
+  }
+}
