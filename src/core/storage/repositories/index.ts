@@ -41,13 +41,13 @@ export function createRepositories(driver: IDatabaseDriver): Repositories {
   };
 }
 
-export { AutomationRepository } from './AutomationRepository';
-export { MidiEventRepository } from './MidiEventRepository';
-export { ProgramRepository } from './ProgramRepository';
-export { ProjectRepository } from './ProjectRepository';
-export { SampleRepository } from './SampleRepository';
-export { SequenceRepository } from './SequenceRepository';
+export { AutomationRepository, type AutomationPointCreate } from './AutomationRepository';
+export { MidiEventRepository, type MidiEventCreate } from './MidiEventRepository';
+export { ProgramRepository, type ProgramCreate, type ProgramPatch } from './ProgramRepository';
+export { ProjectRepository, type ProjectCreate, type ProjectSettingsPatch } from './ProjectRepository';
+export { SampleRepository, type SampleCreate } from './SampleRepository';
+export { SequenceRepository, type SequenceCreate, type SequencePatch } from './SequenceRepository';
 export { SettingsRepository } from './SettingsRepository';
-export { SongRepository } from './SongRepository';
-export { TrackRepository } from './TrackRepository';
+export { SongRepository, type SongEntryCreate } from './SongRepository';
+export { TrackRepository, type TrackCreate, type TrackPatch } from './TrackRepository';
 export type * from './types';
