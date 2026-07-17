@@ -16,6 +16,9 @@ describe('engine constants registry (spec §2.6)', () => {
     expect(constants.AUTOSAVE_DEBOUNCE_MS).toBe(2000);
     expect(constants.CC_THROTTLE_MS).toBe(16);
     expect(constants.UNDO_LIMIT).toBe(100);
+    // Storage quota hard-stop (spec §9.7) — added to the registry in Phase 1
+    // because §2.6 mandates all behaviour constants live here.
+    expect(constants.QUOTA_HARD_STOP_RATIO).toBe(0.9);
   });
 
   it('exports no constants beyond the §2.6 registry (naming freeze)', () => {
@@ -32,6 +35,7 @@ describe('engine constants registry (spec §2.6)', () => {
         'AUTOSAVE_DEBOUNCE_MS',
         'CC_THROTTLE_MS',
         'UNDO_LIMIT',
+        'QUOTA_HARD_STOP_RATIO', // spec §9.7
       ].sort(),
     );
   });

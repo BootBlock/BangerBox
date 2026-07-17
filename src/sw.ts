@@ -93,6 +93,23 @@ sw.addEventListener('fetch', (event) => {
 // lookup miss. The precache is fully same-origin, so ignoring Vary is safe.
 const MATCH_OPTIONS: CacheQueryOptions = { ignoreSearch: true, ignoreVary: true };
 
+/**
+ * A worker's `self.location` comes from the RESPONSE URL, not the request URL. An
+ * `ignoreSearch` cache hit returns the query-less stored response, which silently
+ * strips `?vfs=opfs` from sqlite-wasm's OPFS async-proxy worker offline and breaks
+ * the whole database (the proxy throws "Expecting vfs=… URL argument"). Re-wrapping
+ * the body in a fresh Response clears `response.url`, making the browser fall back
+ * to the request URL — query preserved (same mechanism as the proven Gubbins SW).
+ */
+function preserveRequestUrl(cached: Response, request: Request): Response {
+  if (cached.url === '' || cached.url === request.url) return cached;
+  return new Response(cached.body, {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers: cached.headers,
+  });
+}
+
 async function respond(request: Request): Promise<Response> {
   const cache = await caches.open(CACHE);
 
@@ -103,7 +120,7 @@ async function respond(request: Request): Promise<Response> {
   }
 
   const cached = await cache.match(request, MATCH_OPTIONS);
-  if (cached) return cached;
+  if (cached) return preserveRequestUrl(cached, request);
 
   try {
     return await fetch(request);

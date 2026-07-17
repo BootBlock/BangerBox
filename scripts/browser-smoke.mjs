@@ -104,7 +104,38 @@ async function assertShellAndSelfTest(page, label) {
 
   await step(`${label}: app shell boots past the capability gate`, async () => {
     await page.locator('h1', { hasText: 'BangerBox' }).waitFor({ timeout: 15_000 });
-    await page.locator('h2', { hasText: 'Verified empty shell' }).waitFor({ timeout: 15_000 });
+    await page.locator('h2', { hasText: 'Storage foundation' }).waitFor({ timeout: 15_000 });
+  });
+
+  // Phase 1 exit criterion (spec §12): the real-OPFS path — SQLite worker boot +
+  // migrations, then a project row AND an OPFS file round-trip on this device.
+  await step(`${label}: database worker boots on the OPFS VFS with schema v1`, async () => {
+    const status = page.getByTestId('storage-panel-status');
+    await status.and(page.locator('[data-status="ready"], [data-status="failed"]')).waitFor({
+      timeout: 30_000,
+    });
+    const outcome = await status.getAttribute('data-status');
+    if (outcome !== 'ready') {
+      const detail = await page.getByTestId('storage-panel-detail').textContent();
+      throw new Error(`storage boot ${outcome}: ${detail}`);
+    }
+    const detail = await page.getByTestId('storage-panel-detail').textContent();
+    if (!/schema v1/.test(detail ?? '')) {
+      throw new Error(`diagnostics did not report schema v1: ${detail}`);
+    }
+  });
+
+  await step(`${label}: storage self-test round-trips SQLite and OPFS`, async () => {
+    await page.getByTestId('storage-self-test-run').click();
+    const status = page.getByTestId('storage-self-test-status');
+    await status.and(page.locator('[data-status="passed"], [data-status="failed"]')).waitFor({
+      timeout: 30_000,
+    });
+    const outcome = await status.getAttribute('data-status');
+    if (outcome !== 'passed') {
+      const detail = await page.getByTestId('storage-self-test-detail').textContent();
+      throw new Error(`storage self-test ${outcome}: ${detail}`);
+    }
   });
 
   await step(`${label}: engine self-test proves the worklet + WASM transfer path`, async () => {
@@ -150,6 +181,21 @@ async function main() {
     wireErrorCollectors(page);
     await page.goto(DEV_URL, { waitUntil: 'load' });
     await assertShellAndSelfTest(page, 'dev');
+
+    await step('dev: second tab is blocked by the multi-tab guard', async () => {
+      const page2 = await devContext.newPage();
+      wireErrorCollectors(page2);
+      await page2.goto(DEV_URL, { waitUntil: 'load' });
+      const takeover = page2.getByTestId('already-open-takeover');
+      await takeover.waitFor({ timeout: 15_000 });
+      if (!(await takeover.isDisabled())) {
+        throw new Error('take-over must stay disabled while the first tab owns the database');
+      }
+      await page2.close();
+      const status = await page.getByTestId('storage-panel-status').getAttribute('data-status');
+      if (status !== 'ready') throw new Error('first tab lost database ownership to the second tab');
+    });
+
     await devContext.close();
     devServer.kill();
     devServer = undefined;

@@ -35,3 +35,9 @@ export const CC_THROTTLE_MS = 16;
 
 /** Undo stack depth — spec §4.5. */
 export const UNDO_LIMIT = 100;
+
+/**
+ * Storage quota hard-stop ratio — spec §9.7: refuse any write that would push
+ * origin usage beyond this fraction of the browser quota.
+ */
+export const QUOTA_HARD_STOP_RATIO = 0.9;

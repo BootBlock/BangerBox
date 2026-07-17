@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { App } from './App';
 import { evaluateCapabilities } from './core/platform/capabilities';
 import { CapabilityGate } from './ui/CapabilityGate';
+import { fakeStorageApi } from './test/fakes/storagePanelApi';
 import type { PwaUpdateApi, PwaUpdateHandlers } from './ui/usePwaUpdate';
 
 const fullCapabilities = evaluateCapabilities(
@@ -34,22 +35,28 @@ function fakePwaApi() {
   return { api, updates, signalNeedRefresh: () => handlers?.onNeedRefresh() };
 }
 
-describe('App shell (Phase 0)', () => {
-  it('renders the wordmark, version, and soft capability summary', () => {
+describe('App shell (Phase 1)', () => {
+  it('renders the wordmark, version, soft capability summary, and storage panel', async () => {
     const { api } = fakePwaApi();
-    render(<App capabilities={fullCapabilities} pwaApiOverride={api} />);
+    render(
+      <App capabilities={fullCapabilities} pwaApiOverride={api} storageApiOverride={fakeStorageApi()} />,
+    );
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('BangerBox');
     expect(screen.getByText(`v0.1.0`)).toBeInTheDocument();
     expect(screen.getByText('Web Bluetooth (BLE-MIDI hardware)')).toBeInTheDocument();
     // Missing soft capabilities show as unavailable but never block the app (§2.1).
     expect(screen.getAllByText('Unavailable')).toHaveLength(2);
     expect(screen.getByTestId('engine-self-test-run')).toBeEnabled();
+    // The storage panel boots through its seam and reports ready.
+    expect(await screen.findByTestId('storage-panel-status')).toHaveAttribute('data-status', 'ready');
   });
 
   it('surfaces the reload prompt when a new service worker is waiting and applies it on accept', async () => {
     const user = userEvent.setup();
     const { api, updates, signalNeedRefresh } = fakePwaApi();
-    render(<App capabilities={fullCapabilities} pwaApiOverride={api} />);
+    render(
+      <App capabilities={fullCapabilities} pwaApiOverride={api} storageApiOverride={fakeStorageApi()} />,
+    );
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
 
     signalNeedRefresh();
@@ -63,7 +70,9 @@ describe('App shell (Phase 0)', () => {
   it('"Not now" snoozes the reload prompt', async () => {
     const user = userEvent.setup();
     const { api, signalNeedRefresh } = fakePwaApi();
-    render(<App capabilities={fullCapabilities} pwaApiOverride={api} />);
+    render(
+      <App capabilities={fullCapabilities} pwaApiOverride={api} storageApiOverride={fakeStorageApi()} />,
+    );
     signalNeedRefresh();
     await screen.findByRole('status');
     await user.click(screen.getByRole('button', { name: 'Not now' }));
