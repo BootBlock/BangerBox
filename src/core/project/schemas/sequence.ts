@@ -4,12 +4,7 @@
  * hydration layer maps the snake_case rows (spec §9.3) onto them.
  */
 import { z } from 'zod';
-import {
-  automationCurveSchema,
-  automationScopeSchema,
-  rangedInt,
-  trackTypeSchema,
-} from './primitives';
+import { automationCurveSchema, automationScopeSchema, rangedInt, trackTypeSchema } from './primitives';
 import {
   BPM_RANGE,
   LENGTH_BARS_RANGE,
@@ -45,7 +40,11 @@ export const automationPointSchema = z.object({
 export type AutomationPoint = z.infer<typeof automationPointSchema>;
 
 /** Store key for an automation lane: `${scope}:${ownerId}:${targetPath}` (spec §4.2). */
-export function automationLaneKey(scope: AutomationPoint['scope'], ownerId: string, targetPath: string): string {
+export function automationLaneKey(
+  scope: AutomationPoint['scope'],
+  ownerId: string,
+  targetPath: string,
+): string {
   return `${scope}:${ownerId}:${targetPath}`;
 }
 

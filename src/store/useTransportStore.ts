@@ -8,12 +8,7 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { clamp, clampInt } from '@/core/math';
-import {
-  BPM_RANGE,
-  LOOP_TICK_MIN,
-  METRONOME_LEVEL_RANGE,
-  SWING_RANGE,
-} from '@/core/project/schemas';
+import { BPM_RANGE, LOOP_TICK_MIN, METRONOME_LEVEL_RANGE, SWING_RANGE } from '@/core/project/schemas';
 
 export type RecordMode = 'overdub' | 'replace';
 export type PlaybackMode = 'sequence' | 'song';
@@ -105,6 +100,11 @@ export const useTransportStore = create<TransportState>()(
     setPlaybackMode: (playbackMode) => set({ playbackMode }),
     setActiveSequenceId: (activeSequenceId) => set({ activeSequenceId }),
     setCoarsePosition: (coarsePosition) =>
-      set({ coarsePosition: { bar: clampInt(coarsePosition.bar, 1, 9999), beat: clampInt(coarsePosition.beat, 1, 16) } }),
+      set({
+        coarsePosition: {
+          bar: clampInt(coarsePosition.bar, 1, 9999),
+          beat: clampInt(coarsePosition.beat, 1, 16),
+        },
+      }),
   })),
 );

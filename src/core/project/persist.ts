@@ -14,13 +14,7 @@ import type {
   TrackCreate,
   TrackPatch,
 } from '@/core/storage/repositories';
-import {
-  useHardwareStore,
-  useMixerStore,
-  useProgramStore,
-  useProjectStore,
-  useSequenceStore,
-} from '@/store';
+import { useHardwareStore, useMixerStore, useProgramStore, useProjectStore, useSequenceStore } from '@/store';
 import { projectPayloadSchema, type ChannelStrip, type MidiEvent, type Sequence } from './schemas';
 
 /** Foreign-key-safe ordering: parents before children (spec §9.3 cascades). */
@@ -36,7 +30,9 @@ const KIND_RANK: Record<string, number> = {
 };
 
 export async function flushDirtyKeys(repositories: Repositories, keys: readonly string[]): Promise<void> {
-  const ordered = [...keys].sort((a, b) => (KIND_RANK[a.split(':')[0]!] ?? 99) - (KIND_RANK[b.split(':')[0]!] ?? 99));
+  const ordered = [...keys].sort(
+    (a, b) => (KIND_RANK[a.split(':')[0]!] ?? 99) - (KIND_RANK[b.split(':')[0]!] ?? 99),
+  );
   for (const key of ordered) await flushOne(repositories, key);
 }
 
@@ -169,7 +165,12 @@ async function flushTrack(repositories: Repositories, id: string): Promise<void>
     };
     await repositories.tracks.create(create);
   } else {
-    const patch: TrackPatch = { program_id: track.programId, position: track.position, name: track.name, mixer };
+    const patch: TrackPatch = {
+      program_id: track.programId,
+      position: track.position,
+      name: track.name,
+      mixer,
+    };
     await repositories.tracks.update(id, patch);
   }
 }

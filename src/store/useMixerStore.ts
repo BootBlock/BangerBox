@@ -70,8 +70,12 @@ function parseMixerPath(path: string): ParsedPath | null {
       range: SEND_LEVEL_RANGE,
     };
   }
-  if (path.endsWith('.level')) return { channelId: path.slice(0, -6), field: { kind: 'level' }, range: LEVEL_RANGE };
-  if (path.endsWith('.pan')) return { channelId: path.slice(0, -4), field: { kind: 'pan' }, range: PAN_RANGE };
+  if (path.endsWith('.level')) {
+    return { channelId: path.slice(0, -6), field: { kind: 'level' }, range: LEVEL_RANGE };
+  }
+  if (path.endsWith('.pan')) {
+    return { channelId: path.slice(0, -4), field: { kind: 'pan' }, range: PAN_RANGE };
+  }
   return null;
 }
 
@@ -118,7 +122,10 @@ export const useMixerStore = create<MixerState>()(
       if (!gestureOrigins.has(path)) gestureOrigins.set(path, current);
       const clamped = clamp(value, parsed.range[0], parsed.range[1]);
       set((state) => ({
-        channels: { ...state.channels, [parsed.channelId]: writeScalar(state.channels[parsed.channelId]!, parsed.field, clamped) },
+        channels: {
+          ...state.channels,
+          [parsed.channelId]: writeScalar(state.channels[parsed.channelId]!, parsed.field, clamped),
+        },
       }));
     },
 
@@ -133,7 +140,10 @@ export const useMixerStore = create<MixerState>()(
       const clamped = clamp(value, parsed.range[0], parsed.range[1]);
       const write = (v: number) =>
         set((state) => ({
-          channels: { ...state.channels, [parsed.channelId]: writeScalar(state.channels[parsed.channelId]!, parsed.field, v) },
+          channels: {
+            ...state.channels,
+            [parsed.channelId]: writeScalar(state.channels[parsed.channelId]!, parsed.field, v),
+          },
         }));
       // One commit = one undo entry (revert to the pre-gesture origin). The gesture's
       // many transient updates already coalesced into this single commit (spec §3.3),
@@ -150,7 +160,9 @@ export const useMixerStore = create<MixerState>()(
       const prev = get().channels[channelId];
       if (prev === undefined || prev.mute === mute) return;
       const write = (value: boolean) =>
-        set((state) => ({ channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, mute: value } } }));
+        set((state) => ({
+          channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, mute: value } },
+        }));
       commit({
         label: mute ? 'Mute channel' : 'Unmute channel',
         apply: () => write(mute),
@@ -163,7 +175,9 @@ export const useMixerStore = create<MixerState>()(
       const prev = get().channels[channelId];
       if (prev === undefined || prev.solo === solo) return;
       const write = (value: boolean) =>
-        set((state) => ({ channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, solo: value } } }));
+        set((state) => ({
+          channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, solo: value } },
+        }));
       commit({
         label: solo ? 'Solo channel' : 'Unsolo channel',
         apply: () => write(solo),
@@ -177,7 +191,9 @@ export const useMixerStore = create<MixerState>()(
       if (prev === undefined) return;
       const slot: InsertSlotState = { ...createEmptyInsertSlot(), effectType, enabled: true };
       const write = (inserts: InsertSlotState[]) =>
-        set((state) => ({ channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } } }));
+        set((state) => ({
+          channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } },
+        }));
       commit({
         label: 'Add insert',
         apply: () => write([...prev.inserts, slot]),
@@ -190,7 +206,9 @@ export const useMixerStore = create<MixerState>()(
       const prev = get().channels[channelId];
       if (prev === undefined) return;
       const write = (inserts: InsertSlotState[]) =>
-        set((state) => ({ channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } } }));
+        set((state) => ({
+          channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } },
+        }));
       commit({
         label: 'Remove insert',
         apply: () => write(prev.inserts.filter((slot) => slot.id !== slotId)),
@@ -203,7 +221,9 @@ export const useMixerStore = create<MixerState>()(
       const prev = get().channels[channelId];
       if (prev === undefined) return;
       const write = (inserts: InsertSlotState[]) =>
-        set((state) => ({ channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } } }));
+        set((state) => ({
+          channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } },
+        }));
       const toggled = prev.inserts.map((slot) => (slot.id === slotId ? { ...slot, enabled } : slot));
       commit({
         label: enabled ? 'Enable insert' : 'Bypass insert',

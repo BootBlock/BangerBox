@@ -6,5 +6,8 @@ import { useHardwareStore } from '../useHardwareStore';
 import type { SyncBridge, Unsubscribe } from './bridge';
 
 export function subscribeHardwareSync(bridge: SyncBridge): Unsubscribe {
-  return useHardwareStore.subscribe((state) => state.qLinkMode, (value) => bridge.onQLinkModeChanged(value));
+  return useHardwareStore.subscribe(
+    (state) => state.qLinkMode,
+    (value) => bridge.onQLinkModeChanged(value),
+  );
 }

@@ -74,11 +74,35 @@ async function seedProject(): Promise<void> {
   });
 
   await repos.midiEvents.insertMany([
-    { id: 'evt-2', track_id: trackId, tick_start: 480, duration_ticks: 24, note: 38, velocity: 100, extra: null },
-    { id: 'evt-1', track_id: trackId, tick_start: 0, duration_ticks: 24, note: 36, velocity: 120, extra: null },
+    {
+      id: 'evt-2',
+      track_id: trackId,
+      tick_start: 480,
+      duration_ticks: 24,
+      note: 38,
+      velocity: 100,
+      extra: null,
+    },
+    {
+      id: 'evt-1',
+      track_id: trackId,
+      tick_start: 0,
+      duration_ticks: 24,
+      note: 36,
+      velocity: 120,
+      extra: null,
+    },
   ]);
   await repos.automation.insertMany([
-    { id: 'auto-1', scope: 'track', owner_id: trackId, target_path: `mixer.track:${trackId}.level`, tick: 0, value: 0.5, curve: 'linear' },
+    {
+      id: 'auto-1',
+      scope: 'track',
+      owner_id: trackId,
+      target_path: `mixer.track:${trackId}.level`,
+      tick: 0,
+      value: 0.5,
+      curve: 'linear',
+    },
   ]);
   await repos.songs.replaceForProject(projectId, [{ sequence_id: sequenceId, repeats: 2 }]);
 }
@@ -118,7 +142,9 @@ describe('hydrateStores (spec §4.4)', () => {
 
     expect(useSequenceStore.getState().tracks[trackId]?.name).toBe('Drums');
     expect(useSequenceStore.getState().events[trackId]?.map((e) => e.id)).toEqual(['evt-1', 'evt-2']);
-    expect(useSequenceStore.getState().automation[`track:${trackId}:mixer.track:${trackId}.level`]).toHaveLength(1);
+    expect(
+      useSequenceStore.getState().automation[`track:${trackId}:mixer.track:${trackId}.level`],
+    ).toHaveLength(1);
     expect(useSequenceStore.getState().songEntries).toEqual([
       expect.objectContaining({ sequenceId, repeats: 2, position: 0 }),
     ]);
@@ -166,9 +192,11 @@ describe('flushDirtyKeys autosave persistence (spec §4.4)', () => {
   });
 
   it('replaces a track event lane', async () => {
-    useSequenceStore.getState().addEvents(trackId, [
-      { id: 'evt-3', tickStart: 960, durationTicks: 24, note: 42, velocity: 88, extra: null },
-    ]);
+    useSequenceStore
+      .getState()
+      .addEvents(trackId, [
+        { id: 'evt-3', tickStart: 960, durationTicks: 24, note: 42, velocity: 88, extra: null },
+      ]);
     await flushDirtyKeys(repos, [dirtyKey.events(trackId)]);
     const page = await repos.midiEvents.listByTrack(trackId);
     expect(page.rows.map((r) => r.id)).toEqual(['evt-1', 'evt-2', 'evt-3']);

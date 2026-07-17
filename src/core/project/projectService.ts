@@ -12,11 +12,7 @@ import { registerAutosave, unregisterAutosave } from './dirty';
 import { hydrateStores } from './hydrate';
 import { flushDirtyKeys } from './persist';
 import { registerProjectService, type ProjectService } from './service';
-import {
-  createDefaultChannelStrip,
-  createDefaultDrumProgram,
-  createDefaultSequence,
-} from './schemas';
+import { createDefaultChannelStrip, createDefaultDrumProgram, createDefaultSequence } from './schemas';
 
 let repositories: Repositories | null = null;
 let queue: AutosaveQueue | null = null;

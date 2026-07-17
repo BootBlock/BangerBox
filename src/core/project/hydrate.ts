@@ -57,7 +57,9 @@ export async function hydrateStores(repositories: Repositories, projectId: strin
   const payload = parseProjectPayload(projectRow.payload);
 
   // Programs.
-  const programRows = await collectPages((offset) => repositories.programs.listByProject(projectId, { offset }));
+  const programRows = await collectPages((offset) =>
+    repositories.programs.listByProject(projectId, { offset }),
+  );
   const programs: Record<string, Program> = {};
   for (const row of programRows) programs[row.id] = rowToProgram(row);
 
@@ -81,12 +83,19 @@ export async function hydrateStores(repositories: Repositories, projectId: strin
   const events: Record<string, MidiEvent[]> = {};
   const automation: Record<string, AutomationPoint[]> = {};
 
-  const pushLane = (scope: AutomationPoint['scope'], ownerId: string, targetPath: string, point: AutomationPoint) => {
+  const pushLane = (
+    scope: AutomationPoint['scope'],
+    ownerId: string,
+    targetPath: string,
+    point: AutomationPoint,
+  ) => {
     (automation[automationLaneKey(scope, ownerId, targetPath)] ??= []).push(point);
   };
 
   for (const seqRow of sequenceRows) {
-    const trackRows = await collectPages((offset) => repositories.tracks.listBySequence(seqRow.id, { offset }));
+    const trackRows = await collectPages((offset) =>
+      repositories.tracks.listBySequence(seqRow.id, { offset }),
+    );
     for (const trackRow of trackRows) {
       tracks[trackRow.id] = rowToTrack(trackRow);
       const channelId = `track:${trackRow.id}`;
@@ -100,7 +109,9 @@ export async function hydrateStores(repositories: Repositories, projectId: strin
       const trackAuto = await collectPages((offset) =>
         repositories.automation.listByOwner('track', trackRow.id, { offset }),
       );
-      for (const row of trackAuto) pushLane('track', row.owner_id, row.target_path, rowToAutomationPoint(row));
+      for (const row of trackAuto) {
+        pushLane('track', row.owner_id, row.target_path, rowToAutomationPoint(row));
+      }
     }
 
     const seqAuto = await collectPages((offset) =>

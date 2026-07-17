@@ -4,13 +4,7 @@
  * (spec §6). British spelling throughout (spec §3.7).
  */
 import { z } from 'zod';
-import {
-  nonNegative,
-  noteDivisionSchema,
-  playbackModeSchema,
-  ranged,
-  rangedInt,
-} from './primitives';
+import { nonNegative, noteDivisionSchema, playbackModeSchema, ranged, rangedInt } from './primitives';
 import { insertSlotSchema, sendLevelsSchema, type InsertSlotState } from './mixer';
 import {
   CHOKE_GROUP_RANGE,

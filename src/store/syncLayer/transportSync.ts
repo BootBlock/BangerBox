@@ -9,8 +9,17 @@ export function subscribeTransportSync(bridge: SyncBridge): Unsubscribe {
   // Wrap so only the current value reaches the bridge — the subscriber also passes the
   // previous value, which the graph does not need.
   return combineUnsubscribers([
-    useTransportStore.subscribe((state) => state.isPlaying, (value) => bridge.setTransportPlaying(value)),
-    useTransportStore.subscribe((state) => state.isRecording, (value) => bridge.setTransportRecording(value)),
-    useTransportStore.subscribe((state) => state.bpm, (value) => bridge.setBpm(value)),
+    useTransportStore.subscribe(
+      (state) => state.isPlaying,
+      (value) => bridge.setTransportPlaying(value),
+    ),
+    useTransportStore.subscribe(
+      (state) => state.isRecording,
+      (value) => bridge.setTransportRecording(value),
+    ),
+    useTransportStore.subscribe(
+      (state) => state.bpm,
+      (value) => bridge.setBpm(value),
+    ),
   ]);
 }

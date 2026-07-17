@@ -77,9 +77,15 @@ function sortEvents(events: readonly MidiEvent[]): MidiEvent[] {
 /** Clamp the numeric sequence fields into their spec ranges (spec §4.1). */
 function clampSequencePatch(patch: Partial<Sequence>): Partial<Sequence> {
   const next: Partial<Sequence> = { ...patch };
-  if (next.lengthBars !== undefined) next.lengthBars = clampInt(next.lengthBars, LENGTH_BARS_RANGE[0], LENGTH_BARS_RANGE[1]);
-  if (next.swingAmount !== undefined) next.swingAmount = clamp(next.swingAmount, SWING_RANGE[0], SWING_RANGE[1]);
-  if (next.tempo !== undefined && next.tempo !== null) next.tempo = clamp(next.tempo, BPM_RANGE[0], BPM_RANGE[1]);
+  if (next.lengthBars !== undefined) {
+    next.lengthBars = clampInt(next.lengthBars, LENGTH_BARS_RANGE[0], LENGTH_BARS_RANGE[1]);
+  }
+  if (next.swingAmount !== undefined) {
+    next.swingAmount = clamp(next.swingAmount, SWING_RANGE[0], SWING_RANGE[1]);
+  }
+  if (next.tempo !== undefined && next.tempo !== null) {
+    next.tempo = clamp(next.tempo, BPM_RANGE[0], BPM_RANGE[1]);
+  }
   return next;
 }
 
@@ -118,7 +124,8 @@ export const useSequenceStore = create<SequenceState>()(
       const prev = get().sequences[id];
       if (prev === undefined) return;
       const next = { ...prev, ...clampSequencePatch(patch) };
-      const setSeq = (value: Sequence) => set((state) => ({ sequences: { ...state.sequences, [id]: value } }));
+      const setSeq = (value: Sequence) =>
+        set((state) => ({ sequences: { ...state.sequences, [id]: value } }));
       commit({
         label: 'Edit sequence',
         apply: () => setSeq(next),
@@ -198,7 +205,8 @@ export const useSequenceStore = create<SequenceState>()(
     setTrackEvents: (trackId, events) => {
       const prev = get().events[trackId] ?? [];
       const next = sortEvents(events);
-      const setEvents = (value: MidiEvent[]) => set((state) => ({ events: { ...state.events, [trackId]: value } }));
+      const setEvents = (value: MidiEvent[]) =>
+        set((state) => ({ events: { ...state.events, [trackId]: value } }));
       commit({
         label: 'Edit notes',
         apply: () => setEvents(next),
@@ -209,7 +217,8 @@ export const useSequenceStore = create<SequenceState>()(
     addEvents: (trackId, events) => {
       const prev = get().events[trackId] ?? [];
       const next = sortEvents([...prev, ...events]);
-      const setEvents = (value: MidiEvent[]) => set((state) => ({ events: { ...state.events, [trackId]: value } }));
+      const setEvents = (value: MidiEvent[]) =>
+        set((state) => ({ events: { ...state.events, [trackId]: value } }));
       commit({
         label: 'Add notes',
         apply: () => setEvents(next),
@@ -221,7 +230,8 @@ export const useSequenceStore = create<SequenceState>()(
       const prev = get().events[trackId] ?? [];
       const removeSet = new Set(ids);
       const next = prev.filter((event) => !removeSet.has(event.id));
-      const setEvents = (value: MidiEvent[]) => set((state) => ({ events: { ...state.events, [trackId]: value } }));
+      const setEvents = (value: MidiEvent[]) =>
+        set((state) => ({ events: { ...state.events, [trackId]: value } }));
       commit({
         label: 'Delete notes',
         apply: () => setEvents(next),
