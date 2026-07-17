@@ -164,4 +164,32 @@ describe('enriched voice — §6 sound design', () => {
     expect(pool.programVoiceCount('drum')).toBe(1);
     pool.destroy();
   });
+
+  it('caps a keygroup program to its polyphony, stealing the oldest voice (spec §6)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const key = (id: string) => spec(context, { id, programId: 'keys', padKey: `keys:${id}`, programPolyphony: 2 });
+    pool.trigger(key('a'));
+    const oldest = fake.nodes.find((n) => n.nodeType === 'bufferSource');
+    pool.trigger(key('b'));
+    pool.trigger(key('c')); // third voice exceeds polyphony 2 → oldest ('a') is stolen
+    expect((oldest as { stopped: boolean }).stopped).toBe(true);
+    pool.destroy();
+  });
+
+  it('portamentos into a mono glide note from the previous pitch (spec §6)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const glideSpec = (id: string, tuneSemitones: number) =>
+      spec(context, { id, playbackMode: 'mono', padKey: 'keys:glide', glideMs: 100, tuneSemitones });
+    pool.trigger(glideSpec('a', 0));
+    pool.trigger(glideSpec('b', 12)); // glide from 0 → 1200 cents
+    const sources = fake.nodes.filter((n) => n.nodeType === 'bufferSource');
+    const newest = sources[sources.length - 1] as { detune: { calls: { method: string; args: number[] }[] } };
+    const ramp = newest.detune.calls.find((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramp?.args[0]).toBe(1200); // ramps to the new note's detune
+    const start = newest.detune.calls.find((c) => c.method === 'setValueAtTime');
+    expect(start?.args[0]).toBe(0); // starting from the previous note's detune
+    pool.destroy();
+  });
 });

@@ -54,6 +54,10 @@ export interface VoiceTriggerSpec extends VoiceSoundDesign {
   readonly gainDb: number;
   readonly tuneSemitones: number;
   readonly tuneCents: number;
+  /** Keygroup voice cap for the owning program (spec §6); undefined = pool-global only. */
+  readonly programPolyphony?: number;
+  /** Keygroup mono glide time in ms (spec §6): portamento into the note; 0/undefined = off. */
+  readonly glideMs?: number;
 }
 
 interface Voice {
@@ -90,6 +94,10 @@ export class VoicePool {
   trigger(spec: VoiceTriggerSpec): void {
     const now = spec.when;
 
+    // Capture the sounding same-pad pitch before any cut, so mono glide can portamento
+    // from it into the new note (spec §6 keygroup glide).
+    const glideFrom = (spec.glideMs ?? 0) > 0 ? this.currentPadDetune(spec.padKey) : undefined;
+
     // 1. Choke: cut other pads sharing this pad's non-zero choke group (spec §5.4).
     for (const id of selectChokeVictims(this.chokeCandidates(), spec)) {
       const victim = this.voices.get(id);
@@ -105,15 +113,18 @@ export class VoicePool {
       }
     }
 
-    // 3. Capacity: steal a voice when the pool is exhausted (spec §5.4).
+    // 3. Keygroup polyphony: cap concurrent voices per program, stealing the oldest (spec §6).
+    this.enforceProgramPolyphony(spec, now);
+
+    // 4. Capacity: steal a voice when the global pool is exhausted (spec §5.4).
     if (this.voices.size >= this.maxVoices) {
       const victimId = selectStealVictim(this.voiceRefs());
       const victim = victimId ? this.voices.get(victimId) : undefined;
       if (victim) this.fadeAndStop(victim, now, VOICE_STEAL_FADE_MS);
     }
 
-    // 4. Build and start the enriched voice chain (spec §5.2 stages 1–2, §6).
-    const voice = this.buildVoice(spec, now);
+    // 5. Build and start the enriched voice chain (spec §5.2 stages 1–2, §6).
+    const voice = this.buildVoice(spec, now, glideFrom);
     this.voices.set(spec.id, voice);
   }
 
@@ -151,8 +162,26 @@ export class VoicePool {
 
   // --------------------------------------------------------------- internals ---
 
+  /** Steal the oldest voices of a program until it is under its polyphony cap (spec §6). */
+  private enforceProgramPolyphony(spec: VoiceTriggerSpec, now: number): void {
+    const cap = spec.programPolyphony;
+    if (cap === undefined) return;
+    const live = [...this.voices.values()]
+      .filter((voice) => voice.programId === spec.programId && !voice.stopScheduled)
+      .sort((a, b) => a.startTime - b.startTime);
+    for (let i = 0; i <= live.length - cap; i++) this.fadeAndStop(live[i]!, now, VOICE_STEAL_FADE_MS);
+  }
+
+  /** The base detune of the sounding voice on a pad (mono glide origin, spec §6), or undefined. */
+  private currentPadDetune(padKey: string): number | undefined {
+    for (const voice of this.voices.values()) {
+      if (voice.padKey === padKey && !voice.stopScheduled) return voice.baseDetune;
+    }
+    return undefined;
+  }
+
   /** Assemble source → ampGain → [filter] → destination with §6 modulation (spec §5.2). */
-  private buildVoice(spec: VoiceTriggerSpec, now: number): Voice {
+  private buildVoice(spec: VoiceTriggerSpec, now: number, glideFrom?: number): Voice {
     const oscillators: OscillatorNode[] = [];
     const modGains: GainNode[] = [];
     const routes = spec.modMatrix ?? [];
@@ -188,9 +217,15 @@ export class VoicePool {
       ampGain.connect(spec.destination);
     }
 
-    // Pitch: base detune, then the pitch envelope on top if it has depth (spec §6).
+    // Pitch: base detune, then either mono glide (portamento) or the pitch envelope on top
+    // (spec §6). Keygroups glide and carry no pitch env; drums use the pitch env — they do
+    // not co-occur, so a single detune schedule owns the param.
     const pitchDepth = (spec.pitchEnvSemitones ?? 0) * 100;
-    if (spec.pitchEnv && pitchDepth !== 0) {
+    const glideMs = spec.glideMs ?? 0;
+    if (glideMs > 0 && glideFrom !== undefined && glideFrom !== baseDetune) {
+      source.detune.setValueAtTime(glideFrom, now);
+      source.detune.linearRampToValueAtTime(baseDetune, now + glideMs / 1000);
+    } else if (spec.pitchEnv && pitchDepth !== 0) {
       scheduleModEnvelope(source.detune, baseDetune, pitchDepth, spec.pitchEnv, now);
     } else {
       source.detune.value = baseDetune;
