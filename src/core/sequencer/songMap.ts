@@ -87,6 +87,18 @@ export function songTickToSeconds(map: readonly SongSegment[], songTick: number)
   return segment.startSeconds + (songTick - segment.startTick) * secondsPerTick(segment.bpm);
 }
 
+/** Convert absolute seconds back to a song tick through the tempo map (spec §7.9). */
+export function songSecondsToTick(map: readonly SongSegment[], seconds: number): number {
+  if (seconds <= 0) return 0;
+  for (const segment of map) {
+    const passSeconds = segment.lengthTicks * secondsPerTick(segment.bpm);
+    if (seconds < segment.startSeconds + passSeconds) {
+      return segment.startTick + (seconds - segment.startSeconds) / secondsPerTick(segment.bpm);
+    }
+  }
+  return songTotalTicks(map);
+}
+
 /** A window slice within one segment (spec §7.9 boundary-spanning lookahead). */
 export interface SongWindowSlice {
   readonly segment: SongSegment;

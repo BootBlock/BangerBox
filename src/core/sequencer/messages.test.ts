@@ -32,7 +32,7 @@ describe('parseSchedulerRequest (spec §7.1.3, §1.3 #11)', () => {
       { kind: 'tempo', bpm: 128 },
       { kind: 'swing', amount: 58, division: 16 },
       { kind: 'loop', enabled: true, startTick: 0, endTick: 3840 },
-      { kind: 'eventsDiff', trackId: 't1', upserts: [event], deletes: ['x'] },
+      { kind: 'eventsDiff', trackId: 't1', sequenceId: 's1', upserts: [event], deletes: ['x'] },
       { kind: 'automationDiff', scope: 'track', ownerId: 't1', targetPath: 'mixer.track:t1.level', points: [] },
       { kind: 'songSequence', orderedSequenceIds: ['a', 'a', 'b'] },
       {
@@ -45,6 +45,7 @@ describe('parseSchedulerRequest (spec §7.1.3, §1.3 #11)', () => {
       { kind: 'liveNote', note: 36, velocity: 100, on: true, timestamp: 123, trackId: 't1' },
       { kind: 'noteRepeat', enabled: true, division: { value: 16, triplet: false } },
       { kind: 'metronome', enabled: true, countInBars: 1 },
+      { kind: 'liveErase', trackId: 't1', note: 36, active: true },
     ];
     for (const request of requests) {
       expect(parseSchedulerRequest(request), request.kind).toEqual(request);
@@ -71,6 +72,7 @@ describe('parseSchedulerResponse (spec §7.1.3, §1.3 #11)', () => {
         ],
       },
       { kind: 'recorded', trackId: 't1', events: [event] },
+      { kind: 'erased', trackId: 't1', eventIds: ['n1'] },
       { kind: 'loopWrapped', tick: 3840 },
       { kind: 'songAdvanced', entryIndex: 2 },
     ];

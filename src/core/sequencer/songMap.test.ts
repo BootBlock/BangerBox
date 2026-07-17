@@ -4,6 +4,7 @@ import { ticksPerBar } from './ppqn';
 import {
   buildSongMap,
   segmentAtSongTick,
+  songSecondsToTick,
   songTickToSeconds,
   songTotalSeconds,
   songTotalTicks,
@@ -64,6 +65,15 @@ describe('song totals & conversion (spec §7.9)', () => {
     // Start of B, then one bar into B at 60 bpm (one bar of 4/4 @60 = 4 s).
     expect(songTickToSeconds(map, BAR_4_4)).toBeCloseTo(2, 9);
     expect(songTickToSeconds(map, BAR_4_4 + BAR_4_4)).toBeCloseTo(2 + 4, 9);
+  });
+
+  it('inverts seconds back to a song tick across the tempo map', () => {
+    expect(songSecondsToTick(map, 0)).toBe(0);
+    expect(songSecondsToTick(map, 1)).toBeCloseTo(BAR_4_4 / 2, 6); // 1 s into A @120
+    expect(songSecondsToTick(map, 2)).toBeCloseTo(BAR_4_4, 6); // start of B
+    expect(songSecondsToTick(map, 2 + 4)).toBeCloseTo(BAR_4_4 + BAR_4_4, 6); // one bar into B @60
+    // Round-trip through seconds.
+    expect(songSecondsToTick(map, songTickToSeconds(map, 3000))).toBeCloseTo(3000, 3);
   });
 
   it('locates the segment covering a song tick', () => {

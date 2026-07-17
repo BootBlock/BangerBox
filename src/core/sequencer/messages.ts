@@ -7,7 +7,9 @@
  *
  * Protocol extensions beyond the §7.1.3 list are recorded in spec §14 (2026-07-17 (f)):
  * `sequenceMeta` (per-sequence length/tempo the worker needs to build the song tempo map,
- * §7.9), `liveNote.trackId` (record-capture destination), and `ScheduledEvent.accented`
+ * §7.9), `liveNote.trackId` (record-capture destination), `eventsDiff.sequenceId` (the
+ * owning sequence, needed to select a segment's tracks in song mode, §7.9), `liveErase`
+ * request + `erased` response (MPC live erase, §7.7), and `ScheduledEvent.accented`
  * (metronome beat-1 accent, §5.9). New kinds extend the union; existing ones never change.
  */
 import { z } from 'zod';
@@ -63,19 +65,21 @@ export type SchedulerRequest =
   | { readonly kind: 'tempo'; readonly bpm: number }
   | { readonly kind: 'swing'; readonly amount: number; readonly division: 8 | 16 }
   | { readonly kind: 'loop'; readonly enabled: boolean; readonly startTick: number; readonly endTick: number }
-  | { readonly kind: 'eventsDiff'; readonly trackId: string; readonly upserts: readonly MidiEvent[]; readonly deletes: readonly string[] }
+  | { readonly kind: 'eventsDiff'; readonly trackId: string; readonly sequenceId: string; readonly upserts: readonly MidiEvent[]; readonly deletes: readonly string[] }
   | { readonly kind: 'automationDiff'; readonly scope: AutomationPoint['scope']; readonly ownerId: string; readonly targetPath: string; readonly points: readonly AutomationPoint[] }
   | { readonly kind: 'songSequence'; readonly orderedSequenceIds: readonly string[] }
   | { readonly kind: 'sequenceMeta'; readonly sequences: Readonly<Record<string, SchedulerSequenceMeta>>; readonly projectBpm: number; readonly activeSequenceId: string | null; readonly playbackMode: 'sequence' | 'song' }
   | { readonly kind: 'liveNote'; readonly note: number; readonly velocity: number; readonly on: boolean; readonly timestamp: number; readonly trackId: string }
   | { readonly kind: 'noteRepeat'; readonly enabled: boolean; readonly division: NoteRepeatDivision }
-  | { readonly kind: 'metronome'; readonly enabled: boolean; readonly countInBars: 0 | 1 | 2 };
+  | { readonly kind: 'metronome'; readonly enabled: boolean; readonly countInBars: 0 | 1 | 2 }
+  | { readonly kind: 'liveErase'; readonly trackId: string; readonly note: number; readonly active: boolean };
 
 // --- Worker → main responses (spec §7.1.3) ----------------------------------------
 
 export type SchedulerResponse =
   | { readonly kind: 'scheduleBatch'; readonly events: readonly ScheduledEvent[] }
   | { readonly kind: 'recorded'; readonly trackId: string; readonly events: readonly MidiEvent[] }
+  | { readonly kind: 'erased'; readonly trackId: string; readonly eventIds: readonly string[] }
   | { readonly kind: 'loopWrapped'; readonly tick: number }
   | { readonly kind: 'songAdvanced'; readonly entryIndex: number };
 
@@ -100,13 +104,14 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
   z.object({ kind: z.literal('tempo'), bpm: z.number() }),
   z.object({ kind: z.literal('swing'), amount: z.number(), division: z.union([z.literal(8), z.literal(16)]) }),
   z.object({ kind: z.literal('loop'), enabled: z.boolean(), startTick: z.number(), endTick: z.number() }),
-  z.object({ kind: z.literal('eventsDiff'), trackId: z.string(), upserts: z.array(midiEventSchema), deletes: z.array(z.string()) }),
+  z.object({ kind: z.literal('eventsDiff'), trackId: z.string(), sequenceId: z.string(), upserts: z.array(midiEventSchema), deletes: z.array(z.string()) }),
   z.object({ kind: z.literal('automationDiff'), scope: z.enum(['sequence', 'track']), ownerId: z.string(), targetPath: z.string(), points: z.array(automationPointSchema) }),
   z.object({ kind: z.literal('songSequence'), orderedSequenceIds: z.array(z.string()) }),
   z.object({ kind: z.literal('sequenceMeta'), sequences: z.record(z.string(), sequenceMetaSchema), projectBpm: z.number(), activeSequenceId: z.string().nullable(), playbackMode: z.enum(['sequence', 'song']) }),
   z.object({ kind: z.literal('liveNote'), note: z.number().int(), velocity: z.number().int(), on: z.boolean(), timestamp: z.number(), trackId: z.string() }),
   z.object({ kind: z.literal('noteRepeat'), enabled: z.boolean(), division: noteRepeatDivisionSchema }),
   z.object({ kind: z.literal('metronome'), enabled: z.boolean(), countInBars: z.union([z.literal(0), z.literal(1), z.literal(2)]) }),
+  z.object({ kind: z.literal('liveErase'), trackId: z.string(), note: z.number().int(), active: z.boolean() }),
 ]) as z.ZodType<SchedulerRequest>;
 
 const scheduledEventSchema = z.object({
@@ -126,6 +131,7 @@ const scheduledEventSchema = z.object({
 const schedulerResponseSchema: z.ZodType<SchedulerResponse> = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('scheduleBatch'), events: z.array(scheduledEventSchema) }),
   z.object({ kind: z.literal('recorded'), trackId: z.string(), events: z.array(midiEventSchema) }),
+  z.object({ kind: z.literal('erased'), trackId: z.string(), eventIds: z.array(z.string()) }),
   z.object({ kind: z.literal('loopWrapped'), tick: z.number() }),
   z.object({ kind: z.literal('songAdvanced'), entryIndex: z.number().int() }),
 ]) as z.ZodType<SchedulerResponse>;
