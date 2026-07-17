@@ -155,6 +155,11 @@ export function installProjectService(): void {
   registerProjectService(projectService);
 }
 
+/** The active repository set — the only RPC clients (spec §3.1); used by Browser/Sample modes. */
+export function getActiveRepositories(): Repositories {
+  return getRepositories();
+}
+
 /** Open the most recently modified project, creating a first project if none exists (spec §8.5.1). */
 export async function loadOrCreateActiveProject(): Promise<string> {
   const repos = getRepositories();

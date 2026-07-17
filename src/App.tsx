@@ -4,6 +4,8 @@ import {
   type SoftCapabilities,
 } from '@/core/platform/capabilities';
 import { ProgramEditPanel } from '@/features/program-edit';
+import { SampleEditPanel } from '@/features/sample-edit';
+import { BrowserPanel } from '@/features/browser';
 import { AudioEnginePanel } from '@/ui/AudioEnginePanel';
 import { ProjectStatusBar } from '@/ui/ProjectStatusBar';
 import { PwaUpdatePrompt } from '@/ui/PwaUpdatePrompt';
@@ -87,6 +89,8 @@ export function App({ capabilities, pwaApiOverride, storageApiOverride }: AppPro
           <StoragePanel apiOverride={storageApiOverride} />
           <AudioEnginePanel />
           <ProgramEditPanel />
+          <SampleEditPanel />
+          <BrowserPanel />
         </div>
       </main>
 

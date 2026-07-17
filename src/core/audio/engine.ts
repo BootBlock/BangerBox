@@ -131,6 +131,16 @@ export class AudioEngine {
     this.metronome.click(this.context.currentTime, accented);
   }
 
+  /**
+   * Audition a sample through the preview channel (spec §5.9) — Browser-mode tap-to-hear. Never
+   * routes through a pad/track chain. Re-decodes after a destructive edit replaces the file.
+   */
+  async auditionSample(opfsPath: string, invalidate = false): Promise<void> {
+    if (invalidate) this.sampleCache.invalidate(opfsPath);
+    const buffer = await this.sampleCache.get(opfsPath);
+    this.preview.play(buffer, this.context.currentTime);
+  }
+
   /** Latest playhead reading from the scheduler SAB (spec §7.1.4) — for the test probe. */
   playheadTick(): number {
     return this.playheadReader.read().currentTick;
