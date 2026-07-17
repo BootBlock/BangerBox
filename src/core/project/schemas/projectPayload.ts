@@ -11,6 +11,8 @@ import { channelStripSchema } from './mixer';
 export const projectPayloadSchema = z
   .object({
     master: channelStripSchema.optional(),
+    /** The four global return strips (spec §5.2); project-scoped like the master. */
+    returns: z.array(channelStripSchema).optional(),
   })
   .loose();
 export type ProjectPayload = z.infer<typeof projectPayloadSchema>;

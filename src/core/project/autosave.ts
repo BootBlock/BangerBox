@@ -22,12 +22,15 @@ export interface AutosaveQueueOptions {
   readonly debounceMs?: number;
   /** Notified when a flush fails (the keys are re-queued automatically). */
   readonly onError?: (error: unknown, keys: readonly string[]) => void;
+  /** Notified when the queue fully drains after a successful flush (clears the unsaved dot). */
+  readonly onIdle?: () => void;
 }
 
 export class AutosaveQueue {
   private readonly flushImpl: (keys: readonly string[]) => Promise<void>;
   private readonly debounceMs: number;
   private readonly onError: ((error: unknown, keys: readonly string[]) => void) | undefined;
+  private readonly onIdle: (() => void) | undefined;
 
   private readonly dirty = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -38,6 +41,7 @@ export class AutosaveQueue {
     this.flushImpl = options.flush;
     this.debounceMs = options.debounceMs ?? AUTOSAVE_DEBOUNCE_MS;
     this.onError = options.onError;
+    this.onIdle = options.onIdle;
   }
 
   /** Mark one entity dirty (coalesced by key) and (re)arm the debounce timer. */
@@ -81,8 +85,10 @@ export class AutosaveQueue {
       return;
     }
 
-    // Mutations that landed during the flush are persisted on the next pass.
+    // Mutations that landed during the flush are persisted on the next pass;
+    // otherwise the queue is fully drained.
     if (this.dirty.size > 0) await this.flushNow();
+    else this.onIdle?.();
   }
 
   /** Cancel timers and drop the in-memory queue (project close — spec §4.4). */
