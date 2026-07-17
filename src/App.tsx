@@ -3,7 +3,7 @@ import {
   type CapabilityReport,
   type SoftCapabilities,
 } from '@/core/platform/capabilities';
-import { EngineSelfTest } from '@/ui/EngineSelfTest';
+import { AudioEnginePanel } from '@/ui/AudioEnginePanel';
 import { ProjectStatusBar } from '@/ui/ProjectStatusBar';
 import { PwaUpdatePrompt } from '@/ui/PwaUpdatePrompt';
 import { StoragePanel, type StoragePanelApi } from '@/ui/StoragePanel';
@@ -52,11 +52,11 @@ export function App({ capabilities, pwaApiOverride, storageApiOverride }: AppPro
 
       <main className="flex flex-1 items-center justify-center p-6">
         <div className="w-full max-w-xl rounded-bb-lg border border-bb-line bg-bb-surface p-8 shadow-bb-raised">
-          <p className="text-sm font-semibold tracking-widest text-bb-accent uppercase">Phase 1</p>
-          <h2 className="mt-1 text-2xl font-bold">Storage foundation</h2>
+          <p className="text-sm font-semibold tracking-widest text-bb-accent uppercase">Phase 3</p>
+          <h2 className="mt-1 text-2xl font-bold">Audio core</h2>
           <p className="mt-2 text-sm leading-relaxed text-bb-muted">
-            The durable layer is live: SQLite in a worker on the Origin Private File System, migrations,
-            repositories, and storage safeguards. The instrument arrives in the phases ahead.
+            Sound out: the mixer graph, native insert effects, voice pool, metering, and metronome are live
+            on the Web Audio API. Start the engine below to play the bundled sample end to end.
           </p>
 
           <section aria-labelledby="soft-capabilities-heading" className="mt-6">
@@ -83,7 +83,7 @@ export function App({ capabilities, pwaApiOverride, storageApiOverride }: AppPro
 
           <ProjectStatusBar />
           <StoragePanel apiOverride={storageApiOverride} />
-          <EngineSelfTest />
+          <AudioEnginePanel />
         </div>
       </main>
 

@@ -13,4 +13,4 @@ export {
   closeActiveProject,
 } from './projectService';
 export { getProjectService, registerProjectService, type ProjectService } from './service';
-export { startProjectSession, stopProjectSession } from './session';
+export { startProjectSession, stopProjectSession, startAudioEngine, getAudioEngine } from './session';

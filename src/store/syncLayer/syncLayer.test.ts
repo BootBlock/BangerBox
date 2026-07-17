@@ -14,6 +14,8 @@ function fakeBridge(): SyncBridge {
     setChannelPan: vi.fn(),
     setChannelMute: vi.fn(),
     setChannelSolo: vi.fn(),
+    setChannelSend: vi.fn(),
+    setChannelInserts: vi.fn(),
     setTransportPlaying: vi.fn(),
     setTransportRecording: vi.fn(),
     setBpm: vi.fn(),

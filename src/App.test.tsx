@@ -46,7 +46,7 @@ describe('App shell (Phase 1)', () => {
     expect(screen.getByText('Web Bluetooth (BLE-MIDI hardware)')).toBeInTheDocument();
     // Missing soft capabilities show as unavailable but never block the app (§2.1).
     expect(screen.getAllByText('Unavailable')).toHaveLength(2);
-    expect(screen.getByTestId('engine-self-test-run')).toBeEnabled();
+    expect(screen.getByTestId('audio-start')).toBeEnabled();
     // The storage panel boots through its seam and reports ready.
     expect(await screen.findByTestId('storage-panel-status')).toHaveAttribute('data-status', 'ready');
   });
