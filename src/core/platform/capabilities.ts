@@ -94,9 +94,9 @@ let cachedReport: CapabilityReport | null = null;
 
 /**
  * Detect capabilities exactly once and freeze the result — spec §2.1. Runs before any
- * store hydration or audio code (see src/main.tsx).
+ * store hydration or audio code, then is frozen into `useUIStore.capabilities` in
+ * `src/main.tsx` so every consumer reads one source (spec §2.1).
  */
-// STUB(phase-2): freeze the report into useUIStore.capabilities once the store exists.
 export function detectCapabilities(): CapabilityReport {
   cachedReport ??= evaluateCapabilities(probeHard(), probeSoft());
   return cachedReport;

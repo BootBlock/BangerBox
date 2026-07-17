@@ -16,8 +16,10 @@ import {
  * AND an atomic OPFS file round-trip. The browser smoke drives this control
  * (spec §11.4, Phase 1 exit criterion).
  */
-// STUB(phase-2): superseded by real project load/hydrate + the §4.2 stores; the
-// §9.7 eviction warning then moves into the proper toast queue.
+// STUB(phase-7): the state engine (project load/hydrate + the §4.2 stores) now runs at
+// boot (src/core/project/session.ts); this diagnostic panel — and the §9.7 eviction
+// warning it still hosts — is retired when the Browser/Main modes and the toast-queue
+// eviction notice ship in Phase 7 (§8.5). Kept meanwhile as the smoke's storage proof.
 
 export interface StoragePanelApi {
   boot(): Promise<DbBootResult>;

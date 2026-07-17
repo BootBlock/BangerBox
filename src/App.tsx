@@ -4,8 +4,10 @@ import {
   type SoftCapabilities,
 } from '@/core/platform/capabilities';
 import { EngineSelfTest } from '@/ui/EngineSelfTest';
+import { ProjectStatusBar } from '@/ui/ProjectStatusBar';
 import { PwaUpdatePrompt } from '@/ui/PwaUpdatePrompt';
 import { StoragePanel, type StoragePanelApi } from '@/ui/StoragePanel';
+import { ToastViewport } from '@/ui/ToastViewport';
 import type { PwaUpdateApi } from '@/ui/usePwaUpdate';
 
 interface AppProps {
@@ -79,12 +81,14 @@ export function App({ capabilities, pwaApiOverride, storageApiOverride }: AppPro
             </ul>
           </section>
 
+          <ProjectStatusBar />
           <StoragePanel apiOverride={storageApiOverride} />
           <EngineSelfTest />
         </div>
       </main>
 
       <PwaUpdatePrompt apiOverride={pwaApiOverride} />
+      <ToastViewport />
     </div>
   );
 }
