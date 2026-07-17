@@ -5,8 +5,10 @@
  * asserting numeric properties (non-silent output, bounded peak, filter attenuation).
  * This module is browser-only; it is reached only through the audio probe seam.
  */
-import type { EffectType } from '@/core/project/schemas';
+import type { EffectType, Program } from '@/core/project/schemas';
 import { createInsert } from './inserts/insert';
+import { resolvedVoiceToTrigger, resolveVoice } from './programVoice';
+import { VoicePool } from './voicePool';
 
 export interface EffectRenderResult {
   inputRms: number;
@@ -71,4 +73,79 @@ export async function renderEffectOffline(
     outputRms: rms(data),
     outputPeak: peak(data),
   };
+}
+
+// --- Program voice pitch renders (spec §11.2, §12 velocity-layer + keygroup exit) -----
+
+/** Fill a mono buffer with `seconds` of a `frequency` Hz sine — a known-pitch test sample. */
+function sineBuffer(context: BaseAudioContext, frequency: number, seconds: number): AudioBuffer {
+  const buffer = context.createBuffer(1, Math.floor(context.sampleRate * seconds), context.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.sin((2 * Math.PI * frequency * i) / context.sampleRate);
+  return buffer;
+}
+
+/**
+ * Estimate the dominant frequency of a rendered mono signal by autocorrelation (spec §11.2).
+ * Robust for a single sustained tone; returns 0 when the signal is effectively silent.
+ */
+function detectPitch(data: Float32Array, sampleRate: number): number {
+  if (rms(data) < 1e-3) return 0;
+  const minLag = Math.floor(sampleRate / 2000); // up to 2 kHz
+  const maxLag = Math.floor(sampleRate / 100); // down to 100 Hz
+  let bestLag = -1;
+  let bestCorr = 0;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let corr = 0;
+    for (let i = 0; i < data.length - lag; i++) corr += data[i]! * data[i + lag]!;
+    if (corr > bestCorr) {
+      bestCorr = corr;
+      bestLag = lag;
+    }
+  }
+  return bestLag > 0 ? sampleRate / bestLag : 0;
+}
+
+/** The measured pitch (Hz) of one resolved program note rendered offline (spec §11.2). */
+export interface NotePitchResult {
+  readonly frequency: number;
+  readonly rms: number;
+}
+
+/**
+ * Render one program note through the real resolution + voice pool in an OfflineAudioContext
+ * and measure its pitch (spec §11.2). Proves velocity-layer switching (different layers →
+ * different pitch) and keygroup pitch accuracy (coupled repitch) audibly (spec §12 exit).
+ * The layer/zone `sampleId` maps to a synthesised `baseFrequency` sine so the pitch is known.
+ */
+export async function renderProgramNotePitch(
+  program: Program,
+  note: number,
+  velocity: number,
+  baseFrequency = 440,
+  seconds = 0.4,
+): Promise<NotePitchResult> {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, Math.floor(sampleRate * seconds), sampleRate);
+  const resolved = resolveVoice(program, note, velocity);
+  if (!resolved) return { frequency: 0, rms: 0 };
+
+  const pool = new VoicePool(context);
+  const destination = context.createGain();
+  destination.connect(context.destination);
+  pool.trigger(
+    resolvedVoiceToTrigger(resolved, {
+      id: 'offline-note',
+      buffer: sineBuffer(context, baseFrequency, seconds),
+      destination,
+      when: 0,
+      velocity,
+      programId: 'offline',
+    }),
+  );
+
+  const rendered = await context.startRendering();
+  pool.destroy();
+  const data = rendered.getChannelData(0);
+  return { frequency: detectPitch(data, sampleRate), rms: rms(data) };
 }

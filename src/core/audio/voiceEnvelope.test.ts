@@ -1,0 +1,57 @@
+import { describe, expect, it } from 'vitest';
+import { createDefaultEnvelope } from '@/core/project/schemas';
+import { createFakeAudioContext } from '@/test/mocks/audioContext';
+import { scheduleAmpAttack, scheduleModEnvelope, velocityToGain } from './voiceEnvelope';
+
+/** Access a fake AudioParam's recorded schedule calls. */
+function calls(param: unknown): { method: string; args: number[] }[] {
+  return (param as { calls: { method: string; args: number[] }[] }).calls;
+}
+
+describe('velocityToGain (spec §5.4)', () => {
+  it('scales velocity 0..127 linearly and applies the gain trim in dB', () => {
+    expect(velocityToGain(127, 0)).toBeCloseTo(1);
+    expect(velocityToGain(0, 0)).toBe(0);
+    expect(velocityToGain(127, 6)).toBeCloseTo(10 ** (6 / 20));
+  });
+});
+
+describe('scheduleAmpAttack (spec §6 curve)', () => {
+  it('ramps 0→peak→sustain linearly for a linear envelope', () => {
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    const env = createDefaultEnvelope({ attack: 10, hold: 0, decay: 20, sustain: 0.5, curve: 'linear' });
+    scheduleAmpAttack(gain.gain, 1, env, 0);
+    const methods = calls(gain.gain).map((c) => c.method);
+    expect(methods).toContain('linearRampToValueAtTime');
+    expect(methods).not.toContain('exponentialRampToValueAtTime');
+  });
+
+  it('uses an exponential decay when the curve is exponential and sustain > 0', () => {
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    const env = createDefaultEnvelope({ attack: 5, hold: 0, decay: 40, sustain: 0.6, curve: 'exponential' });
+    scheduleAmpAttack(gain.gain, 1, env, 0);
+    expect(calls(gain.gain).map((c) => c.method)).toContain('exponentialRampToValueAtTime');
+  });
+
+  it('falls back to a linear decay when the exponential target would be zero', () => {
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    const env = createDefaultEnvelope({ attack: 5, hold: 0, decay: 40, sustain: 0, curve: 'exponential' });
+    scheduleAmpAttack(gain.gain, 1, env, 0);
+    expect(calls(gain.gain).map((c) => c.method)).not.toContain('exponentialRampToValueAtTime');
+  });
+});
+
+describe('scheduleModEnvelope (spec §6 pitch/filter envelope)', () => {
+  it('excurses from base by depth and settles at base + depth × sustain', () => {
+    const { context } = createFakeAudioContext();
+    const param = context.createBufferSource().detune;
+    const env = createDefaultEnvelope({ attack: 10, hold: 0, decay: 20, sustain: 0.5, curve: 'linear' });
+    scheduleModEnvelope(param, 100, 400, env, 0); // base 100 cents, +400 depth
+    const ramps = calls(param).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[0]?.args[0]).toBe(500); // peak = base + depth
+    expect(ramps[1]?.args[0]).toBe(300); // sustain = base + depth × 0.5
+  });
+});

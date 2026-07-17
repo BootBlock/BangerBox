@@ -3,6 +3,7 @@ import {
   type CapabilityReport,
   type SoftCapabilities,
 } from '@/core/platform/capabilities';
+import { ProgramEditPanel } from '@/features/program-edit';
 import { AudioEnginePanel } from '@/ui/AudioEnginePanel';
 import { ProjectStatusBar } from '@/ui/ProjectStatusBar';
 import { PwaUpdatePrompt } from '@/ui/PwaUpdatePrompt';
@@ -50,14 +51,14 @@ export function App({ capabilities, pwaApiOverride, storageApiOverride }: AppPro
         </span>
       </header>
 
-      <main className="flex flex-1 items-center justify-center p-6">
-        <div className="w-full max-w-xl rounded-bb-lg border border-bb-line bg-bb-surface p-8 shadow-bb-raised">
-          <p className="text-sm font-semibold tracking-widest text-bb-accent uppercase">Phase 4</p>
-          <h2 className="mt-1 text-2xl font-bold">Sequencer &amp; recording</h2>
+      <main className="flex flex-1 items-start justify-center p-6">
+        <div className="w-full max-w-3xl rounded-bb-lg border border-bb-line bg-bb-surface p-8 shadow-bb-raised">
+          <p className="text-sm font-semibold tracking-widest text-bb-accent uppercase">Phase 5</p>
+          <h2 className="mt-1 text-2xl font-bold">Programs &amp; sound design</h2>
           <p className="mt-2 text-sm leading-relaxed text-bb-muted">
-            The pulse: a lookahead worker scheduler drives the audio engine — swing, loop, note repeat,
-            recording, quantise, automation, and song playback. Start the engine, then use the transport to
-            play and record.
+            The instrument: drum and keygroup programs sound through the engine with layers, AHDSR
+            envelopes, a per-voice filter, LFOs and the mod matrix (spec §6). Start the engine, build a
+            program, and play it from the transport or the arpeggiator.
           </p>
 
           <section aria-labelledby="soft-capabilities-heading" className="mt-6">
@@ -85,6 +86,7 @@ export function App({ capabilities, pwaApiOverride, storageApiOverride }: AppPro
           <ProjectStatusBar />
           <StoragePanel apiOverride={storageApiOverride} />
           <AudioEnginePanel />
+          <ProgramEditPanel />
         </div>
       </main>
 

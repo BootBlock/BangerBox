@@ -21,3 +21,4 @@ export {
 export { tickToBarBeatTick, type BarBeatTick } from './ppqn';
 export { quantiseEvents, type QuantiseGrid, type QuantiseOptions } from './quantise';
 export type { NoteRepeatDivision } from './noteRepeat';
+export { arpeggiatorHits, arpSequence, type ArpConfig, type ArpMode, type ArpHeldNote } from './arpeggiator';

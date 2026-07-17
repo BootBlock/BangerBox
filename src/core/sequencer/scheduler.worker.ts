@@ -76,6 +76,14 @@ function handle(request: SchedulerRequest): void {
     case 'noteRepeat':
       core.setNoteRepeat(request.enabled, request.division);
       return;
+    case 'arp':
+      core.setArpeggiator(request.enabled, {
+        mode: request.mode,
+        octaves: request.octaves,
+        gate: request.gate,
+        division: request.division,
+      });
+      return;
     case 'metronome':
       core.setMetronome(request.enabled, request.countInBars);
       return;

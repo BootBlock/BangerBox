@@ -8,8 +8,9 @@
  * modules during the start gate (§5.1), starts the scheduler, and publishes the meter
  * registry. Every owned resource is released by {@link dispose} (spec §3.2).
  */
-import { useProjectStore, useSequenceStore, useTransportStore } from '@/store';
+import { useProgramStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
 import { createDefaultEnvelope } from '@/core/project/schemas';
+import { samplePath } from '@/core/storage/opfs';
 import {
   createPlayheadSab,
   PlayheadReader,
@@ -21,10 +22,12 @@ import { meterScope } from '@/ui/primitives/meterScope';
 import { createAudioBridge, type AudioBridge } from './audioBridge';
 import { loadAudioWorklets } from './context';
 import { ensureDemoSampleInOpfs } from './demoSample';
+import type { ChannelHandle } from './factory';
 import { MixerGraph } from './graph';
 import { MeterRegistry } from './metering';
 import { Metronome } from './metronome';
 import { PreviewChannel } from './preview';
+import { resolvedVoiceToTrigger, resolveVoice, type ResolvedVoice } from './programVoice';
 import { SampleCache } from './sampleCache';
 import { VoicePool } from './voicePool';
 
@@ -50,6 +53,10 @@ export class AudioEngine {
   private readonly playheadReader: PlayheadReader;
   private readonly meterNodes: AudioWorkletNode[] = [];
   private readonly meterSinks: GainNode[] = [];
+  /** Decoded program sample buffers keyed by sampleId (spec §9.4 decode-once). */
+  private readonly programBuffers = new Map<string, AudioBuffer>();
+  /** Pad/program channels whose §6 mixer has been pushed to the graph (apply once). */
+  private readonly channelMixerApplied = new Set<string>();
   /** Preloaded demo sample the scheduler dispatch triggers per note (Phase 4 instrument). */
   private demoBuffer: AudioBuffer | null = null;
   private playheadRaf: number | null = null;
@@ -150,6 +157,8 @@ export class AudioEngine {
     this.preview.destroy();
     this.graph.destroy();
     this.sampleCache.clear();
+    this.programBuffers.clear();
+    this.channelMixerApplied.clear();
     this.demoBuffer = null;
   }
 
@@ -191,15 +200,84 @@ export class AudioEngine {
   }
 
   /**
-   * Trigger one scheduled note through the Phase 4 demo instrument. Real program → pad →
-   * layer resolution is Phase 5; here every (track, note) sounds the bundled demo sample so
-   * the record-then-playback path is audible (spec §12 exit criterion).
+   * Trigger one scheduled note (spec §7.1.4) by resolving the track's program → pad/zone →
+   * layer into a real voice (spec §6, {@link resolveVoice}). Tracks with no program (or a
+   * note that resolves to nothing, e.g. the Phase 4 demo track) fall back to the bundled
+   * demo sample so the record-then-playback smoke stays audible (spec §12).
    */
   private triggerScheduledNote(event: ScheduledEvent): void {
+    if (event.trackId === undefined || event.note === undefined) return;
+    const resolved = this.resolveNote(event.trackId, event.note, event.velocity ?? 100);
+    if (resolved) this.soundResolvedVoice(event.trackId, resolved, event);
+    else this.triggerFallbackDemo(event);
+  }
+
+  /** Resolve a track's note to a §6 voice via its program, or null if nothing sounds. */
+  private resolveNote(trackId: string, note: number, velocity: number): ResolvedVoice | null {
+    const track = useSequenceStore.getState().tracks[trackId];
+    if (!track?.programId) return null;
+    const program = useProgramStore.getState().programs[track.programId];
+    if (!program) return null;
+    return resolveVoice(program, note, velocity);
+  }
+
+  /** Sound a resolved §6 voice, decoding its sample once and applying the §6 pad mixer. */
+  private soundResolvedVoice(trackId: string, resolved: ResolvedVoice, event: ScheduledEvent): void {
+    const projectId = useProjectStore.getState().projectId || DEMO_PROGRAM_ID;
+    const programId = useSequenceStore.getState().tracks[trackId]?.programId ?? trackId;
+    const channel = this.ensureProgramChannel(trackId, resolved);
+    const play = (buffer: AudioBuffer): void => {
+      this.scheduledNotes++;
+      this.voicePool.trigger(
+        resolvedVoiceToTrigger(resolved, {
+          id: crypto.randomUUID(),
+          buffer,
+          destination: channel.input,
+          when: event.when,
+          velocity: event.velocity ?? 100,
+          programId,
+        }),
+      );
+    };
+    const cached = this.programBuffers.get(resolved.sampleId);
+    if (cached) {
+      play(cached);
+      return;
+    }
+    void this.sampleCache
+      .get(samplePath(projectId, resolved.sampleId))
+      .then((buffer) => {
+        this.programBuffers.set(resolved.sampleId, buffer);
+        play(buffer);
+      })
+      .catch(() => {
+        // Missing/undecodable sample — the note is silently skipped, never a crash (spec §5.1).
+      });
+  }
+
+  /**
+   * The pad/program channel for a resolved voice, created under the track group and — on
+   * first use — seeded with the §6 pad mixer (level/pan/sends). Live pad-mixer editing to
+   * the graph is Mixer-mode work (Phase 7); here the stored §6 values are made audible.
+   */
+  private ensureProgramChannel(trackId: string, resolved: ResolvedVoice): ChannelHandle {
+    const track = this.graph.ensureTrackChannel(trackId);
+    const pad = this.graph.ensurePadChannel(resolved.channelId, track.input);
+    if (!this.channelMixerApplied.has(resolved.channelId)) {
+      this.channelMixerApplied.add(resolved.channelId);
+      const now = this.context.currentTime;
+      pad.setLevel(resolved.mixer.level, now, false);
+      pad.setPan(resolved.mixer.pan, now, false);
+      resolved.mixer.sendLevels.forEach((level, index) => pad.setSendGain(index, level, now, false));
+    }
+    return pad;
+  }
+
+  /** The Phase 4 demo instrument: one demo pad channel per (track, note) — the smoke path. */
+  private triggerFallbackDemo(event: ScheduledEvent): void {
     if (!this.demoBuffer || event.trackId === undefined || event.note === undefined) return;
     this.scheduledNotes++;
     const track = this.graph.ensureTrackChannel(event.trackId);
-    // STUB(phase-5): one demo pad channel per (track, note) — real program routing follows.
     const pad = this.graph.ensurePadChannel(`pad:${event.trackId}:${event.note}`, track.input);
     this.voicePool.trigger({
       id: crypto.randomUUID(),

@@ -17,6 +17,7 @@ import {
   type SchedulerSequenceMeta,
 } from './messages';
 import type { NoteRepeatDivision } from './noteRepeat';
+import type { ArpConfig } from './arpeggiator';
 
 export interface SchedulerClientCallbacks {
   /** Realise one scheduled event on the audio graph (spec §7.1.4). */
@@ -100,6 +101,9 @@ export class SchedulerClient {
   }
   setNoteRepeat(enabled: boolean, division: NoteRepeatDivision): void {
     this.#send({ kind: 'noteRepeat', enabled, division });
+  }
+  setArpeggiator(enabled: boolean, config: ArpConfig): void {
+    this.#send({ kind: 'arp', enabled, mode: config.mode, octaves: config.octaves, gate: config.gate, division: config.division });
   }
   setMetronome(enabled: boolean, countInBars: 0 | 1 | 2): void {
     this.#send({ kind: 'metronome', enabled, countInBars });

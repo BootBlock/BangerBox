@@ -19,6 +19,7 @@ import {
   type TimeSignature,
 } from '@/core/project/schemas';
 import type { SwingDivision } from '@/store/useTransportStore';
+import { arpeggiatorHits, type ArpConfig, type ArpHeldNote } from './arpeggiator';
 import { automationValueAt, resolveEffectivePoints } from './automation';
 import { eventsInWindow, loopActive, loopPassAt, sequenceTickAt, type LoopRegion } from './lookahead';
 import type { ScheduledEvent } from './messages';
@@ -78,6 +79,8 @@ export class SchedulerCore {
 
   private noteRepeatEnabled = false;
   private noteRepeatDivision: NoteRepeatDivision = { value: 16, triplet: false };
+  private arpEnabled = false;
+  private arpConfig: ArpConfig = { mode: 'up', octaves: 1, gate: 0.5, division: { value: 16, triplet: false } };
   private readonly heldNotes = new Map<string, HeldNote & { trackId: string }>();
   private readonly eraseNotes = new Map<string, number>(); // `${trackId}:${note}` → note
 
@@ -130,6 +133,10 @@ export class SchedulerCore {
   setNoteRepeat(enabled: boolean, division: NoteRepeatDivision): void {
     this.noteRepeatEnabled = enabled;
     this.noteRepeatDivision = division;
+  }
+  setArpeggiator(enabled: boolean, config: ArpConfig): void {
+    this.arpEnabled = enabled;
+    this.arpConfig = config;
   }
 
   applyEventsDiff(trackId: string, sequenceId: string, upserts: readonly MidiEvent[], deletes: readonly string[]): void {
@@ -300,6 +307,7 @@ export class SchedulerCore {
       this.collectErase(result, trackId, track, from, to);
     }
     this.scheduleNoteRepeat(result, from, to);
+    this.scheduleArpeggiator(result, from, to);
     this.scheduleSequenceAutomation(result, from, to);
 
     const newPass = loopPassAt(to, this.loop);
@@ -342,6 +350,35 @@ export class SchedulerCore {
       const when = this.contentStartContext + ticksToSeconds(swung - this.originTick, this.bpm);
       result.batch.push({ kind: 'noteOn', when, tick: seqTick, trackId: owner.trackId, note: hit.note, velocity: hit.velocity, durationSec: 0 });
       if (this.recording) this.captureAt(owner.trackId, hit.note, hit.velocity, seqTick, seqTick + 1);
+    }
+  }
+
+  // --- arpeggiator (spec §7.3) ---
+  private scheduleArpeggiator(result: SchedulerTickResult, from: number, to: number): void {
+    if (!this.arpEnabled || this.heldNotes.size === 0) return;
+    // Arpeggiate each track's held chord independently (keygroup tracks, spec §7.3).
+    const byTrack = new Map<string, ArpHeldNote[]>();
+    for (const held of this.heldNotes.values()) {
+      const list = byTrack.get(held.trackId) ?? [];
+      list.push({ note: held.note, velocity: held.velocity });
+      byTrack.set(held.trackId, list);
+    }
+    for (const [trackId, chord] of byTrack) {
+      for (const hit of arpeggiatorHits(chord, this.arpConfig, from, to)) {
+        const seqTick = sequenceTickAt(hit.tick, this.loop);
+        const swung = hit.tick + swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision);
+        const when = this.contentStartContext + ticksToSeconds(swung - this.originTick, this.bpm);
+        result.batch.push({
+          kind: 'noteOn',
+          when,
+          tick: seqTick,
+          trackId,
+          note: hit.note,
+          velocity: hit.velocity,
+          durationSec: ticksToSeconds(hit.durationTicks, this.bpm),
+        });
+        if (this.recording) this.captureAt(trackId, hit.note, hit.velocity, seqTick, seqTick + hit.durationTicks);
+      }
     }
   }
 

@@ -7,8 +7,21 @@
  * scheduler the UI does.
  */
 import type { AudioEngine } from '@/core/audio/engine';
-import { renderEffectOffline, type EffectRenderResult } from '@/core/audio/offlineTest';
-import { createDefaultSequence, createDefaultTrack, type EffectType } from '@/core/project/schemas';
+import {
+  renderEffectOffline,
+  renderProgramNotePitch,
+  type EffectRenderResult,
+} from '@/core/audio/offlineTest';
+import {
+  createDefaultDrumProgram,
+  createDefaultKeygroupProgram,
+  createDefaultPad,
+  createDefaultSequence,
+  createDefaultTrack,
+  type EffectType,
+  type KeygroupZone,
+  type VelocityLayer,
+} from '@/core/project/schemas';
 import { useSequenceStore, useTransportStore } from '@/store';
 
 export interface RecordPlaybackResult {
@@ -34,6 +47,10 @@ export interface AudioProbe {
   ) => Promise<EffectRenderResult>;
   /** Record a short take via live notes, then play it back (spec §12 exit criterion). */
   recordThenPlayback: () => Promise<RecordPlaybackResult>;
+  /** Velocity-layer switching: soft vs hard layer render pitches (spec §12 exit). */
+  velocityLayerPitches: () => Promise<{ soft: number; hard: number }>;
+  /** Keygroup pitch accuracy: root vs one-octave-up render pitches (spec §12 exit). */
+  keygroupPitches: () => Promise<{ root: number; octave: number }>;
 }
 
 declare global {
@@ -43,6 +60,61 @@ declare global {
 }
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+function layer(over: Partial<VelocityLayer>): VelocityLayer {
+  return {
+    sampleId: 'offline',
+    velocityStart: 0,
+    velocityEnd: 127,
+    tuneSemitones: 0,
+    tuneCents: 0,
+    gainDb: 0,
+    startFrame: 0,
+    endFrame: 0,
+    reverse: false,
+    ...over,
+  };
+}
+
+/**
+ * Velocity-layer switching proof (spec §12): a pad with a soft layer (unity pitch) and a
+ * hard layer tuned +12 semitones. A soft hit renders the base pitch; a hard hit renders an
+ * octave up — proving velocity selects the layer through the real resolution + voice path.
+ */
+async function velocityLayerPitches(): Promise<{ soft: number; hard: number }> {
+  const program = createDefaultDrumProgram('Velocity kit');
+  const pad = createDefaultPad(0);
+  pad.layers = [
+    layer({ sampleId: 'soft', velocityStart: 1, velocityEnd: 63, tuneSemitones: 0 }),
+    layer({ sampleId: 'hard', velocityStart: 64, velocityEnd: 127, tuneSemitones: 12 }),
+  ];
+  program.pads = [pad];
+  const soft = await renderProgramNotePitch(program, 0, 30);
+  const hard = await renderProgramNotePitch(program, 0, 110);
+  return { soft: soft.frequency, hard: hard.frequency };
+}
+
+/**
+ * Keygroup pitch-accuracy proof (spec §12): one zone rooted at note 60. Note 60 renders the
+ * unity pitch; note 72 renders exactly one octave up (coupled repitch, spec §6).
+ */
+async function keygroupPitches(): Promise<{ root: number; octave: number }> {
+  const program = createDefaultKeygroupProgram('Keys');
+  const zone: KeygroupZone = {
+    sampleId: 'offline',
+    rootNote: 60,
+    lowNote: 0,
+    highNote: 127,
+    lowVelocity: 0,
+    highVelocity: 127,
+    tuneCents: 0,
+    gainDb: 0,
+  };
+  program.zones = [zone];
+  const root = await renderProgramNotePitch(program, 60, 100);
+  const octave = await renderProgramNotePitch(program, 72, 100);
+  return { root: root.frequency, octave: octave.frequency };
+}
 
 /**
  * Drive the real sequencer end to end (spec §12 record-then-playback): set up a one-bar
@@ -116,5 +188,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     },
     renderEffect: (effectType, options) => renderEffectOffline(effectType, options),
     recordThenPlayback: () => recordThenPlayback(engine),
+    velocityLayerPitches,
+    keygroupPitches,
   };
 }

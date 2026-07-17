@@ -104,7 +104,7 @@ async function assertShellAndSelfTest(page, label) {
 
   await step(`${label}: app shell boots past the capability gate`, async () => {
     await page.locator('h1', { hasText: 'BangerBox' }).waitFor({ timeout: 15_000 });
-    await page.locator('h2', { hasText: 'Sequencer' }).waitFor({ timeout: 15_000 });
+    await page.locator('h2', { hasText: 'Programs' }).waitFor({ timeout: 15_000 });
   });
 
   // Phase 1 exit criterion (spec §12): the real-OPFS path — SQLite worker boot +
@@ -238,6 +238,31 @@ async function assertShellAndSelfTest(page, label) {
     }
     if (!(result.played >= 2)) {
       throw new Error(`playback dispatched only ${result.played} note(s) — expected ≥ 2`);
+    }
+  });
+
+  // Phase 5 exit criteria (spec §12): velocity-layer switching is audible and keygroup pitch
+  // is accurate — both proven by offline renders through the real resolution + voice path.
+  await step(`${label}: velocity switches the layer, changing pitch (spec §12)`, async () => {
+    const { soft, hard } = await page.evaluate(() =>
+      globalThis.__bangerboxAudioProbe.velocityLayerPitches(),
+    );
+    if (!(soft > 0) || !(hard > 0)) throw new Error(`layer render silent (soft ${soft}, hard ${hard})`);
+    // Hard layer is tuned +12 semitones → about one octave (2×) above the soft layer.
+    const ratio = hard / soft;
+    if (!(ratio > 1.8 && ratio < 2.2)) {
+      throw new Error(`velocity did not switch layers: hard/soft pitch ratio ${ratio.toFixed(3)} (expected ~2)`);
+    }
+  });
+
+  await step(`${label}: keygroup repitches accurately across an octave (spec §12)`, async () => {
+    const { root, octave } = await page.evaluate(() =>
+      globalThis.__bangerboxAudioProbe.keygroupPitches(),
+    );
+    if (!(root > 0) || !(octave > 0)) throw new Error(`keygroup render silent (root ${root}, octave ${octave})`);
+    const ratio = octave / root;
+    if (!(ratio > 1.94 && ratio < 2.06)) {
+      throw new Error(`keygroup octave pitch ratio ${ratio.toFixed(3)} (expected ~2.0)`);
     }
   });
 
