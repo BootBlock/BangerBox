@@ -14,7 +14,14 @@ const assemblyDir = resolve(root, 'src/core/dsp/assembly');
 const outDir = resolve(root, 'src/core/dsp/dist');
 
 /** Kernel registry: one entry per AssemblyScript source (spec §5.6.4 grows this list). */
-const kernels = ['gainProof'];
+const kernels = [
+  'gainProof',
+  'lookaheadLimiter',
+  'multibandComp',
+  'fdnReverb',
+  'transientDetect',
+  'granularStretch',
+];
 
 if (!existsSync(ascEntry)) {
   console.error('assemblyscript is not installed — run `npm install` first.');
