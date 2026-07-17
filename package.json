@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "config": {
-    "phase": "1"
+    "phase": "2"
   },
   "scripts": {
     "dev": "vite",
