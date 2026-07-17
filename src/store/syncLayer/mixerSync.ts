@@ -18,6 +18,14 @@ export function subscribeMixerSync(bridge: SyncBridge): Unsubscribe {
         if (before === undefined || before.pan !== strip.pan) bridge.setChannelPan(id, strip.pan);
         if (before === undefined || before.mute !== strip.mute) bridge.setChannelMute(id, strip.mute);
         if (before === undefined || before.solo !== strip.solo) bridge.setChannelSolo(id, strip.solo);
+        for (let i = 0; i < strip.sendLevels.length; i++) {
+          if (before === undefined || before.sendLevels[i] !== strip.sendLevels[i]) {
+            bridge.setChannelSend(id, i, strip.sendLevels[i]!);
+          }
+        }
+        if (before === undefined || before.inserts !== strip.inserts) {
+          bridge.setChannelInserts(id, strip.inserts);
+        }
       }
     },
   );

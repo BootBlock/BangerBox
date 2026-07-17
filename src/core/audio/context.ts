@@ -1,0 +1,30 @@
+/**
+ * AudioContext bootstrap & start gate — spec §5.1. A single `AudioContext` is created at
+ * the project sample rate with `latencyHint: 'interactive'` (locked decision §1.3 #18).
+ * The browser autoplay policy requires `resume()` from a user gesture: the Start screen
+ * calls {@link resumeAudioContext} inside the click before any audio runs, and re-surfaces
+ * the gate on external suspension via `statechange` (spec §5.1). All worklet modules load
+ * during the start gate (spec §5.1) via Vite's `?worker&url` real-file suffix (§2.7).
+ */
+// spec §2.7 / §14 2026-07-17 (e): worklet modules load as real es-format files.
+import meterTapWorkletUrl from './worklets/meterTap.worklet.ts?worker&url';
+
+/** Create the single application AudioContext at the project sample rate (spec §5.1). */
+export function createAudioContext(sampleRate: number): AudioContext {
+  return new AudioContext({ latencyHint: 'interactive', sampleRate });
+}
+
+/** Resume from a user gesture (spec §5.1 start gate). Safe to call when already running. */
+export async function resumeAudioContext(context: AudioContext): Promise<void> {
+  if (context.state !== 'running') await context.resume();
+}
+
+/** Every AudioWorklet processor module the engine needs (loaded during the gate). */
+const WORKLET_MODULE_URLS: readonly string[] = [meterTapWorkletUrl];
+
+/** Load all worklet processor modules (spec §5.1). Worklet scope has no fetch (§5.6.2). */
+export async function loadAudioWorklets(context: BaseAudioContext): Promise<void> {
+  for (const url of WORKLET_MODULE_URLS) {
+    await context.audioWorklet.addModule(url);
+  }
+}
