@@ -62,7 +62,7 @@ export function PadEditor({ program }: { program: DrumProgram }) {
         ))}
       </div>
 
-      <div role="grid" aria-label="Pad grid" className="grid grid-cols-8 gap-1">
+      <div role="group" aria-label="Pad grid" className="grid grid-cols-8 gap-1">
         {Array.from({ length: BANK_SIZE }, (_, i) => {
           const padIndex = bank * BANK_SIZE + i;
           const exists = padByIndex.has(padIndex);
