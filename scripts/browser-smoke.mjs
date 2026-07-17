@@ -104,7 +104,7 @@ async function assertShellAndSelfTest(page, label) {
 
   await step(`${label}: app shell boots past the capability gate`, async () => {
     await page.locator('h1', { hasText: 'BangerBox' }).waitFor({ timeout: 15_000 });
-    await page.locator('h2', { hasText: 'Sequencer' }).waitFor({ timeout: 15_000 });
+    await page.locator('h2', { hasText: 'Programs' }).waitFor({ timeout: 15_000 });
   });
 
   // Phase 1 exit criterion (spec §12): the real-OPFS path — SQLite worker boot +
