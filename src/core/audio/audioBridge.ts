@@ -10,6 +10,7 @@
 import { useMixerStore } from '@/store';
 import type { InsertSlotState } from '@/core/project/schemas';
 import type { SyncBridge } from '@/store/syncLayer';
+import { parseParamTarget } from './params/registry';
 import type { ChannelHandle } from './factory';
 import type { MixerGraph } from './graph';
 import { createInsert } from './inserts/insert';
@@ -21,7 +22,11 @@ interface BridgeTarget {
 }
 
 /** A bridge that can also flush the full current mixer state to the graph (start-up). */
-export type AudioBridge = SyncBridge & { resyncAll: () => void };
+export type AudioBridge = SyncBridge & {
+  resyncAll: () => void;
+  /** Apply a scheduled automation ramp to a registered target (spec §7.8). */
+  applyAutomation: (targetPath: string, value: number, when: number, rampEnd: number) => void;
+};
 
 function applyInserts(context: BaseAudioContext, channel: ChannelHandle, inserts: readonly InsertSlotState[]): void {
   const handles = inserts
@@ -60,6 +65,29 @@ export function createAudioBridge({ graph, context }: BridgeTarget): AudioBridge
     setBpm: () => {}, // synced-delay tempo map — Phase 4 (spec §7.9)
     onActiveProgramChanged: () => {}, // pad mixer-strip population — Phase 5 (spec §4.2)
     onQLinkModeChanged: () => {}, // Q-Link runtime — Phase 8 (spec §10.3)
+
+    // Automation dispatch (spec §7.8): resolve the registered target and ramp its param.
+    // `when` starts the dezipper ramp; native/insert params ramp identically to live edits.
+    applyAutomation: (targetPath, value, when) => {
+      const target = parseParamTarget(targetPath);
+      if (!target) return;
+      const channel = graph.getChannel(target.channelId);
+      if (!channel) return;
+      switch (target.kind) {
+        case 'channelLevel':
+          channel.setLevel(value, when);
+          return;
+        case 'channelPan':
+          channel.setPan(value, when);
+          return;
+        case 'channelSend':
+          channel.setSendGain(target.sendIndex, value, when);
+          return;
+        case 'insertParam':
+          channel.setInsertParam(target.slot, target.param, value, when);
+          return;
+      }
+    },
 
     resyncAll: () => {
       const channels = useMixerStore.getState().channels;

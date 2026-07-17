@@ -104,7 +104,7 @@ async function assertShellAndSelfTest(page, label) {
 
   await step(`${label}: app shell boots past the capability gate`, async () => {
     await page.locator('h1', { hasText: 'BangerBox' }).waitFor({ timeout: 15_000 });
-    await page.locator('h2', { hasText: 'Audio core' }).waitFor({ timeout: 15_000 });
+    await page.locator('h2', { hasText: 'Sequencer' }).waitFor({ timeout: 15_000 });
   });
 
   // Phase 1 exit criterion (spec §12): the real-OPFS path — SQLite worker boot +
@@ -226,6 +226,31 @@ async function assertShellAndSelfTest(page, label) {
         `low-pass did not attenuate a 6 kHz tone (out ${results.filt.outputRms} vs in ${results.filt.inputRms})`,
       );
     }
+  });
+
+  // Phase 4 exit criterion (spec §12): the record-then-playback path. The probe drives the
+  // real store → sync → scheduler worker → dispatcher → graph loop: it records a take via
+  // live notes, lets the worker capture + flush it, then plays it back (§7.1, §7.7).
+  await step(`${label}: sequencer records a take and plays it back (spec §12)`, async () => {
+    const result = await page.evaluate(() => globalThis.__bangerboxAudioProbe.recordThenPlayback());
+    if (!(result.recorded >= 2)) {
+      throw new Error(`recording captured only ${result.recorded} note(s) — expected ≥ 2`);
+    }
+    if (!(result.played >= 2)) {
+      throw new Error(`playback dispatched only ${result.played} note(s) — expected ≥ 2`);
+    }
+  });
+
+  // The transport UI is wired end to end (spec §3.4): Play drives the scheduler and the
+  // playhead SAB advances (spec §7.1.4).
+  await step(`${label}: transport UI advances the playhead (spec §3.4)`, async () => {
+    await page.getByTestId('transport-play').click();
+    await page.waitForFunction(
+      () => (globalThis.__bangerboxAudioProbe?.playheadTick() ?? 0) > 0,
+      undefined,
+      { timeout: 6_000 },
+    );
+    await page.getByTestId('transport-play').click(); // stop
   });
 }
 

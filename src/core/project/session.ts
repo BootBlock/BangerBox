@@ -10,9 +10,11 @@ import { AudioEngine } from '@/core/audio/engine';
 import { createAudioContext, resumeAudioContext } from '@/core/audio/context';
 import { useProjectStore, useUIStore } from '@/store';
 import { registerSyncSubscribers, type Unsubscribe } from '@/store/syncLayer';
+import { subscribeSequencerSync } from '@/store/syncLayer/sequencerSync';
 import { installProjectService, loadOrCreateActiveProject, projectService } from './projectService';
 
 let syncDispose: Unsubscribe | null = null;
+let sequencerSyncDispose: Unsubscribe | null = null;
 let visibilityHandler: (() => void) | null = null;
 let audioEngine: AudioEngine | null = null;
 
@@ -50,6 +52,9 @@ export async function startAudioEngine(): Promise<AudioEngine> {
   syncDispose?.();
   syncDispose = registerSyncSubscribers(engine.bridge);
   engine.bridge.resyncAll();
+  // Register the sequencer sync onto the live scheduler and push the full state (spec §7.1.3).
+  sequencerSyncDispose?.();
+  sequencerSyncDispose = subscribeSequencerSync(engine.scheduler);
   audioEngine = engine;
   return engine;
 }
@@ -61,6 +66,8 @@ export function getAudioEngine(): AudioEngine | null {
 
 /** Tear the session down (test teardown / hot reload). */
 export function stopProjectSession(): void {
+  sequencerSyncDispose?.();
+  sequencerSyncDispose = null;
   syncDispose?.();
   syncDispose = null;
   audioEngine?.dispose();

@@ -47,6 +47,11 @@ interface SequenceState extends SequenceHydration {
 
   /** Atomically replace a track's events (recording pass / quantise — spec §7.4, §7.7). */
   setTrackEvents: (trackId: string, events: readonly MidiEvent[]) => void;
+  /**
+   * Commit a recording capture flush as one undo entry ("Recorded take" — spec §7.7).
+   * `overdub` merges into the track; `replace` swaps the track's events for the take.
+   */
+  commitRecordedTake: (trackId: string, events: readonly MidiEvent[], mode: 'overdub' | 'replace') => void;
   addEvents: (trackId: string, events: readonly MidiEvent[]) => void;
   removeEvents: (trackId: string, ids: readonly string[]) => void;
 
@@ -209,6 +214,18 @@ export const useSequenceStore = create<SequenceState>()(
         set((state) => ({ events: { ...state.events, [trackId]: value } }));
       commit({
         label: 'Edit notes',
+        apply: () => setEvents(next),
+        revert: () => setEvents(prev),
+        dirtyKeys: [dirtyKey.events(trackId)],
+      });
+    },
+    commitRecordedTake: (trackId, events, mode) => {
+      const prev = get().events[trackId] ?? [];
+      const next = mode === 'replace' ? sortEvents(events) : sortEvents([...prev, ...events]);
+      const setEvents = (value: MidiEvent[]) =>
+        set((state) => ({ events: { ...state.events, [trackId]: value } }));
+      commit({
+        label: 'Recorded take', // spec §7.7: one undo entry per recording pass
         apply: () => setEvents(next),
         revert: () => setEvents(prev),
         dirtyKeys: [dirtyKey.events(trackId)],
