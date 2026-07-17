@@ -13,20 +13,57 @@
       "pattern": "\\b(?:items|justify|content|place-items|place-content|place-self|self|text|origin|object)-center\\b",
       "reason": "Tailwind layout utilities use the CSS 'center' keyword"
     },
-    { "pattern": ":\\s*center\\b", "reason": "CSS property value 'center' is platform-fixed" },
+    {
+      "pattern": ":\\s*center\\b",
+      "reason": "CSS property value 'center' is platform-fixed"
+    },
     {
       "pattern": "\\b(?:background-color|border-color|outline-color|accent-color|caret-color|scrollbar-color|text-decoration-color|-webkit-[a-z-]+)\\b",
       "reason": "CSS property names are platform-fixed"
     },
-    { "pattern": "(?<![a-z-])color\\s*:", "reason": "CSS 'color:' property is platform-fixed" },
-    { "pattern": "\\bcolor-scheme\\b", "reason": "CSS 'color-scheme' property is platform-fixed" },
-    { "pattern": "\\bprefers-color-scheme\\b", "reason": "CSS media feature is platform-fixed" },
-    { "pattern": "\\btheme[-_]color\\b", "reason": "Web-manifest/meta key is platform-fixed" },
-    { "pattern": "\\bbackground_color\\b", "reason": "Web-manifest key is platform-fixed" },
-    { "pattern": "\\bcurrentColor\\b", "reason": "CSS keyword is platform-fixed" },
-    { "pattern": "\\.normalize\\(", "reason": "String.prototype.normalize is platform-fixed" },
-    { "pattern": "\\btransition-colors\\b", "reason": "Tailwind transition utility is platform-fixed" },
-    { "pattern": "getModifierState|AnalyserNode", "reason": "Platform API names (spec §13.6 examples)" },
-    { "pattern": "\\boptimizeDeps\\b", "reason": "Vite configuration API name is platform-fixed" }
+    {
+      "pattern": "(?<![a-z-])color\\s*:",
+      "reason": "CSS 'color:' property is platform-fixed"
+    },
+    {
+      "pattern": "\\bcolor-scheme\\b",
+      "reason": "CSS 'color-scheme' property is platform-fixed"
+    },
+    {
+      "pattern": "\\bprefers-color-scheme\\b",
+      "reason": "CSS media feature is platform-fixed"
+    },
+    {
+      "pattern": "\\btheme[-_]color\\b",
+      "reason": "Web-manifest/meta key is platform-fixed"
+    },
+    {
+      "pattern": "\\bbackground_color\\b",
+      "reason": "Web-manifest key is platform-fixed"
+    },
+    {
+      "pattern": "\\bcurrentColor\\b",
+      "reason": "CSS keyword is platform-fixed"
+    },
+    {
+      "pattern": "\\.normalize\\(",
+      "reason": "String.prototype.normalize is platform-fixed"
+    },
+    {
+      "pattern": "\\btransition-colors\\b",
+      "reason": "Tailwind transition utility is platform-fixed"
+    },
+    {
+      "pattern": "getModifierState|AnalyserNode",
+      "reason": "Platform API names (spec §13.6 examples)"
+    },
+    {
+      "pattern": "\\boptimizeDeps\\b",
+      "reason": "Vite configuration API name is platform-fixed"
+    },
+    {
+      "pattern": "\\bstop-color\\b",
+      "reason": "SVG gradient attribute name is platform-fixed"
+    }
   ]
 }
