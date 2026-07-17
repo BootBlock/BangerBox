@@ -1,14 +1,27 @@
 /**
  * Voice pool — spec §5.4. A global pool of at most `MAX_VOICES` voices; each voice is one
- * `AudioBufferSourceNode` → amp-envelope `GainNode` feeding a pad channel input (spec
- * §5.2 stages 1–2, 5). Owns per-pad playback modes (poly / mono / oneShot), choke groups,
- * and voice stealing with a short fade — never a hard cut/click (spec §5.4). Allocation
- * policy is the pure {@link selectStealVictim}/{@link selectChokeVictims} (spec §11.1);
- * this class only wires and tears down nodes (spec §3.2).
+ * `AudioBufferSourceNode` → amp-envelope `GainNode` → (optional) filter `BiquadFilterNode`
+ * feeding a pad channel input (spec §5.2 stages 1–2, 5). Owns per-pad playback modes
+ * (poly / mono / oneShot), choke groups, and voice stealing with a short fade — never a
+ * hard cut/click (spec §5.4). Phase 5 enriches the voice with the §6 sound-design surface:
+ * per-voice filter + filter envelope, pitch envelope, and LFOs / static mod-matrix offsets
+ * (spec §6). Allocation policy is the pure {@link selectStealVictim}/{@link
+ * selectChokeVictims} (spec §11.1); this class wires and tears down nodes (spec §3.2).
  */
 import { CHOKE_FADE_MS, MAX_VOICES, VOICE_STEAL_FADE_MS } from '@/core/constants';
-import type { AhdsrEnvelope, PlaybackMode } from '@/core/project/schemas';
-import { scheduleAmpAttack, scheduleAmpRelease, velocityToGain } from './voiceEnvelope';
+import { clamp } from '@/core/math';
+import {
+  FILTER_CUTOFF_RANGE,
+  FILTER_RESONANCE_RANGE,
+  type AhdsrEnvelope,
+  type LfoConfig,
+  type ModRoute,
+  type PadFilter,
+  type PlaybackMode,
+} from '@/core/project/schemas';
+import { scheduleAmpAttack, scheduleAmpRelease, scheduleModEnvelope, velocityToGain } from './voiceEnvelope';
+import { biquadFilterType, lfoOscillator, staticModulation, FILTER_MOD_OCTAVES, PITCH_MOD_CENTS } from './voiceModulation';
+import { routesForSource } from './modMatrix';
 import {
   selectChokeVictims,
   selectStealVictim,
@@ -16,8 +29,18 @@ import {
   type VoiceRef,
 } from './voiceSelection';
 
+/** The §6 sound-design surface for one voice (optional — omitted by the demo path). */
+export interface VoiceSoundDesign {
+  readonly filter?: PadFilter;
+  readonly pitchEnv?: AhdsrEnvelope;
+  readonly filterEnv?: AhdsrEnvelope;
+  readonly pitchEnvSemitones?: number;
+  readonly lfos?: readonly [LfoConfig, LfoConfig];
+  readonly modMatrix?: readonly ModRoute[];
+}
+
 /** Everything the pool needs to sound one hit (spec §5.4, §6). */
-export interface VoiceTriggerSpec {
+export interface VoiceTriggerSpec extends VoiceSoundDesign {
   readonly id: string;
   readonly buffer: AudioBuffer;
   readonly destination: AudioNode;
@@ -37,11 +60,19 @@ interface Voice {
   readonly id: string;
   readonly source: AudioBufferSourceNode;
   readonly ampGain: GainNode;
+  /** Per-voice filter (spec §5.2 stage 2), or null when the pad filter is off. */
+  readonly filter: BiquadFilterNode | null;
+  /** LFO oscillators (spec §6) — started with the voice, stopped in teardown. */
+  readonly oscillators: OscillatorNode[];
+  /** LFO scaling gains feeding modulation targets. */
+  readonly modGains: GainNode[];
   readonly padKey: string;
   readonly programId: string;
   readonly chokeGroup: number;
   readonly oneShot: boolean;
   readonly releaseMs: number;
+  /** Base detune in cents (tune + static pitch mod) — the glide origin (spec §6). */
+  readonly baseDetune: number;
   startTime: number;
   released: boolean;
   stopScheduled: boolean;
@@ -81,33 +112,8 @@ export class VoicePool {
       if (victim) this.fadeAndStop(victim, now, VOICE_STEAL_FADE_MS);
     }
 
-    // 4. Build and start the voice.
-    const source = this.context.createBufferSource();
-    source.buffer = spec.buffer;
-    source.detune.value = spec.tuneSemitones * 100 + spec.tuneCents; // cents (spec §6 coupled tune)
-    const ampGain = this.context.createGain();
-    source.connect(ampGain);
-    ampGain.connect(spec.destination);
-
-    const peak = velocityToGain(spec.velocity, spec.gainDb);
-    scheduleAmpAttack(ampGain.gain, peak, spec.amp, now);
-    source.start(now);
-
-    const voice: Voice = {
-      id: spec.id,
-      source,
-      ampGain,
-      padKey: spec.padKey,
-      programId: spec.programId,
-      chokeGroup: spec.chokeGroup,
-      oneShot: spec.playbackMode === 'oneShot',
-      releaseMs: spec.amp.release,
-      startTime: now,
-      released: false,
-      stopScheduled: false,
-    };
-    // A finite buffer ends on its own → teardown; stolen/choked voices end after the fade.
-    source.onended = () => this.teardown(spec.id);
+    // 4. Build and start the enriched voice chain (spec §5.2 stages 1–2, §6).
+    const voice = this.buildVoice(spec, now);
     this.voices.set(spec.id, voice);
   }
 
@@ -127,6 +133,13 @@ export class VoicePool {
     return this.voices.size;
   }
 
+  /** Live voices sounding a given program (keygroup polyphony bookkeeping, spec §6). */
+  programVoiceCount(programId: string): number {
+    let count = 0;
+    for (const voice of this.voices.values()) if (voice.programId === programId) count++;
+    return count;
+  }
+
   /** Stop and tear down every voice (project close / mode unmount) — spec §3.2. */
   destroy(): void {
     for (const voice of [...this.voices.values()]) {
@@ -134,6 +147,131 @@ export class VoicePool {
       this.teardown(voice.id);
     }
     this.voices.clear();
+  }
+
+  // --------------------------------------------------------------- internals ---
+
+  /** Assemble source → ampGain → [filter] → destination with §6 modulation (spec §5.2). */
+  private buildVoice(spec: VoiceTriggerSpec, now: number): Voice {
+    const oscillators: OscillatorNode[] = [];
+    const modGains: GainNode[] = [];
+    const routes = spec.modMatrix ?? [];
+    const stat = staticModulation(
+      routes,
+      noteFromPadKey(spec.padKey),
+      spec.velocity,
+      deterministicRandom(spec.id),
+    );
+
+    const source = this.context.createBufferSource();
+    source.buffer = spec.buffer;
+    const baseDetune = spec.tuneSemitones * 100 + spec.tuneCents + stat.detuneCents;
+
+    const ampGain = this.context.createGain();
+    const filterType = spec.filter ? biquadFilterType(spec.filter.type) : null;
+    const filter = filterType ? this.context.createBiquadFilter() : null;
+
+    // Chain: source → ampGain → [filter] → destination (spec §5.2 stages 1–2, 5).
+    source.connect(ampGain);
+    if (filter) {
+      filter.type = filterType!;
+      filter.frequency.value = clamp(
+        spec.filter!.cutoff * stat.cutoffFactor,
+        FILTER_CUTOFF_RANGE[0],
+        FILTER_CUTOFF_RANGE[1],
+      );
+      filter.Q.value = clamp(spec.filter!.resonance, FILTER_RESONANCE_RANGE[0], FILTER_RESONANCE_RANGE[1]);
+      ampGain.connect(filter);
+      filter.connect(spec.destination);
+      this.scheduleFilterEnvelope(filter, spec, now);
+    } else {
+      ampGain.connect(spec.destination);
+    }
+
+    // Pitch: base detune, then the pitch envelope on top if it has depth (spec §6).
+    const pitchDepth = (spec.pitchEnvSemitones ?? 0) * 100;
+    if (spec.pitchEnv && pitchDepth !== 0) {
+      scheduleModEnvelope(source.detune, baseDetune, pitchDepth, spec.pitchEnv, now);
+    } else {
+      source.detune.value = baseDetune;
+    }
+
+    // Amp AHDSR (velocity × gain trim × static amp mod) — spec §5.4/§6.
+    const peak = velocityToGain(spec.velocity, spec.gainDb) * stat.ampFactor;
+    scheduleAmpAttack(ampGain.gain, peak, spec.amp, now);
+
+    // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6).
+    this.wireLfos(spec, source, filter, oscillators, modGains);
+
+    source.start(now);
+    for (const osc of oscillators) osc.start(now);
+
+    const voice: Voice = {
+      id: spec.id,
+      source,
+      ampGain,
+      filter,
+      oscillators,
+      modGains,
+      padKey: spec.padKey,
+      programId: spec.programId,
+      chokeGroup: spec.chokeGroup,
+      oneShot: spec.playbackMode === 'oneShot',
+      releaseMs: spec.amp.release,
+      baseDetune,
+      startTime: now,
+      released: false,
+      stopScheduled: false,
+    };
+    // A finite buffer ends on its own → teardown; stolen/choked voices end after the fade.
+    source.onended = () => this.teardown(spec.id);
+    return voice;
+  }
+
+  /** Filter envelope on the biquad `detune` (cents), scaled by envDepth (spec §6). */
+  private scheduleFilterEnvelope(filter: BiquadFilterNode, spec: VoiceTriggerSpec, now: number): void {
+    const envDepth = spec.filter?.envDepth ?? 0;
+    if (!spec.filterEnv || envDepth === 0) return;
+    const depthCents = envDepth * FILTER_MOD_OCTAVES * 1200;
+    scheduleModEnvelope(filter.detune, 0, depthCents, spec.filterEnv, now);
+  }
+
+  /** Wire each LFO to its pitch/filter-cutoff routes as an oscillator → gain → param (spec §6). */
+  private wireLfos(
+    spec: VoiceTriggerSpec,
+    source: AudioBufferSourceNode,
+    filter: BiquadFilterNode | null,
+    oscillators: OscillatorNode[],
+    modGains: GainNode[],
+  ): void {
+    const lfos = spec.lfos;
+    const routes = spec.modMatrix;
+    if (!lfos || !routes) return;
+    lfos.forEach((config, index) => {
+      const sourceName = index === 0 ? 'lfo1' : 'lfo2';
+      const targets = routesForSource(routes, sourceName).filter(
+        (route) => route.target === 'pitch' || (route.target === 'filterCutoff' && filter),
+      );
+      if (targets.length === 0) return;
+      const { type, sign } = lfoOscillator(config.shape);
+      const osc = this.context.createOscillator();
+      osc.type = type;
+      osc.frequency.value = config.rate; // free-rate Hz; tempo-synced LFO is a later refinement
+      oscillators.push(osc);
+      for (const route of targets) {
+        const gain = this.context.createGain();
+        if (route.target === 'pitch') {
+          gain.gain.value = sign * route.amount * PITCH_MOD_CENTS;
+          osc.connect(gain);
+          gain.connect(source.detune);
+        } else if (filter) {
+          gain.gain.value = sign * route.amount * FILTER_MOD_OCTAVES * 1200;
+          osc.connect(gain);
+          gain.connect(filter.detune);
+        }
+        modGains.push(gain);
+      }
+    });
   }
 
   private fadeAndStop(voice: Voice, when: number, fadeMs: number): void {
@@ -157,12 +295,22 @@ export class VoicePool {
     if (!voice) return;
     this.voices.delete(id);
     voice.source.onended = null;
+    for (const osc of voice.oscillators) {
+      try {
+        osc.stop();
+      } catch {
+        // Never started / already stopped.
+      }
+      osc.disconnect();
+    }
+    for (const gain of voice.modGains) gain.disconnect();
     try {
       voice.source.disconnect();
     } catch {
       // Never connected / already gone.
     }
     voice.ampGain.disconnect();
+    voice.filter?.disconnect();
   }
 
   private voiceRefs(): VoiceRef[] {
@@ -181,4 +329,21 @@ export class VoicePool {
       chokeGroup: v.chokeGroup,
     }));
   }
+}
+
+/** Extract the pad index from a `${programId}:${padIndex}` key for the noteNumber source. */
+function noteFromPadKey(padKey: string): number {
+  const index = Number(padKey.slice(padKey.lastIndexOf(':') + 1));
+  return Number.isFinite(index) ? index : 0;
+}
+
+/**
+ * A stable bipolar pseudo-random in [−1, 1] derived from the voice id, so the `random`
+ * mod source is deterministic per hit (repeatable renders, spec §11.2) yet varies between
+ * hits. A hash of the id keeps it dependency-free.
+ */
+function deterministicRandom(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return (hash % 2000) / 1000 - 1; // −1..1
 }

@@ -1,11 +1,16 @@
 /**
- * Amp-envelope scheduling for a voice (spec §5.4 / §6 AhdsrEnvelope). Schedules the
+ * Envelope scheduling for a voice (spec §5.4 / §6 AhdsrEnvelope). Schedules the
  * attack→hold→decay→sustain contour on note-on and the release ramp on note-off against
- * a voice's amp `GainNode.gain`. Linear segments are used so the release always reaches
- * true zero (exponential ramps cannot) — the `curve` refinement is Program-Edit work
- * (Phase 5). Times are milliseconds (schema units); the AudioParam clock is seconds.
+ * a voice's amp `GainNode.gain`, and the same AHDSR contour against a modulation param
+ * (source `detune` for the pitch envelope, filter `frequency` for the filter envelope,
+ * spec §6). Amp attack/release stay linear so the release always reaches true zero
+ * (exponential ramps cannot); the `curve` field shapes the amp decay toward the sustain
+ * level (spec §6). Times are milliseconds (schema units); the AudioParam clock is seconds.
  */
 import type { AhdsrEnvelope } from '@/core/project/schemas';
+
+/** Smallest non-zero value an exponential ramp may target (they cannot reach 0). */
+const EXP_FLOOR = 1e-4;
 
 /** Peak amp gain for a hit: linear velocity scaling × the layer's gain trim (spec §5.4). */
 export function velocityToGain(velocity: number, gainDb: number): number {
@@ -14,8 +19,10 @@ export function velocityToGain(velocity: number, gainDb: number): number {
 }
 
 /**
- * Schedule attack→hold→decay→sustain from `when`. Returns the context time the sustain
- * level is reached (the earliest a note-off release can begin).
+ * Schedule attack→hold→decay→sustain from `when`. The decay follows the envelope's
+ * `curve` (spec §6): an exponential decay tracks toward the sustain level, a linear
+ * decay ramps straight to it. Returns the context time the sustain level is reached
+ * (the earliest a note-off release can begin).
  */
 export function scheduleAmpAttack(
   param: AudioParam,
@@ -26,10 +33,38 @@ export function scheduleAmpAttack(
   const attackEnd = when + amp.attack / 1000;
   const holdEnd = attackEnd + amp.hold / 1000;
   const decayEnd = holdEnd + amp.decay / 1000;
+  const sustain = peak * amp.sustain;
   param.setValueAtTime(0, when);
-  param.linearRampToValueAtTime(peak, attackEnd);
+  param.linearRampToValueAtTime(peak, attackEnd); // attack stays linear (0 → peak)
   param.setValueAtTime(peak, holdEnd); // hold the peak before decay begins
-  param.linearRampToValueAtTime(peak * amp.sustain, decayEnd);
+  if (amp.curve === 'exponential' && sustain > EXP_FLOOR && amp.decay > 0) {
+    param.exponentialRampToValueAtTime(sustain, decayEnd);
+  } else {
+    param.linearRampToValueAtTime(sustain, decayEnd);
+  }
+  return decayEnd;
+}
+
+/**
+ * Schedule a modulation param over the AHDSR contour from `base`, excursing by `depth`
+ * (positive or negative) and settling at `base + depth × sustain` (spec §6 pitch/filter
+ * envelopes). Segments are linear — a modulation param may legitimately cross or reach
+ * zero, so the exponential-floor restriction does not apply. Returns the decay-end time.
+ */
+export function scheduleModEnvelope(
+  param: AudioParam,
+  base: number,
+  depth: number,
+  env: AhdsrEnvelope,
+  when: number,
+): number {
+  const attackEnd = when + env.attack / 1000;
+  const holdEnd = attackEnd + env.hold / 1000;
+  const decayEnd = holdEnd + env.decay / 1000;
+  param.setValueAtTime(base, when);
+  param.linearRampToValueAtTime(base + depth, attackEnd);
+  param.setValueAtTime(base + depth, holdEnd);
+  param.linearRampToValueAtTime(base + depth * env.sustain, decayEnd);
   return decayEnd;
 }
 

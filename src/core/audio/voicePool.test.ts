@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultEnvelope } from '@/core/project/schemas';
-import { createFakeAudioContext, liveNodeCount } from '@/test/mocks/audioContext';
+import { createDefaultEnvelope, createDefaultLfo, type ModRoute } from '@/core/project/schemas';
+import { createFakeAudioContext, liveNodeCount, type FakeAudioContext } from '@/test/mocks/audioContext';
 import { VoicePool, type VoiceTriggerSpec } from './voicePool';
+
+/** Count fake nodes of a given type registered on the context. */
+function nodeCount(fake: FakeAudioContext, type: string): number {
+  return fake.nodes.filter((n) => n.nodeType === type).length;
+}
 
 function spec(context: AudioContext, over: Partial<VoiceTriggerSpec> = {}): VoiceTriggerSpec {
   return {
@@ -104,5 +109,59 @@ describe('voice pool (spec §5.4)', () => {
     pool.destroy();
     expect(pool.activeVoiceCount()).toBe(0);
     expect(liveNodeCount(fake)).toBe(0);
+  });
+});
+
+describe('enriched voice — §6 sound design', () => {
+  it('inserts a biquad filter into the chain when the pad filter is active (spec §5.2)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'f', filter: { type: 'lp', cutoff: 800, resonance: 4, envDepth: 0 } }));
+    expect(nodeCount(fake, 'biquad')).toBe(1);
+    pool.destroy();
+    expect(liveNodeCount(fake)).toBe(0);
+  });
+
+  it('omits the filter node when the pad filter is off', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'nf', filter: { type: 'off', cutoff: 800, resonance: 1, envDepth: 0 } }));
+    expect(nodeCount(fake, 'biquad')).toBe(0);
+    pool.destroy();
+  });
+
+  it('wires an LFO oscillator for a routed LFO and tears it down leak-free (spec §6)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const modMatrix: ModRoute[] = [{ source: 'lfo1', target: 'pitch', amount: 0.5 }];
+    pool.trigger(
+      spec(context, {
+        id: 'lfo',
+        lfos: [createDefaultLfo(), createDefaultLfo()],
+        modMatrix,
+      }),
+    );
+    expect(nodeCount(fake, 'oscillator')).toBe(1);
+    pool.destroy();
+    expect(liveNodeCount(fake)).toBe(0);
+  });
+
+  it('creates no oscillator when no LFO route is present', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'no-lfo', lfos: [createDefaultLfo(), createDefaultLfo()], modMatrix: [] }));
+    expect(nodeCount(fake, 'oscillator')).toBe(0);
+    pool.destroy();
+  });
+
+  it('counts live voices per program (keygroup polyphony bookkeeping, spec §6)', () => {
+    const { context } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'a', programId: 'keys', padKey: 'keys:0' }));
+    pool.trigger(spec(context, { id: 'b', programId: 'keys', padKey: 'keys:0' }));
+    pool.trigger(spec(context, { id: 'c', programId: 'drum', padKey: 'drum:0' }));
+    expect(pool.programVoiceCount('keys')).toBe(2);
+    expect(pool.programVoiceCount('drum')).toBe(1);
+    pool.destroy();
   });
 });

@@ -149,6 +149,24 @@ class FakeAnalyserNode extends FakeAudioNode {
     array.fill(0);
   }
 }
+class FakeOscillatorNode extends FakeAudioNode {
+  type: OscillatorType = 'sine';
+  readonly frequency = new FakeAudioParam(440);
+  readonly detune = new FakeAudioParam(0);
+  onended: (() => void) | null = null;
+  started = false;
+  stopped = false;
+  constructor(context: FakeAudioContext) {
+    super(context, 'oscillator');
+  }
+  start(_when?: number): void {
+    this.started = true;
+  }
+  stop(_when?: number): void {
+    this.stopped = true;
+  }
+}
+
 class FakeAudioBufferSourceNode extends FakeAudioNode {
   buffer: FakeAudioBuffer | null = null;
   loop = false;
@@ -226,6 +244,9 @@ export class FakeAudioContext {
   }
   createBufferSource(): FakeAudioBufferSourceNode {
     return new FakeAudioBufferSourceNode(this);
+  }
+  createOscillator(): FakeOscillatorNode {
+    return new FakeOscillatorNode(this);
   }
   createBuffer(numberOfChannels: number, length: number, sampleRate: number): FakeAudioBuffer {
     return new FakeAudioBuffer(numberOfChannels, length, sampleRate);
