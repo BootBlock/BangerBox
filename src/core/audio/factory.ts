@@ -37,6 +37,8 @@ export interface ChannelHandle {
   setSendGain: (index: number, gain: number, when: number, dezipper?: boolean) => void;
   /** Replace the serial insert chain (spec §5.7); disposes the previous chain. */
   setInserts: (inserts: readonly InsertHandle[]) => void;
+  /** Set a live insert slot parameter (spec §5.7) — used by automation dispatch (§7.8). */
+  setInsertParam: (slot: number, name: string, value: number, when: number) => void;
   /** Aggregate reported insert latency for the PDC readout (spec §5.7.3). */
   insertLatencySamples: () => number;
 
@@ -121,6 +123,7 @@ function createChannelStrip(context: BaseAudioContext, { id, sendCount }: StripO
       else setParamNow(send.gain, gain, when);
     },
     setInserts,
+    setInsertParam: (slot, name, value, when) => inserts[slot]?.setParam(name, value, when),
     insertLatencySamples: () => inserts.reduce((total, h) => total + h.latencySamples, 0),
 
     destroy: () => {
