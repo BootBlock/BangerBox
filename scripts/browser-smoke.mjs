@@ -277,6 +277,41 @@ async function assertShellAndSelfTest(page, label) {
     );
     await page.getByTestId('transport-play').click(); // stop
   });
+
+  // Phase 6 proofs run once (dev section, last) — they exercise heavy WASM paths and mutate
+  // project state (import re-hydrates a fresh project), so they run after the other assertions
+  // and need not repeat under the offline reload.
+  if (label === 'dev') {
+    await step(`${label}: worklet WASM effects render (multibandComp, limiter) — spec §5.7`, async () => {
+      const results = await page.evaluate(async () => {
+        const probe = globalThis.__bangerboxAudioProbe;
+        return {
+          comp: await probe.renderEffect('multibandComp'),
+          limiter: await probe.renderEffect('limiter'),
+        };
+      });
+      for (const [fx, r] of Object.entries(results)) {
+        if (!(r.outputRms > 0.0005) || !Number.isFinite(r.outputRms)) {
+          throw new Error(`${fx} worklet rendered silence/NaN (rms ${r.outputRms})`);
+        }
+      }
+    });
+
+    await step(`${label}: sample pipeline — import, transient chop, time-stretch (spec §12)`, async () => {
+      const result = await page.evaluate(() => globalThis.__bangerboxAudioProbe.samplePipelineProof());
+      if (!(result.chops >= 3)) throw new Error(`transient chop produced ${result.chops} slices — expected ≥ 3`);
+      // rate 0.5 stretches to about twice the length.
+      if (!(result.stretchedRatio > 1.7 && result.stretchedRatio < 2.3)) {
+        throw new Error(`time-stretch length ratio ${result.stretchedRatio.toFixed(2)} (expected ~2)`);
+      }
+    });
+
+    await step(`${label}: .mpcweb export/import round-trips a project (spec §12 exit)`, async () => {
+      const result = await page.evaluate(() => globalThis.__bangerboxAudioProbe.packRoundTrip());
+      if (!result.imported) throw new Error('import did not open a fresh project');
+      if (!(result.samples >= 1)) throw new Error(`imported project has ${result.samples} samples — expected ≥ 1`);
+    });
+  }
 }
 
 async function main() {
