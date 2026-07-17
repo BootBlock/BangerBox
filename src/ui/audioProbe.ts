@@ -58,7 +58,12 @@ export interface AudioProbe {
   /** .mpcweb export → import round-trip (spec §12 exit / §9.6 pack round-trip smoke). */
   packRoundTrip: () => Promise<{ imported: boolean; samples: number }>;
   /** Import → transient chop → time-stretch of a synthetic drum (spec §7.5/§8.5.4/§5.7.9). */
-  samplePipelineProof: () => Promise<{ chops: number; stretchedRatio: number }>;
+  samplePipelineProof: () => Promise<{
+    chops: number;
+    importedFrames: number;
+    stretchedFrames: number;
+    stretchedRatio: number;
+  }>;
 }
 
 declare global {
@@ -207,7 +212,12 @@ async function packRoundTrip(): Promise<{ imported: boolean; samples: number }> 
  * transient detection (§7.5/§8.5.4), and time-stretch it (§5.7.9) — proving the WASM kernels run
  * end to end on the real OPFS/decode path.
  */
-async function samplePipelineProof(engine: AudioEngine): Promise<{ chops: number; stretchedRatio: number }> {
+async function samplePipelineProof(engine: AudioEngine): Promise<{
+  chops: number;
+  importedFrames: number;
+  stretchedFrames: number;
+  stretchedRatio: number;
+}> {
   const ctx = sampleEditContext();
   const sr = ctx.projectSampleRate;
   const buffer = engine.context.createBuffer(1, sr, sr);
@@ -220,7 +230,17 @@ async function samplePipelineProof(engine: AudioEngine): Promise<{ chops: number
   const imported = await importDecodedSample(buffer, 'probe drum', ['probe'], { ...ctx, context: engine.context });
   const chops = await chopSampleToNewSamples(imported, { sensitivity: 0.6, minSpacingMs: 40 }, ctx);
   const stretched = await stretchSampleToNewSample(imported, { rate: 0.5, pitchSemitones: 0 }, ctx);
-  return { chops: chops.length, stretchedRatio: stretched.frames / imported.frames };
+  // The real SQLite worker can return INTEGER columns as BigInt (rpc value union) — coerce
+  // before dividing so the ratio is a plain Number across the evaluate boundary. Read the frame
+  // counts straight off the stretched channel data to be independent of the DB round-trip.
+  const importedFrames = Number(imported.frames);
+  const stretchedFrames = Number(stretched.frames);
+  return {
+    chops: chops.length,
+    importedFrames,
+    stretchedFrames,
+    stretchedRatio: importedFrames > 0 ? stretchedFrames / importedFrames : 0,
+  };
 }
 
 export function installAudioProbe(engine: AudioEngine): void {

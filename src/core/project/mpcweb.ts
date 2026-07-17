@@ -113,9 +113,11 @@ export const projectSnapshotSchema = z.object({
 });
 export type ProjectSnapshot = z.infer<typeof projectSnapshotSchema>;
 
-/** Serialise a snapshot to the `project.json` string (spec §9.6). */
+/** Serialise a snapshot to the `project.json` string (spec §9.6). The real SQLite worker may
+ * hand back INTEGER columns as BigInt (rpc value union), which `JSON.stringify` cannot encode —
+ * a replacer coerces any BigInt to Number so the dump never throws on a live project. */
 export function serialiseSnapshot(snapshot: ProjectSnapshot): string {
-  return JSON.stringify(snapshot);
+  return JSON.stringify(snapshot, (_key, value) => (typeof value === 'bigint' ? Number(value) : value));
 }
 
 /** Parse and validate a `project.json` string (spec §9.6; rejects malformed snapshots). */

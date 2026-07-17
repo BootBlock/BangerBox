@@ -302,7 +302,9 @@ async function assertShellAndSelfTest(page, label) {
       if (!(result.chops >= 3)) throw new Error(`transient chop produced ${result.chops} slices — expected ≥ 3`);
       // rate 0.5 stretches to about twice the length.
       if (!(result.stretchedRatio > 1.7 && result.stretchedRatio < 2.3)) {
-        throw new Error(`time-stretch length ratio ${result.stretchedRatio.toFixed(2)} (expected ~2)`);
+        throw new Error(
+          `time-stretch ratio ${result.stretchedRatio} (imported ${result.importedFrames}f → stretched ${result.stretchedFrames}f; expected ~2×)`,
+        );
       }
     });
 
