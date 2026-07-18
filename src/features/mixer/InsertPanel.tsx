@@ -7,7 +7,9 @@
  * than being restated here, so a knob can never offer a value the store would clamp away.
  * Slot changes go through `useMixerStore`, making them undoable and autosaved (spec §4.5).
  */
+import { useMemo } from 'react';
 import { useMixerStore } from '@/store';
+import { useQLinkFocus } from '@/ui/useQLinkFocus';
 import { EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
 import { insertParamPath } from '@/core/audio/params/registry';
 import type { EffectType } from '@/core/project/schemas';
@@ -35,8 +37,25 @@ const EFFECT_LABELS: Readonly<Record<EffectType, string>> = {
 
 export function InsertPanel({ channelId, availableEffects, onClose }: InsertPanelProps) {
   const strip = useMixerStore((s) => s.channels[channelId]);
-  const inserts = strip?.inserts ?? [];
+  // Memoised so the empty fallback keeps a stable identity for the focus-registry memo.
+  const inserts = useMemo(() => strip?.inserts ?? [], [strip]);
   const mixer = () => useMixerStore.getState();
+
+  /**
+   * Screen-mode Q-Link parameters for this panel — spec §10.3's own example: "opening a
+   * Delay insert maps knobs to Time/Feedback/Mix/Tone". The first effect in the chain
+   * owns the encoders, and they follow whatever effect that slot holds.
+   */
+  const focusParams = useMemo(() => {
+    const first = inserts.findIndex((slot) => slot.effectType !== null);
+    if (first < 0) return [];
+    const effectType = inserts[first]!.effectType!;
+    return Object.keys(EFFECT_PARAM_RANGES[effectType]).map((param) => ({
+      label: `${EFFECT_LABELS[effectType]} ${param}`,
+      targetParameterPath: insertParamPath(channelId, first + 1, param),
+    }));
+  }, [channelId, inserts]);
+  useQLinkFocus(focusParams);
 
   /** Reorder by rewriting the slot array — the store commits it as one undo entry. */
   const moveSlot = (index: number, delta: number) => {

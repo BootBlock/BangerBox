@@ -3,14 +3,26 @@
  * mode, a learn flow, a registry-driven manual path picker, and min/max/curve per binding
  * (spec §10.3). It also hosts the input-latency offset setting (spec §10.2).
  *
- * This mode owns the *editing* surface. The runtime that turns incoming CC into store
- * actions is Phase 8 (spec §12), which is why the learn flow arms a pending encoder and
- * accepts a parameter tap: with no transport connected yet, tapping a parameter is the
- * half of the flow that exists, and the same armed state will accept a CC in Phase 8
- * without changing this UI.
+ * This mode owns the *editing* surface; the runtime that turns incoming CC into store
+ * actions lives in `core/midi/qlinkRuntime.ts`. The learn flow arms an encoder and then
+ * takes whichever half arrives first: a parameter tap from this table, or a real CC from
+ * the controller (spec §8.5.11 "turn an encoder, tap a parameter").
+ *
+ * It also hosts the connection surface (spec §10.4), including the Windows pairing note —
+ * on Windows the ESP32 must be paired in Settings → Bluetooth *before* the in-app chooser
+ * will show it, which is the single most common setup failure.
  */
-import { useMemo, useState } from 'react';
-import { INPUT_LATENCY_DEFAULT_MS, INPUT_LATENCY_RANGE, useHardwareStore, useMixerStore } from '@/store';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  INPUT_LATENCY_DEFAULT_MS,
+  INPUT_LATENCY_RANGE,
+  useHardwareStore,
+  useMixerStore,
+  useUIStore,
+} from '@/store';
+import { hardwareService } from '@/core/midi/hardwareService';
+import { DEFAULT_QLINK_CC_BASE } from '@/core/midi/qlink';
+import type { ConnectionState } from '@/store/useHardwareStore';
 import {
   channelLevelPath,
   channelPanPath,
@@ -27,6 +39,14 @@ import { IconRemove } from '@/ui/icons';
 /** Physical encoders by default; the model supports up to 16 (spec §1.3.1, §10.3). */
 const DEFAULT_ENCODERS = 4;
 const MAX_ENCODERS = 16;
+
+/** Connection status wording (spec §10.4 lifecycle states). */
+const CONNECTION_LABELS: Readonly<Record<ConnectionState, string>> = {
+  idle: 'Not connected',
+  connecting: 'Connecting…',
+  connected: 'Connected',
+  reconnecting: 'Reconnecting…',
+};
 
 const MODE_OPTIONS = qLinkModeSchema.options.map((mode) => ({
   value: mode,
@@ -68,17 +88,58 @@ export function QLinkEditMode() {
   const qLinkMode = useHardwareStore((s) => s.qLinkMode);
   const bindings = useHardwareStore((s) => s.qLinkBindings);
   const connectionState = useHardwareStore((s) => s.connectionState);
+  const deviceName = useHardwareStore((s) => s.bleDeviceName);
   const channels = useMixerStore((s) => s.channels);
   const inputLatencyMs = useHardwareStore((s) => s.inputLatencyMs);
+  const ccMappings = useHardwareStore((s) => s.ccMappings);
 
-  /** Encoder awaiting a parameter tap during the learn flow (spec §8.5.11). */
+  /** Encoder awaiting either a parameter tap or a CC during the learn flow (spec §8.5.11). */
   const [learningEncoder, setLearningEncoder] = useState<number | null>(null);
   const [encoderCount, setEncoderCount] = useState(DEFAULT_ENCODERS);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const bluetoothAvailable = useUIStore((s) => s.capabilities?.soft.bluetooth ?? false);
+
+  /**
+   * The CC half of the learn flow (spec §8.5.11): while an encoder is armed, the next CC
+   * the controller sends is adopted as that encoder's CC number.
+   */
+  useEffect(() => {
+    if (learningEncoder === null) return;
+    return hardwareService().onNextControlChange((cc) => {
+      const existing = useHardwareStore
+        .getState()
+        .qLinkBindings.find((entry) => entry.encoderIndex === learningEncoder);
+      // A CC alone cannot create a binding — there is no parameter yet — so it updates an
+      // existing one and otherwise waits for the parameter tap to complete the pair.
+      if (existing) {
+        useHardwareStore.getState().upsertBinding({ ...existing, cc });
+        setLearningEncoder(null);
+      }
+      useHardwareStore.getState().setCcMapping(cc, learningEncoder);
+    });
+  }, [learningEncoder]);
+
+  const connect = async () => {
+    setConnectError(null);
+    try {
+      await hardwareService().connect();
+    } catch (error) {
+      setConnectError(
+        error instanceof Error ? error.message : 'The controller could not be connected.',
+      );
+    }
+  };
 
   const choices = useMemo(() => assignableParams(Object.keys(channels).sort()), [channels]);
 
   const bindingFor = (encoderIndex: number): QLinkBinding | undefined =>
     bindings.find((binding) => binding.encoderIndex === encoderIndex);
+
+  /** The CC most recently learned for an encoder, from the raw CC → encoder map (§4.2). */
+  const ccMappingFor = (encoderIndex: number): number | undefined => {
+    const entry = Object.entries(ccMappings).find(([, index]) => index === encoderIndex);
+    return entry ? Number(entry[0]) : undefined;
+  };
 
   /** Bind a parameter to an encoder, seeding min/max from the registry range (spec §10.3). */
   const bindParameter = (encoderIndex: number, path: string) => {
@@ -90,7 +151,8 @@ export function QLinkEditMode() {
       encoderIndex,
       // Until the BLE transport lands (Phase 8), the CC defaults to the encoder index;
       // the learn flow overwrites it with the real CC when hardware turns a knob.
-      cc: existing?.cc ?? encoderIndex,
+      // A CC learned from the controller wins; otherwise the default block (spec §10.3).
+      cc: existing?.cc ?? ccMappingFor(encoderIndex) ?? DEFAULT_QLINK_CC_BASE + encoderIndex,
       targetStore: storeForPath(path),
       targetParameterPath: path,
       minValue: existing?.minValue ?? range[0],
@@ -125,11 +187,31 @@ export function QLinkEditMode() {
         <div className="flex flex-wrap items-center gap-4">
           <ValueReadout
             label="Controller"
-            value={connectionState === 'connected' ? 'Connected' : 'Not connected'}
+            value={CONNECTION_LABELS[connectionState]}
             showLabel
             tone={connectionState === 'connected' ? 'accent' : 'muted'}
             data-testid="qlink-connection"
           />
+          <button
+            type="button"
+            disabled={!bluetoothAvailable || connectionState === 'connecting'}
+            onClick={() => {
+              if (connectionState === 'connected') void hardwareService().disconnect();
+              else void connect();
+            }}
+            title={
+              bluetoothAvailable
+                ? undefined
+                : 'Web Bluetooth is unavailable in this browser (spec §2.1).'
+            }
+            data-testid="qlink-connect"
+            className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs font-semibold text-bb-text transition-colors duration-150 hover:border-bb-accent disabled:opacity-40"
+          >
+            {connectionState === 'connected' ? 'Disconnect' : 'Connect controller'}
+          </button>
+          {deviceName !== null && (
+            <ValueReadout label="Device" value={deviceName} showLabel data-testid="qlink-device" />
+          )}
           <span className="flex items-center gap-2 text-[0.625rem] font-semibold text-bb-muted uppercase">
             Encoders
             <SegmentControl
@@ -158,7 +240,23 @@ export function QLinkEditMode() {
             data-testid="qlink-input-latency"
           />
         </div>
-        <p className="mt-3 text-xs text-bb-muted">
+        {connectError !== null && (
+          <p className="mt-3 text-xs text-bb-danger" role="alert" data-testid="qlink-connect-error">
+            {connectError}
+          </p>
+        )}
+        {!bluetoothAvailable && (
+          <p className="mt-3 text-xs text-bb-muted" data-testid="qlink-no-bluetooth">
+            This browser does not expose Web Bluetooth, so hardware mode is unavailable. BangerBox needs a
+            Chromium browser on desktop-class Windows (spec §1.3 #15).
+          </p>
+        )}
+        <p className="mt-3 text-xs text-bb-muted" data-testid="qlink-pairing-help">
+          <strong className="font-semibold text-bb-text">Windows pairing:</strong> pair your ESP32 controller
+          in Windows Settings → Bluetooth &amp; devices <em>before</em> using Connect here — the browser&rsquo;s
+          chooser only lists devices Windows has already paired.
+        </p>
+        <p className="mt-2 text-xs text-bb-muted">
           Bindings are stored per Q-Link mode. The input latency offset is subtracted from incoming hardware
           timestamps when recording (spec §10.2).
         </p>
@@ -171,6 +269,9 @@ export function QLinkEditMode() {
             <tr className="text-left text-bb-muted">
               <th scope="col" className="py-1 pr-2 font-semibold">
                 Encoder
+              </th>
+              <th scope="col" className="py-1 pr-2 font-semibold">
+                CC
               </th>
               <th scope="col" className="py-1 pr-2 font-semibold">
                 Parameter
@@ -209,6 +310,12 @@ export function QLinkEditMode() {
                   <th scope="row" className="py-1.5 pr-2 text-left font-mono font-normal text-bb-text">
                     Q{encoderIndex + 1}
                   </th>
+                  <td
+                    className="py-1.5 pr-2 font-mono tabular-nums text-bb-muted"
+                    data-testid={`qlink-cc-${encoderIndex}`}
+                  >
+                    {binding?.cc ?? ccMappingFor(encoderIndex) ?? '—'}
+                  </td>
                   <td className="py-1.5 pr-2">
                     <select
                       aria-label={`Parameter for encoder ${encoderIndex + 1}`}
