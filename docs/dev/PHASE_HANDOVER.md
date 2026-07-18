@@ -189,6 +189,14 @@ Unchanged from Phase 7 except:
   this, and `DEFAULT_QLINK_CC_BASE = 70` is only a convention); whether 15 ms is a sensible default
   input-latency offset on real hardware; and reconnect behaviour on a genuine range drop.
 
+- **No Phase 8-specific step was added to the browser smoke**, deliberately. §12's Phase 8 exit
+  criteria name unit-level proofs (the parser suite and the simulated-stream jitter/reconnect
+  tests, both green) plus the live sign-off; a Web Bluetooth connection cannot be driven from
+  Playwright without hardware and a pairing, so a "BLE smoke" would have to mock the same seam the
+  unit tests already inject — proving nothing new for a 20-minute run. The existing "all 12 modes
+  mount from the rail" step does mount Q-Link Edit in a real browser and fails on any console
+  error, so the Phase 8 UI is covered there.
+
 **Not stubs — honest scope notes:**
 - **Q-Link `program` mode** addresses registered §7.8 leaves of the selected pad rather than a
   macro layer, because §6 defines no macro system and inventing one would breach §3.1 Strategic
