@@ -23,7 +23,8 @@ function ensureWorker(): Worker {
     type: 'module',
     name: 'bangerbox-pack',
   });
-  worker.addEventListener('message', (event: MessageEvent<PackWorkerResponse>) => {
+  const active = worker;
+  active.addEventListener('message', (event: MessageEvent<PackWorkerResponse>) => {
     const response = event.data;
     const entry = pending.get(response.id);
     if (!entry) return;
@@ -31,7 +32,32 @@ function ensureWorker(): Worker {
     if (response.ok) entry.resolve(response.kind === 'pack' ? response.bytes : response.result);
     else entry.reject(new Error(response.error));
   });
-  return worker;
+  // A worker that crashes, fails to load, or receives an unclonable message never replies, so
+  // without this every in-flight call would hang forever (spec §13.6, mirroring the DB bridge).
+  const handleFailure = (event: Event): void => {
+    const detail = event instanceof ErrorEvent && event.message ? event.message : 'unknown worker failure';
+    failAll(new Error(`Pack worker error: ${detail}`), active);
+  };
+  active.addEventListener('error', handleFailure);
+  active.addEventListener('messageerror', handleFailure);
+  return active;
+}
+
+/**
+ * Settle every in-flight call with `error` and drop the dead worker so the next request builds a
+ * fresh one. Guarded on identity: a late failure from an already-replaced worker must not tear
+ * down its successor.
+ */
+function failAll(error: Error, source: Worker): void {
+  if (worker !== source) {
+    source.terminate();
+    return;
+  }
+  worker = null;
+  const entries = [...pending.values()];
+  pending.clear();
+  for (const entry of entries) entry.reject(error);
+  source.terminate();
 }
 
 type PackRequestBody = { kind: 'pack'; input: PackInput } | { kind: 'unpack'; bytes: Uint8Array };
