@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DECLICK_FADE_MS, VOICE_STEAL_FADE_MS } from '@/core/constants';
-import { createFakeAudioContext, liveNodeCount } from '@/test/mocks/audioContext';
+import { createFakeAudioContext, liveNodeCount, pendingParamCount } from '@/test/mocks/audioContext';
 import { Metronome, renderClickWaveform } from './metronome';
 import { PreviewChannel } from './preview';
 
@@ -25,6 +25,14 @@ describe('metronome (spec §5.9)', () => {
     // Two buffer sources created for the two clicks.
     expect(fake.nodes.filter((n) => n.nodeType === 'bufferSource')).toHaveLength(2);
     metronome.destroy();
+  });
+
+  it('cancels its level automation on destroy (spec §3.2)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const metronome = new Metronome(context, context.createGain());
+    metronome.setLevel(0.3, 0);
+    metronome.destroy();
+    expect(pendingParamCount(fake)).toBe(0);
   });
 });
 
@@ -72,5 +80,7 @@ describe('preview channel (spec §5.9)', () => {
     expect(source.stopWhen).toBeCloseTo(fadeEnd);
     preview.destroy();
     expect(liveNodeCount(fake)).toBe(0);
+    // The declick and the cut fade were both still pending when the nodes went (spec §3.2).
+    expect(pendingParamCount(fake)).toBe(0);
   });
 });

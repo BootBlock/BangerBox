@@ -288,6 +288,41 @@ export function liveNodeCount(context: FakeAudioContext): number {
   return context.nodes.filter((node) => node.outputs.length > 0 && !node.fullyDisconnected).length;
 }
 
+/** The methods that leave an event on a param's timeline. */
+const SCHEDULING_METHODS = new Set([
+  'setValueAtTime',
+  'linearRampToValueAtTime',
+  'exponentialRampToValueAtTime',
+  'setTargetAtTime',
+  'setValueCurveAtTime',
+]);
+
+/** True once something has been scheduled that no later `cancelScheduledValues` erased. */
+function hasPendingEvents(param: FakeAudioParam): boolean {
+  let pending = false;
+  for (const call of param.calls) {
+    if (SCHEDULING_METHODS.has(call.method)) pending = true;
+    else if (call.method === 'cancelScheduledValues') pending = false;
+  }
+  return pending;
+}
+
+/**
+ * Params of `context`'s nodes that still carry scheduled automation — the second conjunct
+ * of the §3.2 destroy obligation, which a `disconnect()`-only teardown silently fails.
+ * `cancelAndHoldAtTime` does not count as clearing: it truncates the timeline for a param
+ * that keeps sounding, and deliberately leaves the held value behind.
+ */
+export function pendingParamCount(context: FakeAudioContext): number {
+  let count = 0;
+  for (const node of context.nodes) {
+    for (const value of Object.values(node)) {
+      if (value instanceof FakeAudioParam && hasPendingEvents(value)) count++;
+    }
+  }
+  return count;
+}
+
 /** Build a fake context typed as a real `AudioContext` for injection into the graph. */
 export function createFakeAudioContext(sampleRate = 48_000): {
   context: AudioContext;

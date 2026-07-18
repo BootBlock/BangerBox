@@ -11,7 +11,7 @@
  */
 import { DECLICK_FADE_MS, VOICE_STEAL_FADE_MS } from '@/core/constants';
 import { clamp } from '@/core/math';
-import { rampParamLinear, setParamNow } from './params/ramps';
+import { cancelParams, rampParamLinear, setParamNow } from './params/ramps';
 import { scheduleAmpDeclick, scheduleAmpRelease } from './voiceEnvelope';
 
 interface PreviewVoice {
@@ -69,6 +69,8 @@ export class PreviewChannel {
 
   private dispose(voice: PreviewVoice): void {
     voice.source.onended = null;
+    // The audition's declick/release ramp outlives the nodes otherwise (spec §3.2).
+    cancelParams(voice.amp.gain);
     voice.source.disconnect();
     voice.amp.disconnect();
     this.fading.delete(voice);
@@ -82,6 +84,7 @@ export class PreviewChannel {
   destroy(): void {
     this.stop();
     for (const voice of [...this.fading]) this.dispose(voice);
+    cancelParams(this.output.gain);
     this.output.disconnect();
   }
 }

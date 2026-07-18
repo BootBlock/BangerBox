@@ -8,7 +8,7 @@
  */
 import { METRONOME_LEVEL_RANGE } from '@/core/project/schemas';
 import { clamp } from '@/core/math';
-import { rampParamLinear, setParamNow } from './params/ramps';
+import { cancelParams, rampParamLinear, setParamNow } from './params/ramps';
 
 const CLICK_MS = 40;
 const NORMAL_FREQ = 1_000;
@@ -69,6 +69,7 @@ export class Metronome {
   }
 
   destroy(): void {
+    cancelParams(this.output.gain);
     this.output.disconnect();
   }
 }
