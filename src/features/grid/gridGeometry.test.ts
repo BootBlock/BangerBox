@@ -3,11 +3,14 @@ import {
   cellsAlongSegment,
   eventAtCell,
   eventAtPoint,
+  eventsInTickSpan,
+  nearestEventToTick,
   noteToRow,
   resizeHandleAtPoint,
   rowToNote,
   snapTick,
   tickToX,
+  velocityAtLaneY,
   visibleRows,
   xToTick,
   type GridViewport,
@@ -191,5 +194,50 @@ describe('gridGeometry — toggling (issue #92: tap a note to clear it)', () => 
     // The rect test misses it; the cell test — the fallback — finds it.
     expect(eventAtPoint(drawn, tapX, 10, viewport)).toBeNull();
     expect(eventAtCell(drawn, rowToNote(0, viewport), drawnTick)?.id).toBe('a');
+  });
+});
+
+describe('gridGeometry — velocity lane dragging', () => {
+  const LANE = 64;
+
+  const bars = [
+    { id: 'a', tickStart: 0, durationTicks: 120, note: 72, velocity: 100, extra: null },
+    { id: 'b', tickStart: 120, durationTicks: 120, note: 72, velocity: 100, extra: null },
+    { id: 'c', tickStart: 240, durationTicks: 120, note: 71, velocity: 100, extra: null },
+    { id: 'd', tickStart: 960, durationTicks: 120, note: 71, velocity: 100, extra: null },
+  ];
+
+  it('maps the lane top to full velocity and the bottom to the audible floor', () => {
+    expect(velocityAtLaneY(4, LANE)).toBe(127);
+    expect(velocityAtLaneY(LANE - 4, LANE)).toBe(1);
+    expect(velocityAtLaneY(LANE / 2, LANE)).toBeCloseTo(64, -1);
+  });
+
+  /** A drag that overshoots the lane must not write a silent note, nor exceed 127. */
+  it('clamps beyond the lane rather than emitting 0 or >127', () => {
+    expect(velocityAtLaneY(-50, LANE)).toBe(127);
+    expect(velocityAtLaneY(LANE + 50, LANE)).toBe(1);
+  });
+
+  it('grabs the nearest bar within tolerance, not the first stored', () => {
+    // Tick 130 sits between bars 'a' (0) and 'b' (120); 'a' is stored first.
+    expect(nearestEventToTick(bars, 130, 200)?.id).toBe('b');
+    expect(nearestEventToTick(bars, 130, 5)).toBeNull();
+  });
+
+  it('sweeps every bar a sideways drag crossed, in timeline order', () => {
+    expect(eventsInTickSpan(bars, 0, 240).map((event) => event.id)).toEqual(['a', 'b', 'c']);
+    // Direction-agnostic: dragging right-to-left shapes the same run.
+    expect(eventsInTickSpan(bars, 240, 0).map((event) => event.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  /**
+   * The press tolerance is deliberately *not* applied to the swept span. A drag that
+   * stops on one bar must not also drag its close neighbour along with it.
+   */
+  it('does not over-reach past the end of the swept span', () => {
+    expect(eventsInTickSpan(bars, 0, 119).map((event) => event.id)).toEqual(['a']);
+    // A stationary (purely vertical) drag sweeps nothing; the anchor covers that case.
+    expect(eventsInTickSpan(bars, 130, 130)).toEqual([]);
   });
 });

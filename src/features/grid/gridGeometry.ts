@@ -150,6 +150,67 @@ export function eventAtCell(events: readonly MidiEvent[], note: number, tick: nu
 }
 
 /**
+ * Velocity a y pixel inside the velocity lane stands for (spec §8.5.2 velocity lane).
+ * `laneY` is measured from the lane's top edge; the lane is drawn with a 4 px margin top
+ * and bottom, so the usable travel is `laneHeight - 8`. Full height is 127, the floor is
+ * 1 — a zero-velocity note is silent, which reads as a broken drag rather than a quiet
+ * note (spec §9.3 `velocity INTEGER 1..127`).
+ */
+export function velocityAtLaneY(laneY: number, laneHeight: number): number {
+  const travel = laneHeight - 8;
+  const fraction = Math.min(1, Math.max(0, 1 - (laneY - 4) / travel));
+  return Math.max(1, Math.round(fraction * 127));
+}
+
+/**
+ * The note whose velocity bar is nearest a tick, within `toleranceTicks`, or null. Used
+ * for the press that starts a velocity drag: bars are 3 px wide, so an exact hit test
+ * would be unusable and the nearest bar within a small window owns the click instead.
+ *
+ * Nearest, not first-in-order: with several notes inside the window the closest bar is
+ * the one under the pointer, whatever order the track happens to store them in.
+ */
+export function nearestEventToTick(
+  events: readonly MidiEvent[],
+  tick: number,
+  toleranceTicks: number,
+): MidiEvent | null {
+  let best: MidiEvent | null = null;
+  let bestDistance = Infinity;
+  for (const event of events) {
+    const distance = Math.abs(event.tickStart - tick);
+    if (distance <= toleranceTicks && distance < bestDistance) {
+      best = event;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/**
+ * Every note whose velocity bar starts inside the tick span a drag segment swept, in
+ * timeline order. This is how a sideways velocity drag shapes several notes at once.
+ *
+ * Deliberately *not* {@link cellsAlongSegment}: that walks sub-cell steps because draw
+ * paints discrete cells and must not skip one. Velocity bars are continuous, so the span
+ * between two pointer samples already names every bar crossed — no sampling needed, and
+ * no per-cell tolerance to tune. Nor does it use the press-time tolerance: widening the
+ * span would let a drag past one bar also grab its close neighbours, which is exactly the
+ * over-reach a drag across dense notes must avoid.
+ */
+export function eventsInTickSpan(
+  events: readonly MidiEvent[],
+  fromTick: number,
+  toTick: number,
+): MidiEvent[] {
+  const low = Math.min(fromTick, toTick);
+  const high = Math.max(fromTick, toTick);
+  return events
+    .filter((event) => event.tickStart >= low && event.tickStart <= high)
+    .sort((a, b) => a.tickStart - b.tickStart);
+}
+
+/**
  * The event whose right-edge resize handle is under a point, or null. Checked *before*
  * a move so grabbing the tail of a note resizes rather than drags it (spec §8.5.2).
  */

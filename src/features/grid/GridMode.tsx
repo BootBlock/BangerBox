@@ -145,11 +145,19 @@ export function GridMode() {
     );
   };
 
-  const handleVelocity = (id: string, velocity: number) => {
+  /**
+   * Reads live store events rather than the rendered `events`, unlike the other handlers.
+   * A velocity drag writes many times per second and each write must build on the last:
+   * from the render closure, a sample that sweeps no new bar would rewrite the pre-drag
+   * snapshot and revert every bar the drag had already shaped.
+   */
+  const handleVelocity = (ids: readonly string[], velocity: number, coalesceKey?: string) => {
+    if (!trackId) return;
+    const clamped = Math.min(127, Math.max(1, velocity));
+    const live = sequence().events[trackId] ?? [];
     writeEvents(
-      events.map((event) =>
-        event.id === id ? { ...event, velocity: Math.min(127, Math.max(1, velocity)) } : event,
-      ),
+      live.map((event) => (ids.includes(event.id) ? { ...event, velocity: clamped } : event)),
+      coalesceKey,
     );
   };
 
