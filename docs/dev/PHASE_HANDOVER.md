@@ -1,18 +1,18 @@
-# BangerBox — Phase Handover (after Phase 5 — Programs & Sound Design)
+# BangerBox — Phase Handover (after Phase 6 — Sample Pipeline & Heavy DSP)
 
-Generated at the close of Phase 5 per Protocol Alpha (spec §13.1). A new session MUST
+Generated at the close of Phase 6 per Protocol Alpha (spec §13.1). A new session MUST
 read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** Phase 5 merged to `main`. All §12 Phase 5 exit criteria green inside the phase
-worktree before landing: **363 unit tests** (Phase 0–4 suites plus the Phase 5 additions —
-program voice resolution, mod-matrix evaluator, enriched-voice node accounting, envelope
-scheduling, voice-modulation mapping, keygroup polyphony + glide, arpeggiator core + scheduler
-integration, program-scope address grammar, and the Program Edit panel component test),
-`test:e2e` **28/28** real-browser smoke — dev AND offline — now including the Phase 5 proofs:
-**velocity switches the layer** (hard = +12 st ≈ 2× soft pitch) and **keygroup octave repitch**
-(≈ 2.0×), both offline renders through the real resolution + voice path — alongside the Phase
-3/4 audio + sequencer proofs — plus `lint`, `type-check`, `verify`, `build`.
+**State:** Phase 6 merged to `main` (`--no-ff`). All §12 Phase 6 exit criteria green inside the
+phase worktree before landing: **426 unit tests** (the Phase 0–5 suites plus the Phase 6
+additions — WAV codec golden bytes, `RingBuffer` invariants, sample-edit ops, chop maths, groove
+extraction/bake, the five WASM kernel golden-output tests, the `.mpcweb` snapshot + remap + zip
+round-trip, and mixdown), `test:e2e` **31/31** real-browser smoke — dev AND offline — now
+including the Phase 6 proofs: **worklet WASM effects render** (multibandComp, limiter),
+**sample pipeline** (import → transient chop ≥ 3 slices → time-stretch ≈ 2×), and **`.mpcweb`
+export/import round-trip** — alongside every prior Phase 0–5 proof — plus `lint`, `type-check`,
+`verify`, `build`.
 
 ---
 
@@ -21,20 +21,18 @@ integration, program-scope address grammar, and the Program Edit panel component
 1. Project name **BangerBox**; package `bangerbox`; "WEB-MPC" retired.
 2. **npm** only; committed `package-lock.json`; Node ≥ 24 (`engines`).
 3. **git** at project root; repo is public — no secrets, personal data, or real device identifiers.
-4. **No Tone.js.** Bespoke 960 PPQN lookahead scheduler in a **standard Web Worker** (live since
-   Phase 4, `src/core/sequencer/scheduler.worker.ts` over the pure `SchedulerCore`, §7.1); the
-   audio graph is built directly on the Web Audio API.
-5. **AssemblyScript** for WASM DSP (`asc`, `--runtime stub -O3`), behind the §5.6 kernel seam.
-   Phase 5 added **no** WASM kernels; the voice engine + sound design are pure TypeScript on
-   native Web Audio nodes. §5.6.4 kernels arrive Phase 6.
+4. **No Tone.js.** Bespoke 960 PPQN lookahead scheduler in a **standard Web Worker** (`scheduler.worker.ts`).
+5. **AssemblyScript** for WASM DSP (`asc`, `--runtime stub -O3 --use abort=`), behind the §5.6 kernel
+   seam. **Phase 6 added the five §5.6.4 kernels** (see §10).
 6. **`@sqlite.org/sqlite-wasm`**, worker-hosted, OPFS VFS.
-7. **Hand-rolled typed promise-based `postMessage` RPC** (no Comlink); the scheduler bridge reuses it.
+7. **Hand-rolled typed promise-based `postMessage` RPC** (no Comlink); reused by the scheduler and the
+   NEW `pack.worker` + `wavEncode.worker` clients.
 8. **`motion`** (`'motion/react'`) for animation.
-9. **No router** — 12 modes via `useUIStore.activeMode`.
-10. **No component library**; bespoke primitives in `src/ui/primitives/`; icons `lucide-react` via
-    `src/ui/icons.ts` only (registry still not created — Program Edit used plain inputs, not icons).
-11. **Zod** for all runtime validation (incl. the scheduler message protocol, now with `arp`).
-12. **fflate** (worker-side) for `.mpcweb` (Phase 6).
+9. **No router** — 12 modes via `useUIStore.activeMode` (modes mounted as functional panels, §9).
+10. **No component library**; bespoke primitives in `src/ui/primitives/` (added `WaveformCanvas`); icons
+    `lucide-react` via `src/ui/icons.ts` only (registry still not created — panels use plain controls).
+11. **Zod** for all runtime validation (incl. the `.mpcweb` manifest + snapshot schemas).
+12. **fflate** (worker-side) for `.mpcweb` — **now live** (`pack.worker.ts`, `zipSync`/`unzipSync`).
 13. **Vitest** (unit, `happy-dom`) + **Playwright smoke on system Edge** (`channel: 'msedge'`).
 14. **Local-first hosting**: `npm run dev`/`preview` with COOP/COEP from the Vite server.
 15. **Chromium ≥ 120 desktop Windows** baseline; capability gate enforces at startup.
@@ -45,141 +43,167 @@ integration, program-scope address grammar, and the Program Edit panel component
 
 ## 2. Spec deviations / corrections in effect
 
-- **§14 2026-07-17 (e) (Phase 0, awaiting ratification):** worklet loading via `?worker&url`. Unchanged.
-- **§14 2026-07-17 (f) (Phase 4, clock-sync domain correction awaiting ratification):** both sides feed
-  the offset model absolute-epoch time (`timeOrigin + performance.now()`). Unchanged.
-- **§14 2026-07-17 (g) (Phase 5) — NEW:**
-  - **Scheduler protocol extension (additive):** new `arp` request kind `{ enabled, mode, octaves,
-    gate, division }` (keygroup arpeggiator, §7.3); `SCHEDULER_PROTOCOL_VERSION` stays **1**
-    (extend-by-adding-kinds — no existing kind changed).
-  - **Program-scope automation addresses (§7.8):** the registry now parses/builds
-    `program:<id>.pad:<idx>.<param>` for leaves `filter.cutoff`, `filter.resonance`, `pitch`, `amp`,
-    `pan` (with ranges + the §7.8 gate). Grammar is **live**; per-voice *application* is deferred to
-    Phase 7 (tagged `STUB(phase-7)` in `audioBridge.applyAutomation`).
-  - **§6 sound-design implementation choices** (spec §6 leaves these unspecified): filter as a
-    `BiquadFilterNode` with its envelope + LFO on the biquad `detune` (cents), pitch envelope + LFO on
-    source `detune`; full-scale mod depths are named constants in `voiceModulation.ts` (pitch ±1200
-    cents, filter cutoff ±4 octaves, filter env ±4 octaves); `sampleHold`/`drift` LFO shapes
-    approximated by native oscillators (square/sine) pending a worklet LFO; keygroup glide is a
-    portamento into each new note; resolved pad/program `mixer` applied to the graph channel on first
-    creation (live pad-mixer editing → graph is Phase 7 Mixer work).
+- **§14 2026-07-17 (e) (Phase 0):** worklet loading via `?worker&url`. Unchanged.
+- **§14 2026-07-17 (f) (Phase 4):** clock-sync absolute-epoch domain. Unchanged.
+- **§14 2026-07-17 (g) (Phase 5):** `arp` scheduler kind; program-scope automation grammar. Unchanged.
+- **§14 2026-07-18 (h) (Phase 6) — NEW (read the changelog for full detail):**
+  - **`transientDetect` (§7.5), flagged for ratification:** energy-flux onset detector (per-frame energy
+    of the first difference — a high-frequency-weighted spectral-energy flux WITHOUT a full FFT) with an
+    adaptive local-mean threshold, min-spacing, and sub-hop refinement — not a literal FFT spectral flux.
+    The seam + the transient-chop accuracy fixture are met; an FFT upgrade stays swappable (§1.3 #5).
+  - **`reverb` Phase 6+ engine (§5.7):** the `reverb` insert uses the **`fdnReverb` worklet** when the
+    kernel modules are loaded (start gate / offline prepare); the native `ConvolverNode` remains the
+    fallback when they are not (e.g. unit tests without the gate). No effect ID changed.
+  - **`granularStretch` (§5.7.9):** WSOLA (resample-by-pitch-ratio, then correlation-aligned OLA
+    time-stretch) → independent time/pitch. Phase-vocoder remains roadmap.
+  - **DSP-effect worklet params** apply directly in the kernel (the §4.3 dezipper is native-`AudioParam`
+    only); the limiter reports its 1.5 ms lookahead as PDC latency (§5.7.3).
+  - **Functional (unpolished) Phase 6 UI**, mirroring Phase 5's Program Edit. `.mpcweb` import **always**
+    remaps every UUID (not only on collision). OPFS writes use `writeFileAtomic` (main-thread atomic
+    temp-then-rename); a worker sync-access-handle streaming path is a Phase 7 perf refinement.
 
 ## 3. Toolchain facts
 
-- Installed majors unchanged (Vite 8.1.5, React 19, TS 6, Tailwind 4, Zustand 5, Zod 4, motion 12,
-  AssemblyScript 0.28, Vitest 4, Playwright 1.x, ESLint 9).
-- **No new dependencies** — the §2.2 closed matrix is intact.
-- `package.json` `config.phase` = **"5"**.
-- Vitest `pool: 'threads'`; excludes `**/.claude/worktrees/**`.
-- Windows worktree-removal trap: kill stray `node`/`msedge`, then `git worktree prune` +
-  `Remove-Item -Recurse -Force` any leftover dir. (The Phase 5 smoke buffers all stdout to the end and
-  can take ~15–20 min for the double build + Edge — it is not hung; wait for exit.)
+- Installed majors unchanged (Vite 8.1.5, React 19, TS 6, Tailwind 4, Zustand 5, Zod 4,
+  AssemblyScript 0.28, Vitest 4, Playwright 1.x, ESLint 9). **No new dependencies** — the §2.2 closed
+  matrix is intact (fflate was already listed).
+- `package.json` `config.phase` = **"6"**.
+- **`npm run build:wasm` now builds six kernels** (`gainProof` + the five §5.6.4 kernels); artefacts under
+  `src/core/dsp/dist/` (gitignored; built on demand by the unit/e2e harness).
+- **New smoke fast path:** `npm run test:e2e:quick` (`--dev-only`) runs only the dev-server section
+  (skips the production `vite build` + offline reload) for iteration; the full `test:e2e` (dev + offline)
+  stays the binding phase-exit proof.
+- **BigInt lesson (important):** `@sqlite.org/sqlite-wasm` returns INTEGER columns as **BigInt**. Coerce
+  with `Number(...)` before arithmetic, and never `JSON.stringify` a raw row (BigInt throws) — the
+  `.mpcweb` serialiser uses a BigInt→Number replacer; `db.worker` already `Number(...)`s the rowid.
+- Windows worktree-removal trap unchanged: kill stray `node`/`msedge`, `git worktree prune`, then
+  `Remove-Item -Recurse -Force`. Full smoke ~15–20 min (double build + Edge); use `--dev-only` (~3–6 min)
+  while iterating.
 
 ## 4. Established patterns (reuse, do not reinvent)
 
-Everything from Phases 0–4 still stands. New this phase (all under `src/core/audio/` unless noted):
+Everything from Phases 0–5 still stands. New this phase:
 
-- **`programVoice.ts` — pure program → voice resolution (§6).** `resolveVoice(program, note, velocity)`
-  → `ResolvedVoice | null`: drum velocity-layer selection (`selectVelocityLayer`), keygroup zone
-  selection (`selectKeygroupZone`) + coupled-repitch `keygroupDetuneCents`, and `resolvedVoiceToTrigger`
-  (the single ResolvedVoice→`VoiceTriggerSpec` mapper shared by the engine dispatch and the offline
-  pitch renders). Channel id is `pad:<programId>:<padIndex>` (drum) / `pad:<programId>:0` (keygroup).
-- **`modMatrix.ts` — pure mod-matrix evaluator (§6).** `evaluateModMatrix(routes, sources)` →
-  `Map<ModTarget, number>` (Σ source×amount, un-clamped, range-agnostic); `routesForSource`;
-  `MOD_SOURCE_POLARITY`. **Never** re-derive modulation algebra at a call site.
-- **`voiceModulation.ts` — §6 → Web Audio mapping (pure).** `lfoOscillator(shape)`,
-  `biquadFilterType(type)`, `staticModulation(routes, note, velocity, random)` (voice-start offsets),
-  and the depth constants. **`voiceEnvelope.ts`** gained `scheduleModEnvelope` (pitch/filter AHDSR on a
-  param) and curve-honouring amp decay.
-- **`voicePool.ts` — enriched voice (§5.2 stage 2, §6).** `VoiceTriggerSpec` now carries the optional
-  §6 surface (`filter`, `pitchEnv`, `filterEnv`, `pitchEnvSemitones`, `lfos`, `modMatrix`,
-  `programPolyphony`, `glideMs`). The chain is `source → ampGain → [filter] → destination`; LFOs are
-  oscillators → gain → `source.detune`/`filter.detune`; keygroup polyphony steals oldest per program;
-  mono glide portamentos from the previous pad pitch. All extra nodes torn down leak-free (§3.2 —
-  asserted by the mock node-accounting tests). Omitting the §6 fields reproduces the Phase 3/4 voice.
-- **`arpeggiator.ts` — pure arp grid (§7.3).** `arpSequence(held, mode, octaves)` (up/down/upDown/
-  played/random across octaves) + `arpeggiatorHits(held, config, from, to)` (phase-locked, gated),
-  sharing the note-repeat subdivision clock. Wired into `SchedulerCore.setArpeggiator` /
-  `scheduleArpeggiator`, the worker `arp` case, and `SchedulerClient.setArpeggiator`.
-- **Engine dispatch (`engine.ts`):** `triggerScheduledNote` resolves `track.programId` → program →
-  `resolveVoice`; a resolved voice decodes its OPFS sample once (`programBuffers`), applies the §6 pad
-  mixer to the graph channel on first creation (`channelMixerApplied`), and triggers via
-  `resolvedVoiceToTrigger`. Tracks with no program (or unresolved notes) fall back to the demo sample
-  (`triggerFallbackDemo`) so the Phase 4 record/playback smoke stays audible. `dispose` clears both caches.
-- **Program-scope addresses (`params/registry.ts`):** `programParamPath`/`PROGRAM_PARAM_RANGES` + a
-  `programParam` `ParamTarget` kind. `parseParamTarget` gates on the registered leaves.
-- **Program Edit mode (`src/features/program-edit/`):** functional (Phase 5) editor mounted in `App`
-  (`ProgramEditPanel`): program CRUD, `PadEditor` (bank grid + `EnvelopeEditor`/`FilterEditor`/
-  `ModMatrixEditor`/`LayersEditor`), `KeygroupEditor` (zones + voice settings + shared sound design),
-  and `ArpControl` (drives `engine.scheduler.setArpeggiator`). Reusable labelled inputs in `controls.tsx`.
-  Every control commits through `useProgramStore` (§4.5). Plain inputs, not bespoke knobs — Phase 7.
-- **Offline pitch renders (`offlineTest.ts`):** `renderProgramNotePitch(program, note, velocity)` builds
-  a voice in an `OfflineAudioContext` over a synthesised known-pitch sine and measures pitch by
-  autocorrelation. Exposed via the audio probe (`velocityLayerPitches`, `keygroupPitches`) for the smoke.
+**Pure logic (dependency-free, unit-tested — spec §2.5):**
+- **`core/audio/wav.ts`** — `encodeWav(channels, rate, bitDepth)` / `decodeWav(bytes)`; canonical
+  16/24-bit PCM + 32-bit IEEE-float WAV. THE codec for import/looper/bounce/`.mpcweb`.
+- **`core/dsp/ringBuffer.ts`** — `RingBuffer` (SPSC lock-free, `Atomics`, one reserved slot); `.create(slots)`
+  / `push` / `pull` / `availableToRead|Write`. Consumed by the Looper recorder worklet.
+- **`core/audio/sampleEdit.ts`** — `normalise` / `reverse` / `fadeIn` / `fadeOut` / `trim` / `peakOf`
+  (non-destructive; return fresh channels).
+- **`core/audio/chop.ts`** — `equalSlices` / `slicesFromMarkers` / **`slicesFromOnsets`** (regions START at
+  each transient) / `enforceMinSpacing`. `SliceRegion = { startFrame, endFrame }`.
+- **`core/sequencer/groove.ts`** — `grooveFromTransients` / `grooveShiftAtTick` / `applyGrooveToEvents`;
+  `GrooveTemplate`. Schedule-time application (like swing) is Phase 7; the destructive bake is live.
 
-## 5. Repository catalogue — unchanged from Phase 1/2 (see git history / prior handover).
-`ProgramRepository` CRUD (`create`/`getById`/`listByProject`/`update`/`remove`) already backs program
-persistence; Phase 5 added no repository or DDL change (programs persist as `programs.payload` JSON, §9.3).
+**WASM kernel seam (spec §5.6):**
+- **`core/dsp/kernelBase.ts`** — `StreamingKernel<TExports>` base: owns I/O memory views, `process`,
+  `destroy`; `StreamingKernel.allocate(...)`. Streaming kernels (limiter, multiband, reverb) extend it.
+- **`core/dsp/kernelModules.ts`** — main-thread compile + cache of the worklet-hosted kernel modules
+  (`multibandComp`/`limiter`/`fdnReverb`); `loadKernelModules()` (start gate) + `getKernelModule(name)`.
+- Per-kernel wrappers mirror `gainProofKernel.ts`; analysis kernels (`transientDetect`) and offline-render
+  kernels (`granularStretch`) are bespoke (not `StreamingKernel`).
+
+**Worklet-hosted WASM effects (spec §5.6.2 / §5.7):**
+- **`core/audio/worklets/dspEffect.worklet.ts`** (`registerProcessor('dsp-effect')`) hosts one kernel per
+  channel; protocol in **`dspEffectProtocol.ts`** (`{module, kernel, maxBlock, params}` via
+  `processorOptions`; `{kind:'param'|'dispose'}` over the port).
+- **`inserts/effects.ts`**: `buildEffectCore` routes `multibandComp`/`limiter`/`reverb` to
+  `buildWorkletEffect` when `getKernelModule(kernel)` is loaded; else native/passthrough. Limiter reports
+  latency for PDC. `effectParams.ts` gained ranges + defaults for `multibandComp`/`limiter`.
+- **`context.ts`**: `loadAudioWorklets` now also loads the `dsp-effect` + `looper-recorder` worklets and
+  `loadKernelModules()`; **`prepareWorkletEffects(context)`** registers them on an offline context (used by
+  `renderEffectOffline` — spec §11.2).
+
+**Sample pipeline (spec §9.4):**
+- **`core/audio/sampleImport.ts`** — `mixdownToStereo` / `planarChannels` (pure); `encodeWavInWorker`
+  (transfers buffers to `wavEncode.worker.ts`); **`saveChannelsAsSample`** (the SHARED write path for
+  import/edit/looper — captures `frames` BEFORE the encode transfer detaches the buffers); `importDecodedSample`
+  / `importAudioFile`.
+- **`core/audio/sampleEditService.ts`** — `readSampleChannels`, `applyEditToNewSample`,
+  `stretchSampleToNewSample` (granularStretch), `chopSampleToNewSamples` (transientDetect → `slicesFromOnsets`).
+- **`core/audio/grooveService.ts`** — `extractGrooveFromSample` / `extractAndBakeGroove`.
+- **`core/audio/bounceService.ts`** — `bounceActiveSequence` (offline render of resolved voices → `/bounces/`).
+- **`core/audio/looper.ts`** — `Looper` (recorder worklet → RingBuffer drain → `saveChannelsAsSample`);
+  **`recorder.worklet.ts`** (`looper-recorder`). `AudioEngine.createLooper()` / `auditionSample(path)`.
+
+**Interchange (spec §9.6):**
+- **`core/project/mpcweb.ts`** — Zod manifest + snapshot schemas; `serialiseSnapshot` (BigInt→Number replacer)
+  / `parseSnapshot` / `buildManifest` / `parseManifest` (rejects unknown formatVersion) / **`remapSnapshot`**
+  (regenerate all UUIDs via whole-JSON id replacement; returns `sampleIdMap`).
+- **`core/project/mpcwebZip.ts`** — `packMpcweb` / `unpackMpcweb` (fflate). **`pack.worker.ts`** + **`packClient.ts`**
+  (`packMpcwebInWorker` / `unpackMpcwebInWorker`).
+- **`core/project/snapshotService.ts`** — `dumpSnapshot` / `restoreSnapshot` (drains repo pages; FK-ordered inserts).
+- **`projectService.ts`**: `exportMpcweb` / `importMpcweb` live; **`getActiveRepositories()`** exposed for the modes.
+
+## 5. Repository catalogue — unchanged from Phase 1/2.
+No repository or DDL change in Phase 6. `SampleRepository` (`create`/`getById`/`listByProject`/`listGlobal`/
+`listByTag`/`setTags`/`tagsFor`/`remove`) backs the sample pipeline; the `.mpcweb` dump/restore uses the
+existing `listByProject`/`listBySequence`/`listByTrack`/`listByOwner` reads and the `create`/`insertMany`
+writes. **Note:** raw rows carry BigInt integer fields from the live DB (coerce with `Number`).
 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1** = the §9.3 DDL verbatim
-(`src/core/storage/migrations/001-initial-schema.ts`). **No migration added in Phase 5** — the enriched
-§6 program model already round-trips through the `programs.payload` JSON (Zod-validated on load, `mappers.ts`).
+(`src/core/storage/migrations/001-initial-schema.ts`). **No migration added in Phase 6** — samples persist in
+the existing `samples` + `sample_tags` tables; bounces are OPFS `/bounces/` files (not table rows).
 
 ## 7. Worker / worklet / message protocol versions
 
 - **DB worker RPC:** unchanged.
-- **Worklets:** `meter-tap` (Phase 3), `gain-proof` (Phase 0). **No new worklets** (the voice engine is
-  native nodes; a worklet LFO for sampleHold/drift is a later refinement).
-- **Scheduler worker — `SCHEDULER_PROTOCOL_VERSION = 1` (unchanged number):** Phase 4 kinds **plus** the
-  new additive **`arp { enabled, mode, octaves, gate, division }`** (main → worker, §7.3). Worker →
-  main responses unchanged. Zod-guarded at both boundaries.
-- **Playhead / Meter SAB layouts:** unchanged.
-- **Sync-layer bridge (`audioBridge.ts`):** `applyAutomation` now also recognises `programParam`
-  targets (registered grammar) — application is a tagged `STUB(phase-7)`.
+- **Worklets:** `meter-tap` (Phase 3), `gain-proof` (Phase 0), **NEW `dsp-effect`** (hosts multibandComp/
+  limiter/fdnReverb, module via `processorOptions`), **NEW `looper-recorder`** (master → RingBuffer).
+- **Scheduler worker:** `SCHEDULER_PROTOCOL_VERSION = 1` (unchanged; no Phase 6 change).
+- **NEW workers:** `pack.worker` (`.mpcweb` zip pack/unpack) + `wavEncode.worker` (WAV encode) — each a thin
+  shell over pure functions, with a correlation-id promise client.
+- **Sync-layer bridge (`audioBridge.ts`):** `applyAutomation` program-param application still `STUB(phase-7)`.
 
 ## 8. Stores — all eight implemented (§4.2), shapes unchanged.
-`useProgramStore` carried the Phase 5 editing surface via its existing `updateProgram`/`upsertPad`/
-`removePad` actions (all undoable, §4.5). No store interface changed.
+`useBrowserStore` is now populated live (`refreshSamples` → `setSamples`). No store interface changed.
 
-## 9. Component tree topography (as implemented)
+## 9. Component tree topography (as implemented — panels, not the polished 12-mode rail; Phase 7)
 
 ```
-main.tsx → capability gate → tab lock → ErrorBoundary(App)
-App → header · soft-capability chips · ProjectStatusBar · StoragePanel · AudioEnginePanel · ProgramEditPanel
-AudioEnginePanel "Start" → startAudioEngine() (unchanged Phase 4 path; dispatch now resolves real programs)
-ProgramEditPanel → program CRUD · (PadEditor | KeygroupEditor) · ArpControl
-  PadEditor → bank grid · pad settings · EnvelopeEditor · FilterEditor · ModMatrixEditor · LayersEditor
-  KeygroupEditor → voice settings · EnvelopeEditor · FilterEditor · ModMatrixEditor · zones
-  ArpControl → enabled/mode/octaves/gate/division → engine.scheduler.setArpeggiator
+App → header · soft-capability chips · ProjectStatusBar · StoragePanel · AudioEnginePanel ·
+      ProgramEditPanel · SampleEditPanel · LooperPanel · BrowserPanel
+SampleEditPanel  → import · sample list · WaveformCanvas · tools (Normalise/Reverse/Fade/Trim/
+                   Chop/Groove-bake/Time-stretch) — each renders a new sample
+LooperPanel      → Record / Stop&save → engine.createLooper() → RingBuffer → new sample
+BrowserPanel     → Export/Import .mpcweb · Bounce sequence · Purge unused · audition list
+AppErrorFallback → Safe Mode: Export .mpcweb (now live) · Download .sqlite · Hard reset
 ```
 
-## 10. Kernel inventory — unchanged. `gainProof` exemplar only; §5.6.4 WASM kernels arrive Phase 6
-(Phase 5 added none — the voice engine + sound design are pure TypeScript on native Web Audio nodes).
+## 10. Kernel inventory — **the §5.6.4 set is now complete** (all built by `build:wasm`, golden-tested):
+- `gainProof` (Phase 0 exemplar).
+- **`lookaheadLimiter`** — brickwall limiter, 1.5 ms lookahead reported as PDC latency (streaming).
+- **`multibandComp`** — 3-band compressor, complementary one-pole crossovers (unity = passthrough) (streaming).
+- **`fdnReverb`** — feedback delay network (4 lines, Hadamard mix, damping, pre-delay) (streaming; the reverb
+  Phase 6+ engine).
+- **`transientDetect`** — energy-flux onset detector (analysis kernel: `analyse` → `onsetAt`/`count`).
+- **`granularStretch`** — WSOLA independent time/pitch (offline-render kernel: `render`).
 
 ## 11. Open stubs / deliberate technical debt
 
-`check:stubs` reports **7** open stubs (none block until Phase 7):
-- `// STUB(phase-7)` `src/core/audio/audioBridge.ts` — per-voice program-parameter automation
-  application (§6/§7.8); the address grammar is registered now (**NEW this phase**).
-- `// STUB(phase-6)` ×5 — `multibandComp`/`limiter` passthrough, `.mpcweb` pack/unpack, OPFS streaming,
-  Safe-Mode export.
+`check:stubs` reports **3** open stubs (all `phase-7`; none block Phase 6):
+- `// STUB(phase-7)` `src/core/audio/audioBridge.ts` — per-voice program-parameter automation application (§6/§7.8).
+- `// STUB(phase-7)` `src/core/storage/opfs.ts` — worker sync-access-handle streaming (throughput refinement).
 - `// STUB(phase-7)` `src/ui/StoragePanel.tsx` — diagnostic panel.
 
-**Deferred wiring (not stubbed, by design):**
-- **Note repeat + arpeggiator UI**: `SchedulerClient.setNoteRepeat`/`setArpeggiator` exist and are
-  tested; note repeat still has no UI (Phase 7/8 Pad Perform), arp has the `ArpControl` in Program Edit.
-- **Per-voice program automation** (`program:<id>.pad:<idx>.…`) application → Phase 7.
-- **LFO refinements:** tempo-synced LFO rate (currently free-rate Hz) and a true `sampleHold`/`drift`
-  worklet LFO → later. Additional LFO mod targets (pan, amp tremolo, layerStart, insert, lfoRate) —
-  the evaluator computes them; the voice audibly applies pitch + filter-cutoff LFOs in v1.
-- **Non-destructive layer trim / reverse** (`startFrame`/`endFrame`/`reverse`) carried on `ResolvedVoice`
-  but applied in Phase 6 (sample pipeline).
-- **Pad-mixer live editing → graph** and **program-scope mixer strips in `useMixerStore`** → Phase 7 Mixer.
-- **Groove extraction (§7.5)** → Phase 6 (needs the `transientDetect` WASM kernel).
-- Prior Phase 3/4 deferrals (playhead canvas rendering, `replace` region-clear, `gainProof` unwired,
-  automation-ramp altitude) still stand.
+**Deferred wiring (not stubbed, by design) — Phase 7 targets:**
+- **Groove schedule-time application** (non-destructive, like swing) — the extract + destructive bake are live;
+  the swing-style apply-at-schedule path is Phase 7 (Grid editor).
+- **Looper:** mic source + bar-locked/tempo-synced length + overdub + live meter ring (master-resample mono
+  capture is live).
+- **Bounce:** the full insert/mixer graph in the offline render (resolved-voice bounce is live); bounce-song /
+  bounce-track / resample-to-pad variants.
+- **Sample Edit:** deep canvas tooling (draggable trim/markers), worker-computed waveform peak-pyramid cache
+  (§8.5.4) — peaks are drawn directly now.
+- **Browser:** folder tree, tag chips, favourites persistence, waveform micro-preview, drag-to-pad assignment
+  (import/list/audition/export-import/purge/bounce are live).
+- **`transientDetect`:** FFT spectral-flux upgrade behind the seam.
+- Prior Phase 3/4/5 deferrals (playhead canvas rendering, per-voice program automation, LFO worklet /
+  tempo-synced LFO, pad-mixer live editing → graph, Mixer-mode strips) still stand.
 
 ## 12. Verification commands (all green at handover, inside the phase worktree)
-`npm run dev` · `build` · `preview` · `test` (**363**) · `test:e2e` (**28/28**, dev + offline —
-velocity-layer switching, keygroup pitch accuracy, plus the Phase 3/4 proofs) · `lint` · `type-check` ·
-`verify`. (The main checkout has no `node_modules`; `npm install` before re-running.)
+`npm run dev` · `build` · `preview` · `test` (**426**) · `test:e2e` (**31/31**, dev + offline — worklet WASM
+effects, sample pipeline import/chop/stretch, `.mpcweb` round-trip, plus every Phase 0–5 proof) ·
+`test:e2e:quick` (dev-only fast path) · `lint` · `type-check` · `verify`.
+(The main checkout has no `node_modules`; `npm install` before re-running.)
