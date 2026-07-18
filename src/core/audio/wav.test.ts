@@ -106,3 +106,74 @@ describe('decodeWav — round-trips the encoder (spec §11.1)', () => {
     expect(() => decodeWav(new Uint8Array([1, 2, 3, 4]))).toThrow(/RIFF|WAVE|too short/i);
   });
 });
+
+describe('decodeWav — malformed headers are rejected, never hung on', () => {
+  /** Patch a little-endian uint16 into an otherwise valid encoded WAV. */
+  function withU16(bytes: Uint8Array, offset: number, value: number): Uint8Array {
+    const copy = bytes.slice();
+    copy[offset] = value & 0xff;
+    copy[offset + 1] = (value >> 8) & 0xff;
+    return copy;
+  }
+
+  const valid = encodeWav([Float32Array.from([0, 0.5, -0.5])], 48_000, '16');
+
+  // The regression this suite exists for: numChannels = 0 makes blockAlign 0, so
+  // `frames = dataSize / 0` is Infinity and the frame loop spins forever doing no work.
+  it('rejects numChannels = 0 instead of looping to Infinity', () => {
+    expect(() => decodeWav(withU16(valid, 22, 0))).toThrow(/channel count 0/);
+  });
+
+  it('rejects channel counts above the §9.3 limit of 2', () => {
+    expect(() => decodeWav(withU16(valid, 22, 3))).toThrow(/channel count 3/);
+  });
+
+  it('rejects bitsPerSample = 0', () => {
+    expect(() => decodeWav(withU16(valid, 34, 0))).toThrow(/bit depth 0/);
+  });
+
+  it('rejects an unsupported bit depth', () => {
+    expect(() => decodeWav(withU16(valid, 34, 20))).toThrow(/bit depth 20/);
+  });
+
+  it('rejects IEEE float declared at a width other than 32 bits', () => {
+    // audioFormat = 3 at 16 bits would read 4 bytes per 2-byte frame stride.
+    expect(() => decodeWav(withU16(valid, 20, 3))).toThrow(/IEEE float requires 32 bits/);
+  });
+
+  it('rejects a zero sample rate', () => {
+    const copy = valid.slice();
+    copy.set([0, 0, 0, 0], 24);
+    expect(() => decodeWav(copy)).toThrow(/sample rate 0/);
+  });
+
+  it('reports a truncated fmt chunk rather than raising a bare RangeError', () => {
+    // 44 bytes of header with the fmt body cut short: RIFF/WAVE, then `fmt ` claiming 16 bytes
+    // of body but only 8 present, padded out to clear the minimum-length check.
+    const bytes = new Uint8Array(44);
+    const view = new DataView(bytes.buffer);
+    const ascii4 = (offset: number, text: string): void => {
+      for (let i = 0; i < 4; i++) view.setUint8(offset + i, text.charCodeAt(i));
+    };
+    ascii4(0, 'RIFF');
+    view.setUint32(4, 36, true);
+    ascii4(8, 'WAVE');
+    ascii4(36, 'fmt ');
+    view.setUint32(40, 16, true); // body would run to offset 60, past the 44-byte buffer
+    expect(() => decodeWav(bytes)).toThrow(/truncated fmt chunk/);
+  });
+
+  it('rejects a stream with no fmt chunk', () => {
+    const bytes = new Uint8Array(52);
+    const view = new DataView(bytes.buffer);
+    const ascii4 = (offset: number, text: string): void => {
+      for (let i = 0; i < 4; i++) view.setUint8(offset + i, text.charCodeAt(i));
+    };
+    ascii4(0, 'RIFF');
+    view.setUint32(4, 44, true);
+    ascii4(8, 'WAVE');
+    ascii4(12, 'data');
+    view.setUint32(16, 4, true);
+    expect(() => decodeWav(bytes)).toThrow(/no fmt chunk/);
+  });
+});
