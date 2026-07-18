@@ -17,8 +17,9 @@
 //
 // Fails on any console error or page error.
 //
-//   node scripts/browser-smoke.mjs            # headless
-//   node scripts/browser-smoke.mjs --headed   # watch it run
+//   node scripts/browser-smoke.mjs             # full run (dev + offline PWA) — phase-exit proof
+//   node scripts/browser-smoke.mjs --dev-only  # fast: dev section only (skips the vite build)
+//   node scripts/browser-smoke.mjs --headed    # watch it run
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -32,6 +33,11 @@ const PREVIEW_PORT = 5198;
 const DEV_URL = `http://localhost:${DEV_PORT}/`;
 const PREVIEW_URL = `http://localhost:${PREVIEW_PORT}/`;
 const headed = process.argv.includes('--headed');
+// --dev-only: run just Section A (dev server) for fast iteration — skips the production
+// `vite build` + preview + offline reload (Section B), the slowest part. The default (full)
+// run remains the binding phase-exit proof (spec §11.4/§13.5). All Phase 6 proofs (sample
+// pipeline, .mpcweb round-trip, worklet effects) already run in the dev section.
+const devOnly = process.argv.includes('--dev-only');
 const artefactDir = resolve(root, 'scripts/smoke-artefacts');
 
 const results = [];
@@ -365,41 +371,47 @@ async function main() {
     devServer = undefined;
 
     // ---- Section B: production build + preview (offline PWA shell) --------------
-    console.log('Section B — production preview + offline');
-    const build = spawnSync(process.execPath, [viteBin, 'build'], { cwd: root, stdio: 'inherit' });
-    if (build.status !== 0) throw new Error('vite build failed');
+    // Skipped under --dev-only (the slow `vite build`); the default run keeps it as the
+    // binding offline-PWA phase-exit proof (spec §11.4).
+    if (devOnly) {
+      console.log('Section B skipped (--dev-only).');
+    } else {
+      console.log('Section B — production preview + offline');
+      const build = spawnSync(process.execPath, [viteBin, 'build'], { cwd: root, stdio: 'inherit' });
+      if (build.status !== 0) throw new Error('vite build failed');
 
-    previewServer = spawnVite(['preview', '--port', String(PREVIEW_PORT), '--strictPort']);
-    await waitForServer(PREVIEW_URL);
+      previewServer = spawnVite(['preview', '--port', String(PREVIEW_PORT), '--strictPort']);
+      await waitForServer(PREVIEW_URL);
 
-    const previewContext = await browser.newContext();
-    page = await previewContext.newPage();
-    wireErrorCollectors(page);
-    await page.goto(PREVIEW_URL, { waitUntil: 'load' });
+      const previewContext = await browser.newContext();
+      page = await previewContext.newPage();
+      wireErrorCollectors(page);
+      await page.goto(PREVIEW_URL, { waitUntil: 'load' });
 
-    await step('preview: PWA manifest is linked and served', async () => {
-      const href = await page.getAttribute('link[rel="manifest"]', 'href');
-      if (!href) throw new Error('no <link rel="manifest"> in the document');
-      const manifest = await page.evaluate(async (url) => {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`manifest fetch ${response.status}`);
-        return response.json();
-      }, href);
-      if (manifest.name !== 'BangerBox') throw new Error(`manifest name is ${manifest.name}`);
-      if (manifest.display !== 'standalone') throw new Error('manifest display is not standalone');
-    });
-
-    await step('preview: service worker installs and takes control', async () => {
-      await page.waitForFunction(() => navigator.serviceWorker?.controller != null, undefined, {
-        timeout: 30_000,
+      await step('preview: PWA manifest is linked and served', async () => {
+        const href = await page.getAttribute('link[rel="manifest"]', 'href');
+        if (!href) throw new Error('no <link rel="manifest"> in the document');
+        const manifest = await page.evaluate(async (url) => {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`manifest fetch ${response.status}`);
+          return response.json();
+        }, href);
+        if (manifest.name !== 'BangerBox') throw new Error(`manifest name is ${manifest.name}`);
+        if (manifest.display !== 'standalone') throw new Error('manifest display is not standalone');
       });
-    });
 
-    await previewContext.setOffline(true);
-    await page.reload({ waitUntil: 'load' });
-    await assertShellAndSelfTest(page, 'offline');
-    await previewContext.setOffline(false);
-    await previewContext.close();
+      await step('preview: service worker installs and takes control', async () => {
+        await page.waitForFunction(() => navigator.serviceWorker?.controller != null, undefined, {
+          timeout: 30_000,
+        });
+      });
+
+      await previewContext.setOffline(true);
+      await page.reload({ waitUntil: 'load' });
+      await assertShellAndSelfTest(page, 'offline');
+      await previewContext.setOffline(false);
+      await previewContext.close();
+    }
 
     // ---- Console hygiene --------------------------------------------------------
     if (consoleErrors.length > 0 || pageErrors.length > 0) {
