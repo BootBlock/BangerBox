@@ -73,7 +73,12 @@ export class AudioEngine {
     this.metronome = new Metronome(context, this.graph.monitorBus);
     this.preview = new PreviewChannel(context, this.graph.monitorBus);
     this.sampleCache = new SampleCache(context);
-    this.bridge = createAudioBridge({ graph: this.graph, context });
+    this.bridge = createAudioBridge({
+      graph: this.graph,
+      context,
+      // Program-scope automation reaches sounding voices through the pool (spec §6/§7.8).
+      voicePool: () => this.voicePool,
+    });
     const playheadSab = createPlayheadSab();
     this.playheadReader = new PlayheadReader(playheadSab);
     this.scheduler = new SchedulerClient({

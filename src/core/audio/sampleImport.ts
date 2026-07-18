@@ -7,7 +7,7 @@
  */
 import type { BitDepth } from '@/core/project/schemas';
 import type { Repositories, SampleRow } from '@/core/storage/repositories';
-import { samplePath, writeFileAtomic } from '@/core/storage/opfs';
+import { samplePath, writeFileStreamed } from '@/core/storage/opfs';
 import type { WavEncodeRequest, WavEncodeResponse } from './wavEncode.worker';
 
 // --- pure standardisation helpers (spec §9.4 step 3) -----------------------------
@@ -121,7 +121,9 @@ export async function saveChannelsAsSample(
   const sampleId = crypto.randomUUID();
   const path = samplePath(ctx.projectId, sampleId);
   // Fresh ArrayBuffer-backed view — the OPFS stream API rejects shared-buffer views.
-  await writeFileAtomic(path, new Uint8Array(bytes));
+  // Sample payloads are the large writes the worker sync-access-handle path exists for
+  // (spec §9.1); the view is transferred there, and nothing below reads it again.
+  await writeFileStreamed(path, new Uint8Array(bytes));
   const row = await ctx.repos.samples.create({
     id: sampleId,
     project_id: ctx.projectId,

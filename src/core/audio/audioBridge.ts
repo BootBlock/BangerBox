@@ -11,14 +11,22 @@ import { useMixerStore } from '@/store';
 import type { InsertSlotState } from '@/core/project/schemas';
 import type { SyncBridge } from '@/store/syncLayer';
 import { parseParamTarget } from './params/registry';
+import { isPerVoiceTarget, padKeyFor, programParamChange } from './voiceParams';
 import type { ChannelHandle } from './factory';
 import type { MixerGraph } from './graph';
+import type { VoicePool } from './voicePool';
 import { createInsert } from './inserts/insert';
 import { computeEffectiveMutes } from './solo';
 
 interface BridgeTarget {
   readonly graph: MixerGraph;
   readonly context: BaseAudioContext;
+  /**
+   * The voice pool, for program-scope automation that acts on sounding voices (spec §6,
+   * §7.8). Supplied lazily: the engine constructs the bridge and the pool together, and
+   * offline/unit bridges legitimately have no pool.
+   */
+  readonly voicePool?: () => VoicePool | null;
 }
 
 /** A bridge that can also flush the full current mixer state to the graph (start-up). */
@@ -39,7 +47,7 @@ function applyInserts(context: BaseAudioContext, channel: ChannelHandle, inserts
   channel.setInserts(handles);
 }
 
-export function createAudioBridge({ graph, context }: BridgeTarget): AudioBridge {
+export function createAudioBridge({ graph, context, voicePool = () => null }: BridgeTarget): AudioBridge {
   /** Re-evaluate solo-in-place and apply the resulting mutes to every graph channel. */
   const applyEffectiveMutes = (): void => {
     const mutes = computeEffectiveMutes(useMixerStore.getState().channels);
@@ -72,8 +80,25 @@ export function createAudioBridge({ graph, context }: BridgeTarget): AudioBridge
       const target = parseParamTarget(targetPath);
       if (!target) return;
       if (target.kind === 'programParam') {
-        // STUB(phase-7): per-voice program-parameter automation (spec §6/§7.8) applies with
-        // the Program mixer/automation surface; the address grammar is registered now (§7.8).
+        // Program-scope leaves split two ways (spec §6, §7.8): sound-design parameters act
+        // on each sounding voice of the pad, while amp/pan are the pad channel's own
+        // strip values — see `voiceParams` for the mapping.
+        const change = programParamChange(target.param, value);
+        if (!change) return;
+        const padChannelId = `pad:${target.programId}:${target.padIndex}`;
+        if (isPerVoiceTarget(change.target)) {
+          voicePool()?.applyPadParam(
+            padKeyFor(target.programId, target.padIndex),
+            change.target,
+            change.value,
+            when,
+          );
+          return;
+        }
+        const padChannel = graph.getChannel(padChannelId);
+        if (!padChannel) return;
+        if (change.target === 'channelLevel') padChannel.setLevel(change.value, when);
+        else padChannel.setPan(change.value, when);
         return;
       }
       const channel = graph.getChannel(target.channelId);

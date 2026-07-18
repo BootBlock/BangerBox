@@ -10,6 +10,7 @@ import { useProgramStore, useProjectStore, useSequenceStore, useTransportStore }
 import { estimateStorage } from '@/core/storage/safeguards';
 import { Pad, SegmentControl, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
+import { StoragePanel } from '@/ui/StoragePanel';
 import { usePadTrigger } from '@/ui/usePadTrigger';
 
 /** Pads per bank (spec §1.3.1 — 128 pads as 8 banks × 16). */
@@ -203,6 +204,11 @@ export function MainMode() {
           ) : (
             <p className="text-xs text-bb-muted">Reading storage estimate…</p>
           )}
+
+          {/* Durable-layer diagnostics + the §9.7 persistence/eviction notice. */}
+          <div className="mt-3 border-t border-bb-line pt-3">
+            <StoragePanel />
+          </div>
         </Panel>
       </div>
     </div>

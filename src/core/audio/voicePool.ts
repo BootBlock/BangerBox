@@ -22,6 +22,8 @@ import {
 import { scheduleAmpAttack, scheduleAmpRelease, scheduleModEnvelope, velocityToGain } from './voiceEnvelope';
 import { biquadFilterType, lfoOscillator, staticModulation, FILTER_MOD_OCTAVES, PITCH_MOD_CENTS } from './voiceModulation';
 import { routesForSource } from './modMatrix';
+import { rampParamTarget } from './params/ramps';
+import type { ProgramParamTarget } from './voiceParams';
 import {
   selectChokeVictims,
   selectStealVictim,
@@ -142,6 +144,36 @@ export class VoicePool {
   /** Number of live voices (perf HUD / tests). */
   activeVoiceCount(): number {
     return this.voices.size;
+  }
+
+  /**
+   * Apply a program-scope parameter change to every sounding voice of a pad (spec §6,
+   * §7.8) — the per-voice half of automation and live sound-design edits. Values ramp
+   * over `PARAM_RAMP_MS` like any live parameter move, so an automated filter sweep does
+   * not zipper (spec §4.3).
+   *
+   * A voice whose pad filter is off has no filter node; filter changes simply skip it
+   * rather than materialising a node mid-note (which would click).
+   */
+  applyPadParam(padKey: string, target: ProgramParamTarget, value: number, when: number): void {
+    for (const voice of this.voices.values()) {
+      if (voice.padKey !== padKey || voice.stopScheduled) continue;
+      switch (target) {
+        case 'filterFrequency':
+          if (voice.filter) rampParamTarget(voice.filter.frequency, value, when);
+          break;
+        case 'filterQ':
+          if (voice.filter) rampParamTarget(voice.filter.Q, value, when);
+          break;
+        case 'detune':
+          // Layered on the voice's base detune so tune/pitch-mod are not discarded (§6).
+          rampParamTarget(voice.source.detune, voice.baseDetune + value, when);
+          break;
+        default:
+          // Channel-scope targets are the pad channel's business, not the voice's.
+          break;
+      }
+    }
   }
 
   /** Live voices sounding a given program (keygroup polyphony bookkeeping, spec §6). */

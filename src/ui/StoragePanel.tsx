@@ -10,16 +10,15 @@ import {
 } from '@/core/storage/safeguards';
 
 /**
- * Phase 1 storage foundation panel: boots the database worker (OPFS VFS +
- * migrations), requests persistent storage (spec §9.7), and offers a self-test
- * that proves the full durable path — repository write/read through the worker
- * AND an atomic OPFS file round-trip. The browser smoke drives this control
- * (spec §11.4, Phase 1 exit criterion).
+ * Storage diagnostics — boots the database worker (OPFS VFS + migrations), requests
+ * persistent storage and surfaces the §9.7 eviction warning when the browser refuses, and
+ * offers a self-test that proves the full durable path: a repository write/read through
+ * the worker AND an atomic OPFS file round-trip. The browser smoke drives this control
+ * (spec §11.4, a Phase 1 exit criterion that stays green).
+ *
+ * From Phase 7 it lives inside Main mode's Storage section (spec §8.5.1 "storage usage")
+ * rather than floating as a standalone diagnostic panel.
  */
-// STUB(phase-7): the state engine (project load/hydrate + the §4.2 stores) now runs at
-// boot (src/core/project/session.ts); this diagnostic panel — and the §9.7 eviction
-// warning it still hosts — is retired when the Browser/Main modes and the toast-queue
-// eviction notice ship in Phase 7 (§8.5). Kept meanwhile as the smoke's storage proof.
 
 export interface StoragePanelApi {
   boot(): Promise<DbBootResult>;
