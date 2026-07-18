@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultEnvelope, createDefaultLfo, type ModRoute } from '@/core/project/schemas';
 import { createFakeAudioContext, liveNodeCount, type FakeAudioContext } from '@/test/mocks/audioContext';
-import { VoicePool, type VoiceTriggerSpec } from './voicePool';
+import { playRegion, VoicePool, type VoiceTriggerSpec } from './voicePool';
 
 /** Count fake nodes of a given type registered on the context. */
 function nodeCount(fake: FakeAudioContext, type: string): number {
@@ -28,8 +28,21 @@ function spec(context: AudioContext, over: Partial<VoiceTriggerSpec> = {}): Voic
 }
 
 /** Reach into a fake source node to inspect its start/stop state. */
-function sourceState(node: unknown): { started: boolean; stopped: boolean } {
-  return node as { started: boolean; stopped: boolean };
+function sourceState(node: unknown): {
+  started: boolean;
+  stopped: boolean;
+  startArgs: { when?: number; offset?: number; duration?: number } | null;
+} {
+  return node as {
+    started: boolean;
+    stopped: boolean;
+    startArgs: { when?: number; offset?: number; duration?: number } | null;
+  };
+}
+
+/** Access a fake AudioParam's recorded schedule calls. */
+function paramCalls(param: unknown): { method: string; args: number[] }[] {
+  return (param as { calls: { method: string; args: number[] }[] }).calls;
 }
 
 describe('voice pool (spec §5.4)', () => {
@@ -109,6 +122,73 @@ describe('voice pool (spec §5.4)', () => {
     pool.destroy();
     expect(pool.activeVoiceCount()).toBe(0);
     expect(liveNodeCount(fake)).toBe(0);
+  });
+});
+
+describe('playRegion (spec §6 trim)', () => {
+  const buffer = (frames: number, rate = 48_000): AudioBuffer =>
+    createFakeAudioContext(rate).context.createBuffer(1, frames, rate);
+
+  it('plays the whole sample when the trim is the 0/0 schema default', () => {
+    expect(playRegion(buffer(48_000), 0, 0)).toEqual({ offsetSeconds: 0, durationSeconds: 1 });
+  });
+
+  it('maps a frame range onto buffer seconds', () => {
+    expect(playRegion(buffer(48_000), 12_000, 24_000)).toEqual({
+      offsetSeconds: 0.25,
+      durationSeconds: 0.25,
+    });
+  });
+
+  it('falls back to the buffer end for an inverted or out-of-range trim', () => {
+    // A stale trim must never silence a pad — it degrades to "play to the end".
+    expect(playRegion(buffer(1_000), 400, 200).durationSeconds).toBeCloseTo(600 / 48_000);
+    expect(playRegion(buffer(1_000), 0, 9_999).durationSeconds).toBeCloseTo(1_000 / 48_000);
+  });
+});
+
+describe('voice endings (spec §5.4 declick)', () => {
+  /** The voice's own amp gain — the last gain node created by the trigger. */
+  function ampGain(fake: FakeAudioContext): unknown {
+    const gains = fake.nodes.filter((n) => n.nodeType === 'gain');
+    return (gains[gains.length - 1] as unknown as { gain: unknown }).gain;
+  }
+
+  it('fades to zero at the end of the buffer rather than cutting hard', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'd', when: 0 })); // 1 s buffer at unity rate
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[ramps.length - 1]!.args).toEqual([0, 1]); // silent exactly at the buffer end
+    pool.destroy();
+  });
+
+  it('places the declick relative to the trimmed end, not the buffer end', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 't', when: 0, startFrame: 0, endFrame: 24_000 }));
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[ramps.length - 1]!.args).toEqual([0, 0.5]);
+    pool.destroy();
+  });
+
+  it('scales the end time by the voice detune, so a repitched voice fades at its real end', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // +1200 cents = double rate, so a 1 s buffer sounds for 0.5 s.
+    pool.trigger(spec(context, { id: 'oct', when: 0, tuneCents: 1200 }));
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(0.5);
+    pool.destroy();
+  });
+
+  it('starts the source at the trim offset for the trimmed duration (spec §6)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'trim', when: 0, startFrame: 12_000, endFrame: 24_000 }));
+    const source = fake.nodes.find((n) => n.nodeType === 'bufferSource');
+    expect(sourceState(source).startArgs).toEqual({ when: 0, offset: 0.25, duration: 0.25 });
+    pool.destroy();
   });
 });
 

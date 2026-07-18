@@ -21,6 +21,13 @@ export const VOICE_STEAL_FADE_MS = 5;
 /** Fade applied to choked pads in milliseconds — spec §5.4. */
 export const CHOKE_FADE_MS = 20;
 
+/**
+ * Fade applied at the natural end of a voice in milliseconds — spec §5.4 ("never a hard
+ * cut/click"). A sample whose last frame is not at zero — a chop slice, a trimmed layer,
+ * a truncated one-shot — would otherwise step straight to silence and click.
+ */
+export const DECLICK_FADE_MS = 3;
+
 /** Dezipper ramp for live parameter changes in milliseconds — spec §4.3. */
 export const PARAM_RAMP_MS = 10;
 

@@ -11,6 +11,7 @@ describe('engine constants registry (spec §2.6)', () => {
     expect(constants.CLOCK_SYNC_INTERVAL_MS).toBe(250);
     expect(constants.VOICE_STEAL_FADE_MS).toBe(5);
     expect(constants.CHOKE_FADE_MS).toBe(20);
+    expect(constants.DECLICK_FADE_MS).toBe(3);
     expect(constants.PARAM_RAMP_MS).toBe(10);
     expect(constants.MAX_VOICES).toBe(64);
     expect(constants.AUTOSAVE_DEBOUNCE_MS).toBe(2000);
@@ -30,6 +31,7 @@ describe('engine constants registry (spec §2.6)', () => {
         'CLOCK_SYNC_INTERVAL_MS',
         'VOICE_STEAL_FADE_MS',
         'CHOKE_FADE_MS',
+        'DECLICK_FADE_MS', // spec §5.4, changelog 2026-07-18 (t)
         'PARAM_RAMP_MS',
         'MAX_VOICES',
         'AUTOSAVE_DEBOUNCE_MS',

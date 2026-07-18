@@ -8,7 +8,7 @@
  * (spec §6). Allocation policy is the pure {@link selectStealVictim}/{@link
  * selectChokeVictims} (spec §11.1); this class wires and tears down nodes (spec §3.2).
  */
-import { CHOKE_FADE_MS, MAX_VOICES, VOICE_STEAL_FADE_MS } from '@/core/constants';
+import { CHOKE_FADE_MS, DECLICK_FADE_MS, MAX_VOICES, VOICE_STEAL_FADE_MS } from '@/core/constants';
 import { clamp } from '@/core/math';
 import {
   FILTER_CUTOFF_RANGE,
@@ -19,7 +19,13 @@ import {
   type PadFilter,
   type PlaybackMode,
 } from '@/core/project/schemas';
-import { scheduleAmpAttack, scheduleAmpRelease, scheduleModEnvelope, velocityToGain } from './voiceEnvelope';
+import {
+  scheduleAmpAttack,
+  scheduleAmpDeclick,
+  scheduleAmpRelease,
+  scheduleModEnvelope,
+  velocityToGain,
+} from './voiceEnvelope';
 import {
   biquadFilterType,
   lfoOscillator,
@@ -57,6 +63,9 @@ export interface VoiceTriggerSpec extends VoiceSoundDesign {
   readonly gainDb: number;
   readonly tuneSemitones: number;
   readonly tuneCents: number;
+  /** Non-destructive per-layer trim in frames (spec §6); omitted/0 with `endFrame` = whole sample. */
+  readonly startFrame?: number;
+  readonly endFrame?: number;
   /** Keygroup voice cap for the owning program (spec §6); undefined = pool-global only. */
   readonly programPolyphony?: number;
   /** Keygroup mono glide time in ms (spec §6): portamento into the note; 0/undefined = off. */
@@ -280,10 +289,17 @@ export class VoicePool {
     const peak = velocityToGain(spec.velocity, spec.gainDb) * stat.ampFactor;
     scheduleAmpAttack(ampGain.gain, peak, spec.amp, now);
 
+    // Declick the natural end of the region (spec §5.4). The end time is derived from the
+    // base detune only: a pitch envelope, glide or pitch LFO varies the real playback rate,
+    // so for those voices the fade is an approximation rather than frame-exact.
+    const region = playRegion(spec.buffer, spec.startFrame, spec.endFrame);
+    const endTime = now + region.durationSeconds / 2 ** (baseDetune / 1200);
+    scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS);
+
     // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6).
     this.wireLfos(spec, source, filter, oscillators, modGains);
 
-    source.start(now);
+    source.start(now, region.offsetSeconds, region.durationSeconds);
     for (const osc of oscillators) osc.start(now);
 
     const voice: Voice = {
@@ -409,6 +425,28 @@ export class VoicePool {
       chokeGroup: v.chokeGroup,
     }));
   }
+}
+
+/** The portion of a buffer a voice sounds, in buffer seconds (spec §6 trim). */
+export interface PlayRegion {
+  readonly offsetSeconds: number;
+  readonly durationSeconds: number;
+}
+
+/**
+ * Resolve a layer's `[startFrame, endFrame)` trim against a decoded buffer (spec §6).
+ * `endFrame` of 0 — the schema default, meaning "whole sample" — and any out-of-range or
+ * inverted pair fall back to the buffer's own end, so a stale trim can never silence a pad.
+ */
+export function playRegion(buffer: AudioBuffer, startFrame = 0, endFrame = 0): PlayRegion {
+  const frames = buffer.length;
+  const start = clamp(Math.floor(startFrame), 0, frames);
+  const requestedEnd = Math.floor(endFrame);
+  const end = requestedEnd > start && requestedEnd <= frames ? requestedEnd : frames;
+  return {
+    offsetSeconds: start / buffer.sampleRate,
+    durationSeconds: (end - start) / buffer.sampleRate,
+  };
 }
 
 /** Extract the pad index from a `${programId}:${padIndex}` key for the noteNumber source. */

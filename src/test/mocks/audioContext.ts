@@ -177,11 +177,14 @@ class FakeAudioBufferSourceNode extends FakeAudioNode {
   onended: (() => void) | null = null;
   started = false;
   stopped = false;
+  /** Arguments of the `start()` call, so trim (offset/duration) is assertable — spec §6. */
+  startArgs: { when?: number; offset?: number; duration?: number } | null = null;
   constructor(context: FakeAudioContext) {
     super(context, 'bufferSource');
   }
-  start(_when?: number, _offset?: number, _duration?: number): void {
+  start(when?: number, offset?: number, duration?: number): void {
     this.started = true;
+    this.startArgs = { when, offset, duration };
   }
   stop(_when?: number): void {
     this.stopped = true;
