@@ -1,20 +1,34 @@
 /**
  * WaveformCanvas primitive (spec §2.5, §8.4) — a DPR-aware `<canvas>` that draws a min/max peak
- * pyramid of a mono signal. Rendering happens on the canvas (never React DOM, spec §3.3); the
- * peaks are computed once per data change, not per frame. The full worker-computed pyramid cache
- * for very long files (spec §8.5.4) is a Phase 7 refinement; this draws the decoded peaks
- * directly, which is ample for the functional editor.
+ * pyramid of a mono signal. Rendering happens on the canvas (never React DOM, spec §3.3), and the
+ * reduction itself is done once per sample in the peak-pyramid worker (§8.5.4) — this component
+ * only maps the cheapest sufficient pyramid level onto its own pixel columns, so drawing costs
+ * the same whether the sample is one second or ten minutes long.
  */
 import { useEffect, useRef } from 'react';
+import { levelForColumns, type PeakPyramid } from '@/core/audio/peakPyramid';
 
 interface WaveformCanvasProps {
-  /** Mono samples to visualise, or null for an idle (empty) waveform. */
-  readonly samples: Float32Array | null;
+  /** The sample's cached peak pyramid, or null for an idle (empty) waveform. */
+  readonly pyramid: PeakPyramid | null;
   readonly height?: number;
   readonly ariaLabel?: string;
+  /** Extra classes for the canvas — Browser's micro-preview is a different shape to the editor. */
+  readonly className?: string;
+  /**
+   * Hide from assistive tech (spec §8.2). Set where the waveform only illustrates a label that
+   * is already announced — Browser's per-row micro-preview, whose row states the sample name.
+   */
+  readonly decorative?: boolean;
 }
 
-export function WaveformCanvas({ samples, height = 96, ariaLabel = 'Sample waveform' }: WaveformCanvasProps) {
+export function WaveformCanvas({
+  pyramid,
+  height = 96,
+  ariaLabel = 'Sample waveform',
+  className = 'h-24 w-full rounded-bb-sm border border-bb-line',
+  decorative = false,
+}: WaveformCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -42,31 +56,39 @@ export function WaveformCanvas({ samples, height = 96, ariaLabel = 'Sample wavef
     context.lineTo(width, mid);
     context.stroke();
 
-    if (!samples || samples.length === 0) return;
+    if (!pyramid || pyramid.frames === 0) return;
+
+    // Pick the coarsest level that still backs every pixel column with its own bucket, so a
+    // 96 px micro-preview never walks the finest level of a ten-minute sample.
+    const level = levelForColumns(pyramid, width);
+    const bucketsPerColumn = level.min.length / width;
 
     context.fillStyle = styles.getPropertyValue('--wave-fg') || '#7c5cff';
-    const perColumn = Math.max(1, Math.floor(samples.length / width));
     for (let x = 0; x < width; x++) {
-      let min = 1;
-      let max = -1;
-      const start = x * perColumn;
-      for (let i = 0; i < perColumn && start + i < samples.length; i++) {
-        const value = samples[start + i]!;
-        if (value < min) min = value;
-        if (value > max) max = value;
+      const start = Math.floor(x * bucketsPerColumn);
+      const end = Math.max(start + 1, Math.floor((x + 1) * bucketsPerColumn));
+      let min = Infinity;
+      let max = -Infinity;
+      for (let bucket = start; bucket < end && bucket < level.min.length; bucket++) {
+        const lo = level.min[bucket]!;
+        const hi = level.max[bucket]!;
+        if (lo < min) min = lo;
+        if (hi > max) max = hi;
       }
+      if (min === Infinity) continue; // past the end of the pyramid
       const yTop = mid - max * mid;
       const yBottom = mid - min * mid;
       context.fillRect(x, yTop, 1, Math.max(1, yBottom - yTop));
     }
-  }, [samples, height]);
+  }, [pyramid, height]);
 
   return (
     <canvas
       ref={canvasRef}
-      role="img"
-      aria-label={ariaLabel}
-      className="h-24 w-full rounded-bb-sm border border-bb-line"
+      role={decorative ? 'presentation' : 'img'}
+      aria-hidden={decorative || undefined}
+      aria-label={decorative ? undefined : ariaLabel}
+      className={className}
       style={{
         height,
         ['--wave-bg' as string]: '#1b1a20',
