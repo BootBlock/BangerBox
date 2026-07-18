@@ -18,9 +18,17 @@
 
 import { workerWritesAvailable, writeFileInWorker } from './opfsWriteClient';
 
+/** The global library directory — samples outside any project (spec §9.1, §9.3). */
+export const GLOBAL_LIBRARY_ROOT = '/global_library';
+
+/** The directory holding a project's samples (spec §9.1). */
+export function projectSamplesRoot(projectId: string): string {
+  return `/projects/${projectId}/samples`;
+}
+
 /** Canonical OPFS path of a project-scoped sample (spec §9.1). */
 export function samplePath(projectId: string, sampleId: string): string {
-  return `/projects/${projectId}/samples/${sampleId}.wav`;
+  return `${projectSamplesRoot(projectId)}/${sampleId}.wav`;
 }
 
 /** Canonical OPFS path of a project bounce (spec §9.1). */
@@ -30,7 +38,7 @@ export function bouncePath(projectId: string, name: string): string {
 
 /** Canonical OPFS path of a global-library sample (spec §9.1). */
 export function globalLibraryPath(sampleId: string): string {
-  return `/global_library/${sampleId}.wav`;
+  return `${GLOBAL_LIBRARY_ROOT}/${sampleId}.wav`;
 }
 
 /**

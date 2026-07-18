@@ -1,18 +1,22 @@
 /**
- * Browser mode (spec §8.5, mode 7) — the Phase 6 functional library/interchange surface
- * (unpolished; the folder tree, tag chips, favourites and waveform micro-previews are Phase 7).
- * It wires the project interchange (`.mpcweb` export/import, §9.6), sample audition through the
- * preview channel (§5.9), and the "Purge unused samples" maintenance action (§8.5.7). Every
- * control is wired end to end (§3.4).
+ * Browser mode (spec §8.5, mode 7) — the library/interchange surface. It wires the folder tree
+ * over the §9.1 project and global-library roots, the query-backed sample list with its text,
+ * tag and favourites filters, sample import into the browsed location (§9.4), the project
+ * interchange (`.mpcweb` export/import, §9.6), audition through the preview channel (§5.9),
+ * and the "Purge unused samples" maintenance action (§8.5.7). Every control is wired end to
+ * end (§3.4).
  */
 import { useEffect, useState } from 'react';
 import { getActiveRepositories, getAudioEngine, projectService } from '@/core/project';
 import { bounceActiveSequence } from '@/core/audio/bounceService';
-import { deleteFile, readFile } from '@/core/storage/opfs';
+import { importAudioFile } from '@/core/audio/sampleImport';
+import { deleteFile, projectSamplesRoot, readFile } from '@/core/storage/opfs';
 import { useBrowserStore, useProjectStore, useUIStore } from '@/store';
 import { Toggle } from '@/ui/primitives';
 import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
 import { FactorySection } from './FactorySection';
+import { FolderTree } from './FolderTree';
+import { isGlobalLibraryPath, scopeOfPath } from './libraryLocation';
 
 /** Trigger a browser download of a Blob (spec §9.6 export → download). */
 function downloadBlob(blob: Blob, filename: string): void {
@@ -31,6 +35,7 @@ export function BrowserPanel() {
   const textFilter = useBrowserStore((state) => state.textFilter);
   const tagFilter = useBrowserStore((state) => state.tagFilter);
   const favourites = useBrowserStore((state) => state.favourites);
+  const currentPath = useBrowserStore((state) => state.currentPath);
   const [favouritesOnly, setFavouritesOnly] = useState(false);
   /** sampleId → its tags, loaded alongside the sample list (spec §8.5.7 tag chips). */
   const [tagsBySample, setTagsBySample] = useState<Record<string, string[]>>({});
@@ -39,9 +44,21 @@ export function BrowserPanel() {
   const pushToast = useUIStore((state) => state.pushToast);
   const [busy, setBusy] = useState(false);
 
+  const browsingGlobal = isGlobalLibraryPath(currentPath);
+  const locationLabel = browsingGlobal ? 'global library' : 'project';
+
+  // Point the tree at the active project's samples whenever a project opens or changes, unless
+  // the global library — which outlives any one project — is the node being browsed.
+  useEffect(() => {
+    if (!projectId) return;
+    const { currentPath: path, setCurrentPath } = useBrowserStore.getState();
+    if (!isGlobalLibraryPath(path)) setCurrentPath(projectSamplesRoot(projectId));
+  }, [projectId]);
+
+  // The list follows the selected node (spec §8.5.7); `refreshSamples` reads the path itself.
   useEffect(() => {
     void refreshSamples();
-  }, [projectId]);
+  }, [currentPath, projectId]);
 
   // Load each sample's tags so the chips reflect the library rather than a fixed list
   // (spec §8.5.7). Runs when the sample set changes, not per render.
@@ -117,6 +134,37 @@ export function BrowserPanel() {
     })();
   };
 
+  /**
+   * Import an audio file into the browsed location (spec §9.4). The folder-tree selection
+   * chooses the destination, so this is how a sample gets into the global library (§9.3).
+   */
+  const importSample = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const engine = getAudioEngine();
+    if (!engine) {
+      pushToast('Start the audio engine before importing.', 'warning');
+      return;
+    }
+    setBusy(true);
+    void (async () => {
+      try {
+        await importAudioFile(file, {
+          ...sampleEditContext(),
+          context: engine.context,
+          scope: scopeOfPath(currentPath),
+        });
+        await refreshSamples();
+        pushToast(`Imported into the ${locationLabel}.`, 'success');
+      } catch (error) {
+        pushToast(error instanceof Error ? error.message : 'Import failed.', 'error');
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
   /** Bounce the active sequence to a `/bounces/` WAV and download it (spec §9.5). */
   const bounce = async () => {
     setBusy(true);
@@ -132,7 +180,11 @@ export function BrowserPanel() {
     }
   };
 
-  /** Delete samples not referenced by any program payload (spec §8.5.7 purge unused). */
+  /**
+   * Delete samples not referenced by any program payload (spec §8.5.7 purge unused).
+   * Project-scoped only: "unused" is decided against this project's programs, which says
+   * nothing about a global-library sample that other projects may reference.
+   */
   const purgeUnused = async () => {
     setBusy(true);
     try {
@@ -191,9 +243,20 @@ export function BrowserPanel() {
         >
           Bounce sequence
         </button>
+        <label className="cursor-pointer rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs">
+          Import sample…
+          <input
+            type="file"
+            accept="audio/*"
+            className="sr-only"
+            data-testid="sample-import"
+            onChange={importSample}
+          />
+        </label>
         <button
           type="button"
-          disabled={busy || samples.length === 0}
+          disabled={busy || browsingGlobal || samples.length === 0}
+          title={browsingGlobal ? 'Purge applies to the project library only.' : undefined}
           data-testid="purge-unused"
           onClick={() => void purgeUnused()}
           className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs disabled:opacity-50"
@@ -249,63 +312,69 @@ export function BrowserPanel() {
         </div>
       )}
 
-      <ul
-        className="min-h-0 flex-1 overflow-auto rounded-bb-sm border border-bb-line"
-        aria-label="Library samples"
-      >
-        {visibleSamples.map((row) => (
-          <li
-            key={row.id}
-            className="flex items-center justify-between gap-2 border-b border-bb-line px-2 py-1.5 text-xs last:border-b-0"
-          >
-            <button
-              type="button"
-              aria-pressed={favourites.includes(row.id)}
-              aria-label={`${favourites.includes(row.id) ? 'Remove' : 'Add'} ${row.name} ${
-                favourites.includes(row.id) ? 'from' : 'to'
-              } favourites`}
-              onClick={() => useBrowserStore.getState().toggleFavourite(row.id)}
-              className={`shrink-0 rounded-bb-sm px-1 ${
-                favourites.includes(row.id) ? 'text-bb-accent' : 'text-bb-muted hover:text-bb-text'
-              }`}
+      {/* Folder tree (spec §8.5.7) beside the contents of the node it has selected. */}
+      <div className="flex min-h-0 flex-1 gap-3">
+        <FolderTree />
+        <ul
+          className="min-h-0 flex-1 overflow-auto rounded-bb-sm border border-bb-line"
+          aria-label={browsingGlobal ? 'Global library samples' : 'Project samples'}
+        >
+          {visibleSamples.map((row) => (
+            <li
+              key={row.id}
+              className="flex items-center justify-between gap-2 border-b border-bb-line px-2 py-1.5 text-xs last:border-b-0"
             >
-              ★
-            </button>
-            <span className="flex-1 truncate">{row.name}</span>
-            {/* Drag-to-pad assignment (spec §8.5.7 `dragDropPayload`). */}
-            <span
-              draggable
-              role="button"
-              tabIndex={0}
-              aria-label={`Drag ${row.name} to a pad`}
-              onDragStart={() => useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name })}
-              onDragEnd={() => useUIStore.getState().setDragDropPayload(null)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' && event.key !== ' ') return;
-                event.preventDefault();
-                useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name });
-                pushToast(`${row.name} ready to assign — open Program Edit and choose a pad.`, 'info');
-              }}
-              className="shrink-0 cursor-grab rounded-bb-sm border border-bb-line px-2 py-0.5 text-bb-muted"
-            >
-              Assign
-            </span>
-            <button
-              type="button"
-              aria-label={`Audition ${row.name}`}
-              onClick={() => void getAudioEngine()?.auditionSample(row.opfs_path)}
-              className="shrink-0 rounded-bb-sm border border-bb-line px-2 py-0.5"
-            >
-              Audition
-            </button>
-          </li>
-        ))}
-        {visibleSamples.length === 0 && (
-          <li className="px-2 py-2 text-xs text-bb-muted">
-            {samples.length === 0 ? 'No samples in this project.' : 'No samples match the filter.'}
-          </li>
-        )}
-      </ul>
+              <button
+                type="button"
+                aria-pressed={favourites.includes(row.id)}
+                aria-label={`${favourites.includes(row.id) ? 'Remove' : 'Add'} ${row.name} ${
+                  favourites.includes(row.id) ? 'from' : 'to'
+                } favourites`}
+                onClick={() => useBrowserStore.getState().toggleFavourite(row.id)}
+                className={`shrink-0 rounded-bb-sm px-1 ${
+                  favourites.includes(row.id) ? 'text-bb-accent' : 'text-bb-muted hover:text-bb-text'
+                }`}
+              >
+                ★
+              </button>
+              <span className="flex-1 truncate">{row.name}</span>
+              {/* Drag-to-pad assignment (spec §8.5.7 `dragDropPayload`). */}
+              <span
+                draggable
+                role="button"
+                tabIndex={0}
+                aria-label={`Drag ${row.name} to a pad`}
+                onDragStart={() =>
+                  useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name })
+                }
+                onDragEnd={() => useUIStore.getState().setDragDropPayload(null)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name });
+                  pushToast(`${row.name} ready to assign — open Program Edit and choose a pad.`, 'info');
+                }}
+                className="shrink-0 cursor-grab rounded-bb-sm border border-bb-line px-2 py-0.5 text-bb-muted"
+              >
+                Assign
+              </span>
+              <button
+                type="button"
+                aria-label={`Audition ${row.name}`}
+                onClick={() => void getAudioEngine()?.auditionSample(row.opfs_path)}
+                className="shrink-0 rounded-bb-sm border border-bb-line px-2 py-0.5"
+              >
+                Audition
+              </button>
+            </li>
+          ))}
+          {visibleSamples.length === 0 && (
+            <li className="px-2 py-2 text-xs text-bb-muted">
+              {samples.length === 0 ? `No samples in the ${locationLabel}.` : 'No samples match the filter.'}
+            </li>
+          )}
+        </ul>
+      </div>
     </section>
   );
 }
