@@ -87,6 +87,35 @@ export function fadeOut(
 }
 
 /**
+ * Run a length-preserving transform over just `[startFrame, endFrame)` and splice the result
+ * back into a copy of the full sample (spec §8.5.4 region tools) — how Normalise and the fades
+ * apply to the editor's selection rather than to the whole file. Audio outside the region is
+ * copied through untouched.
+ *
+ * `transform` must return channels the same length it was given; it is handed the region, not
+ * the file, so a fade's ramp spans the selection. A transform that changes the length (Trim)
+ * cannot be spliced back and is applied directly instead.
+ */
+export function applyToRegion(
+  channels: readonly Float32Array[],
+  startFrame: number,
+  endFrame: number,
+  transform: (region: Float32Array[]) => Float32Array[],
+): Float32Array[] {
+  const length = channels[0]?.length ?? 0;
+  const start = Math.max(0, Math.min(startFrame, length));
+  const end = Math.max(0, Math.min(endFrame, length));
+  if (end <= start) throw new Error(`applyToRegion: empty range [${start}, ${end})`);
+  const processed = transform(channels.map((channel) => channel.slice(start, end)));
+  return channels.map((channel, index) => {
+    const out = Float32Array.from(channel);
+    const region = processed[index];
+    if (region) out.set(region.subarray(0, end - start), start);
+    return out;
+  });
+}
+
+/**
  * Slice the half-open frame range `[startFrame, endFrame)` from every channel (spec §8.5.4
  * Trim). Bounds are clamped into the sample; an empty or inverted resulting range throws so a
  * zero-length sample is never written.

@@ -1,26 +1,48 @@
 /**
- * Sample Edit mode (spec §8.5, mode 4) — the Phase 6 functional editor (unpolished; the deep
- * canvas tooling is Phase 7). It wires the built sample pipeline end to end: import a file
- * (§9.4), audition it (§5.9), view its waveform (§8.4), and run the destructive tools —
- * Normalise / Reverse / Fade / Trim (§8.5.4), WASM transient Chop (§7.5/§8.5.4), and granular
+ * Sample Edit mode (spec §8.5, mode 4) — the functional editor. It wires the built sample
+ * pipeline end to end: import a file (§9.4), audition it (§5.9), view and navigate its waveform
+ * (§8.4), and run the destructive tools — Normalise / Reverse / Fade / Trim (§8.5.4), Chop in
+ * all three §8.5.4 modes (manual markers / equal slices / WASM transients, §7.5), and granular
  * Time-stretch (§5.7.9) — each rendering a NEW sample (§8.5.4). Every control is wired (§3.4).
+ *
+ * The region tools follow the editor's selection when there is one and the whole file when there
+ * is not, which is what makes Trim able to do its actual job (§8.5.4) rather than cutting a
+ * fixed fraction of the file.
  */
 import { useEffect, useState } from 'react';
 import { getAudioEngine } from '@/core/project';
 import type { SampleRow } from '@/core/storage/repositories';
-import { fadeIn, fadeOut, normalise, reverse, trim } from '@/core/audio/sampleEdit';
+import { applyToRegion, fadeIn, fadeOut, normalise, reverse, trim } from '@/core/audio/sampleEdit';
 import {
   applyEditToNewSample,
   chopSampleToNewSamples,
   stretchSampleToNewSample,
+  type ChopSpec,
 } from '@/core/audio/sampleEditService';
+import type { SliceRegion } from '@/core/audio/chop';
 import type { PeakPyramid } from '@/core/audio/peakPyramid';
 import { getPeakPyramid } from '@/core/audio/peakPyramidCache';
 import { importAudioFile } from '@/core/audio/sampleImport';
 import { extractAndBakeGroove } from '@/core/audio/grooveService';
 import { useBrowserStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
-import { WaveformCanvas } from '@/ui/primitives/WaveformCanvas';
+import { SegmentControl } from '@/ui/primitives/SegmentControl';
+import { WaveformEditor } from '@/ui/primitives/WaveformEditor';
 import { refreshSamples, sampleEditContext } from './sampleContext';
+
+/** The three §8.5.4 Chop modes, in the order the spec lists them. */
+type ChopMode = ChopSpec['mode'];
+const CHOP_MODES: readonly { value: ChopMode; label: string }[] = [
+  { value: 'markers', label: 'Manual markers' },
+  { value: 'equal', label: 'Equal slices' },
+  { value: 'transients', label: 'Transients' },
+];
+
+/**
+ * Shortest slice a manual marker may carve out. Five milliseconds is below anything musically
+ * useful but comfortably above zero, so the guard only ever catches markers dropped on top of
+ * one another.
+ */
+const MIN_SLICE_MS = 5;
 
 export function SampleEditPanel() {
   const samples = useBrowserStore((state) => state.samples);
@@ -33,6 +55,10 @@ export function SampleEditPanel() {
   const [stretchRate, setStretchRate] = useState(1);
   const [stretchPitch, setStretchPitch] = useState(0);
   const [sensitivity, setSensitivity] = useState(0.5);
+  const [chopMode, setChopMode] = useState<ChopMode>('transients');
+  const [sliceCount, setSliceCount] = useState(8);
+  const [markers, setMarkers] = useState<number[]>([]);
+  const [selection, setSelection] = useState<SliceRegion | null>(null);
 
   useEffect(() => {
     void refreshSamples();
@@ -41,6 +67,10 @@ export function SampleEditPanel() {
   const select = async (row: SampleRow) => {
     setSelected(row);
     setPyramid(null);
+    // A selection and a marker set belong to the sample they were drawn on; carrying them to
+    // the next one would silently point them at unrelated audio.
+    setSelection(null);
+    setMarkers([]);
     try {
       setPyramid(await getPeakPyramid(row.opfs_path));
     } catch {
@@ -73,12 +103,33 @@ export function SampleEditPanel() {
     void run('Import', () => importAudioFile(file, { ...sampleEditContext(), context: engine.context }));
   };
 
+  /**
+   * Run a length-preserving tool over the selection when there is one, else the whole file
+   * (spec §8.5.4). Trim is not routed through here — it changes the length, so it *is* the
+   * selection rather than being applied within it.
+   */
   const edit = (label: string, transform: (channels: Float32Array[]) => Float32Array[]) => {
     if (!selected) return;
-    void run(label, () => applyEditToNewSample(selected, transform, label, sampleEditContext()));
+    const region = selection;
+    const scoped = region
+      ? (channels: Float32Array[]) => applyToRegion(channels, region.startFrame, region.endFrame, transform)
+      : transform;
+    void run(label, () => applyEditToNewSample(selected, scoped, label, sampleEditContext()));
   };
 
   const frames = pyramid?.frames ?? 0;
+  const sampleRate = selected?.sample_rate ?? 48_000;
+
+  const chopSpec = (): ChopSpec => {
+    if (chopMode === 'equal') return { mode: 'equal', count: sliceCount };
+    if (chopMode === 'markers') return { mode: 'markers', markers };
+    return { mode: 'transients', detect: { sensitivity } };
+  };
+
+  // Chopping on no markers would render a single slice identical to the source — a pointless
+  // copy, so the action states why it is unavailable instead of silently doing that.
+  const chopBlockedReason =
+    chopMode === 'markers' && markers.length === 0 ? 'Place at least one marker to chop.' : null;
 
   return (
     <section aria-labelledby="sample-edit-heading" className="mt-6">
@@ -129,8 +180,16 @@ export function SampleEditPanel() {
         </ul>
 
         <div>
-          <WaveformCanvas
+          <WaveformEditor
             pyramid={pyramid}
+            totalFrames={frames}
+            sampleRate={sampleRate}
+            interaction={chopMode === 'markers' ? 'markers' : 'select'}
+            selection={selection}
+            onSelectionChange={setSelection}
+            markers={markers}
+            onMarkersChange={setMarkers}
+            minSpacingFrames={msToFrames(MIN_SLICE_MS, sampleRate)}
             ariaLabel={selected ? `Waveform of ${selected.name}` : 'No sample selected'}
           />
           {selected && (
@@ -163,11 +222,23 @@ export function SampleEditPanel() {
                   }
                 />
                 <ToolButton
-                  busy={busy}
-                  label="Trim ends"
-                  onClick={() =>
-                    edit('Trim', (c) => trim(c, Math.floor(frames * 0.1), Math.ceil(frames * 0.9)))
-                  }
+                  busy={busy || !selection}
+                  label="Trim to selection"
+                  title={selection ? undefined : 'Drag a selection on the waveform first.'}
+                  onClick={() => {
+                    if (!selection) return;
+                    // Trim replaces the file with the selection, so it is applied directly
+                    // rather than through the region wrapper the other tools use.
+                    if (!selected) return;
+                    void run('Trim', () =>
+                      applyEditToNewSample(
+                        selected,
+                        (c) => trim(c, selection.startFrame, selection.endFrame),
+                        'Trim',
+                        sampleEditContext(),
+                      ),
+                    );
+                  }}
                 />
               </div>
 
@@ -183,28 +254,6 @@ export function SampleEditPanel() {
                     className="w-16 rounded-bb-sm border border-bb-line bg-bb-raised px-1 py-0.5"
                   />
                 </label>
-                <label className="flex items-center gap-1">
-                  Chop sensitivity
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={sensitivity}
-                    onChange={(e) => setSensitivity(Number(e.target.value))}
-                    aria-valuetext={sensitivity.toFixed(2)}
-                  />
-                </label>
-                <ToolButton
-                  busy={busy}
-                  label="Chop (transients)"
-                  testId="sample-chop"
-                  onClick={() =>
-                    void run('Chop', () =>
-                      chopSampleToNewSamples(selected, { sensitivity }, sampleEditContext()),
-                    )
-                  }
-                />
                 <ToolButton
                   busy={busy}
                   label="Groove → bake to track"
@@ -219,6 +268,65 @@ export function SampleEditPanel() {
                       extractAndBakeGroove(selected, track.id, useTransportStore.getState().bpm),
                     );
                   }}
+                />
+              </div>
+
+              {/* Chop — all three §8.5.4 modes; the selector drives both the parameter shown
+                  here and whether the waveform drags a selection or places markers. */}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <SegmentControl
+                  label="Chop mode"
+                  size="sm"
+                  value={chopMode}
+                  options={CHOP_MODES}
+                  onChange={setChopMode}
+                  data-testid="chop-mode"
+                />
+                {chopMode === 'transients' && (
+                  <label className="flex items-center gap-1">
+                    Sensitivity
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={sensitivity}
+                      onChange={(e) => setSensitivity(Number(e.target.value))}
+                      aria-valuetext={sensitivity.toFixed(2)}
+                    />
+                  </label>
+                )}
+                {chopMode === 'equal' && (
+                  <label className="flex items-center gap-1">
+                    Slices
+                    <input
+                      type="number"
+                      min={1}
+                      max={128}
+                      step={1}
+                      value={sliceCount}
+                      data-testid="chop-slice-count"
+                      onChange={(e) =>
+                        setSliceCount(Math.max(1, Math.min(128, Math.round(Number(e.target.value)))))
+                      }
+                      className="w-16 rounded-bb-sm border border-bb-line bg-bb-raised px-1 py-0.5"
+                    />
+                  </label>
+                )}
+                {chopMode === 'markers' && (
+                  <span className="text-bb-muted">
+                    {markers.length} marker{markers.length === 1 ? '' : 's'} — click the waveform to place,
+                    drag to move, alt-click to remove.
+                  </span>
+                )}
+                <ToolButton
+                  busy={busy || chopBlockedReason !== null}
+                  label="Chop"
+                  testId="sample-chop"
+                  title={chopBlockedReason ?? undefined}
+                  onClick={() =>
+                    void run('Chop', () => chopSampleToNewSamples(selected, chopSpec(), sampleEditContext()))
+                  }
                 />
               </div>
 
@@ -279,13 +387,16 @@ interface ToolButtonProps {
   busy: boolean;
   onClick: () => void;
   testId?: string;
+  /** Why the action is unavailable, when it is — surfaced on hover and to assistive tech. */
+  title?: string;
 }
-function ToolButton({ label, busy, onClick, testId }: ToolButtonProps) {
+function ToolButton({ label, busy, onClick, testId, title }: ToolButtonProps) {
   return (
     <button
       type="button"
       disabled={busy}
       data-testid={testId}
+      title={title}
       onClick={onClick}
       className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs disabled:opacity-50"
     >

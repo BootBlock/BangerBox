@@ -9,6 +9,7 @@ export { Fader, type FaderProps } from './Fader';
 export { XYSurface, type XYSurfaceProps, type XYAxis } from './XYSurface';
 export { MeterCanvas } from './MeterCanvas';
 export { WaveformCanvas } from './WaveformCanvas';
+export { WaveformEditor, type WaveformEditorProps } from './WaveformEditor';
 export { Toggle, type ToggleProps, type ToggleTone } from './Toggle';
 export { SegmentControl, type SegmentControlProps, type SegmentOption } from './SegmentControl';
 export { ValueReadout, type ValueReadoutProps } from './ValueReadout';

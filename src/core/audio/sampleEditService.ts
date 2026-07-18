@@ -8,7 +8,7 @@
  */
 import type { SampleRow } from '@/core/storage/repositories';
 import { readFile } from '@/core/storage/opfs';
-import { slicesFromOnsets, type SliceRegion } from './chop';
+import { equalSlices, slicesFromMarkers, slicesFromOnsets, type SliceRegion } from './chop';
 import { loadKernelModule } from '@/core/dsp/kernelLoader';
 import {
   GranularStretchKernel,
@@ -91,29 +91,58 @@ export async function stretchSampleToNewSample(
 }
 
 /**
- * Chop a sample by WASM transient detection (spec §8.5.4): detect onsets on the mono sum, slice
- * one region per transient, and write each slice as a new sample tagged `chop`. Returns the new
- * sample rows in order.
+ * How a Chop divides the sample (spec §8.5.4 requires all three): WASM transient detection,
+ * equal divisions, or the editor's manual markers. Modelled as a discriminated union so a mode
+ * cannot be selected without the parameter it needs — an equal chop with no count, or a marker
+ * chop with a sensitivity, will not type-check.
  */
-export async function chopSampleToNewSamples(
-  row: SampleRow,
-  options: DetectOptions,
-  ctx: EditContext,
-): Promise<SampleRow[]> {
-  const { channels, sampleRate } = await readSampleChannels(row);
+export type ChopSpec =
+  | { readonly mode: 'transients'; readonly detect: DetectOptions }
+  | { readonly mode: 'equal'; readonly count: number }
+  | { readonly mode: 'markers'; readonly markers: readonly number[] };
+
+/**
+ * Resolve a spec to slice regions. Only the transient mode needs the WASM kernel (and so the
+ * mono sum); the other two are pure maths over the frame count, which is why they are separated
+ * from the write path below.
+ */
+async function regionsForSpec(
+  spec: ChopSpec,
+  channels: readonly Float32Array[],
+  sampleRate: number,
+): Promise<SliceRegion[]> {
+  const frames = channels[0]?.length ?? 0;
+  if (spec.mode === 'equal') return equalSlices(frames, spec.count);
+  if (spec.mode === 'markers') return slicesFromMarkers(frames, spec.markers);
+
   const mono = monoSum(channels);
   const module = await loadKernelModule(transientDetectWasmUrl());
   const kernel = TransientDetectKernel.fromModule(module, sampleRate, mono.length);
-  let regions: SliceRegion[];
   try {
-    const onsets = kernel.detect(mono, options);
-    regions = slicesFromOnsets(mono.length, onsets);
+    return slicesFromOnsets(mono.length, kernel.detect(mono, spec.detect));
   } finally {
     kernel.destroy();
   }
+}
+
+/**
+ * Chop a sample into one NEW sample per slice (spec §8.5.4), by whichever mode `spec` selects.
+ * Every mode shares this write path, so a slice is rendered and tagged identically however its
+ * boundaries were decided. Returns the new sample rows in order.
+ */
+export async function chopSampleToNewSamples(
+  row: SampleRow,
+  spec: ChopSpec,
+  ctx: EditContext,
+): Promise<SampleRow[]> {
+  const { channels, sampleRate } = await readSampleChannels(row);
+  const regions = await regionsForSpec(spec, channels, sampleRate);
   const rows: SampleRow[] = [];
   for (let i = 0; i < regions.length; i++) {
     const { startFrame, endFrame } = regions[i]!;
+    // A degenerate region would write a zero-length sample; the marker and equal modes clamp
+    // upstream, but a detector returning coincident onsets must not be able to produce one.
+    if (endFrame <= startFrame) continue;
     const sliceChannels = channels.map((channel) => channel.slice(startFrame, endFrame));
     rows.push(
       await writeNewSample(row, sliceChannels, sampleRate, `${row.name} chop ${i + 1}`, ['chop'], ctx),
