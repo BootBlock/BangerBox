@@ -96,9 +96,9 @@ export function GridMode() {
 
   const sequence = () => useSequenceStore.getState();
 
-  const writeEvents = (next: readonly MidiEvent[]) => {
+  const writeEvents = (next: readonly MidiEvent[], coalesceKey?: string) => {
     if (!trackId) return;
-    sequence().setTrackEvents(trackId, next);
+    sequence().setTrackEvents(trackId, next, coalesceKey);
   };
 
   const handleDraw = (
@@ -129,15 +129,19 @@ export function GridMode() {
     sequence().removeEvents(trackId, [id], coalesceKey);
   };
 
-  const handleMove = (id: string, note: number, tickStart: number) => {
-    writeEvents(events.map((event) => (event.id === id ? { ...event, note, tickStart } : event)));
+  const handleMove = (id: string, note: number, tickStart: number, coalesceKey?: string) => {
+    writeEvents(
+      events.map((event) => (event.id === id ? { ...event, note, tickStart } : event)),
+      coalesceKey,
+    );
   };
 
-  const handleResize = (id: string, durationTicks: number) => {
+  const handleResize = (id: string, durationTicks: number, coalesceKey?: string) => {
     writeEvents(
       events.map((event) =>
         event.id === id ? { ...event, durationTicks: Math.max(1, durationTicks) } : event,
       ),
+      coalesceKey,
     );
   };
 

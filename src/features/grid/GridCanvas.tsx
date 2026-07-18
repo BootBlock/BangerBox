@@ -49,13 +49,13 @@ export interface GridCanvasProps {
   rowLabel: (note: number) => string;
   selectedIds: readonly string[];
   onSelect: (ids: readonly string[]) => void;
-  /** `coalesceKey` is set while painting, so the whole stroke is one undo entry. */
+  /** `coalesceKey` is set while dragging, so the whole gesture is one undo entry. */
   onDraw: (note: number, tickStart: number, durationTicks: number, coalesceKey?: string) => void;
   onErase: (id: string, coalesceKey?: string) => void;
-  /** Seals a paint stroke's undo entry on pointer release (spec §3.3 gesture end). */
+  /** Seals a drag's undo entry on pointer release (spec §3.3 gesture end). */
   onGestureEnd: () => void;
-  onMove: (id: string, note: number, tickStart: number) => void;
-  onResize: (id: string, durationTicks: number) => void;
+  onMove: (id: string, note: number, tickStart: number, coalesceKey?: string) => void;
+  onResize: (id: string, durationTicks: number, coalesceKey?: string) => void;
   onSetVelocity: (id: string, velocity: number) => void;
   onScroll: (deltaTicks: number, deltaRows: number) => void;
   onZoom: (factor: number) => void;
@@ -70,6 +70,9 @@ const LABEL_GUTTER_PX = 56;
  */
 const DRAW_GESTURE = 'grid-draw';
 const ERASE_GESTURE = 'grid-erase';
+/** Move/resize drags coalesce the same way: one drag is one undo step, not one per frame. */
+const MOVE_GESTURE = 'grid-move';
+const RESIZE_GESTURE = 'grid-resize';
 
 /**
  * How far the pointer may wander and still count as a tap rather than a drag. Without
@@ -361,19 +364,30 @@ export function GridCanvas({
     // Resize takes precedence over move, so the tail of a note is grabbable (spec §8.5.2).
     const resizeTarget = resizeHandleAtPoint(events, point.x, point.y, view);
     if (resizeTarget) {
-      pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId);
+      // Hold the element, not the React event: React nulls `currentTarget` once the
+      // handler returns, so reading it from a later listener throws.
+      const canvas = pointerEvent.currentTarget;
+      canvas.setPointerCapture(pointerEvent.pointerId);
       const move = (moveEvent: globalThis.PointerEvent) => {
-        const rect = pointerEvent.currentTarget.getBoundingClientRect();
+        const rect = canvas.getBoundingClientRect();
         const moveTick = xToTick(moveEvent.clientX - rect.left - LABEL_GUTTER_PX, view);
         // A note is at least one tick long (spec §7.7 min duration 1 tick).
-        onResize(resizeTarget.id, Math.max(1, snapTick(moveTick, snapTicks) - resizeTarget.tickStart));
+        onResize(
+          resizeTarget.id,
+          Math.max(1, snapTick(moveTick, snapTicks) - resizeTarget.tickStart),
+          RESIZE_GESTURE,
+        );
       };
       const end = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        // One drag is one undo step, however many frames it spanned (spec §3.3).
+        onGestureEnd();
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
       return;
     }
 
@@ -387,6 +401,7 @@ export function GridCanvas({
       onSelect([hit.id]);
       // Drag to move: the grab offset keeps the note under the pointer.
       const grabOffsetTicks = tick - hit.tickStart;
+      // As above: capture the element before the synthetic event is recycled.
       const canvas = pointerEvent.currentTarget;
       canvas.setPointerCapture(pointerEvent.pointerId);
       const originX = pointerEvent.clientX;
@@ -406,17 +421,21 @@ export function GridCanvas({
         const moveX = moveEvent.clientX - rect.left - LABEL_GUTTER_PX;
         const moveY = moveEvent.clientY - rect.top;
         const nextTick = Math.max(0, snapTick(xToTick(moveX, view) - grabOffsetTicks, snapTicks));
-        onMove(hit.id, rowToNote(yToRow(moveY, view), view), nextTick);
+        onMove(hit.id, rowToNote(yToRow(moveY, view), view), nextTick, MOVE_GESTURE);
       };
       const end = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
         // Tapping a note with the draw tool toggles it off (issue #92); the select tool
         // keeps the tap as a plain selection, and a drag is a move either way.
         if (!dragged && tool === 'draw') onErase(hit.id);
+        // A move drag is one undo step, however many frames it spanned (spec §3.3).
+        onGestureEnd();
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
       return;
     }
 
