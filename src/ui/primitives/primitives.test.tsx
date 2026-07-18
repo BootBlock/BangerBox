@@ -359,6 +359,65 @@ describe('Modal (spec §8.2 dialog contract)', () => {
     await user.tab();
     expect(screen.getByRole('button', { name: 'Close dialog' })).toHaveFocus();
   });
+
+  // Clicking prose, a label or the body padding drops focus to `<body>`; the trap has to
+  // survive that, since it is an ordinary thing to do inside a dialog.
+  it('closes on Escape after focus has fallen to the body', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <Modal open title="Quantise" onClose={onClose}>
+        <p>Snap every note to the nearest division.</p>
+      </Modal>,
+    );
+    screen.getByRole('dialog', { name: 'Quantise' }).blur();
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('pulls focus back when it escapes to the body', () => {
+    render(
+      <Modal open title="Quantise" onClose={vi.fn()}>
+        <p>Snap every note to the nearest division.</p>
+      </Modal>,
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Quantise' });
+    dialog.blur();
+    expect(dialog).toHaveFocus();
+  });
+
+  it('re-enters the dialog when Tab is pressed from outside it', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button type="button">Behind the dialog</button>
+        <Modal open title="Quantise" onClose={vi.fn()}>
+          <button type="button">Apply</button>
+        </Modal>
+      </>,
+    );
+    screen.getByRole('dialog', { name: 'Quantise' }).blur();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Close dialog' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Behind the dialog' })).not.toHaveFocus();
+  });
+
+  it('treats a <summary> as a tab stop inside the trap (spec §8.2)', async () => {
+    const user = userEvent.setup();
+    render(
+      <Modal open title="Storage" onClose={vi.fn()}>
+        <details>
+          <summary>Usage breakdown</summary>
+          <p>4.2 MB of samples.</p>
+        </details>
+      </Modal>,
+    );
+    // The summary is the last stop in the dialog, so Tab from it wraps to the first rather
+    // than escaping. (jsdom's own tab-order model omits `summary`, hence the explicit focus.)
+    screen.getByText('Usage breakdown').focus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Close dialog' })).toHaveFocus();
+  });
 });
 
 describe('Toast (spec §8.2 severity → announcement role)', () => {
