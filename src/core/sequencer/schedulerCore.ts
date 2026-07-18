@@ -507,18 +507,16 @@ export class SchedulerCore {
     to: number,
   ): void {
     if (this.eraseNotes.size === 0) return;
-    const seqFrom = sequenceTickAt(from, this.loop);
-    const seqTo = sequenceTickAt(to, this.loop);
-    const lo = Math.min(seqFrom, seqTo);
-    const hi = Math.max(seqFrom, seqTo);
-    const ids: string[] = [];
-    for (const event of track.events) {
-      if (!this.eraseNotes.has(`${trackId}:${event.note}`)) continue;
-      if (event.tickStart >= lo && event.tickStart < hi) ids.push(event.id);
+    // Same wrap-aware window as note scheduling: folding `from`/`to` and taking min/max
+    // yields the *complement* of the window whenever it straddles the loop end (spec §7.1.4).
+    const ids = new Set<string>();
+    for (const windowed of eventsInWindow(track.events, (e) => e.tickStart, from, to, this.loop)) {
+      if (!this.eraseNotes.has(`${trackId}:${windowed.item.note}`)) continue;
+      ids.add(windowed.item.id);
     }
-    if (ids.length > 0) {
-      track.events = track.events.filter((e) => !ids.includes(e.id));
-      result.erased.push({ trackId, eventIds: ids });
+    if (ids.size > 0) {
+      track.events = track.events.filter((e) => !ids.has(e.id));
+      result.erased.push({ trackId, eventIds: [...ids] });
     }
   }
 
