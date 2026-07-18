@@ -261,8 +261,9 @@ async function packRoundTrip(): Promise<{ imported: boolean; samples: number }> 
   const existing = await ctx.repos.samples.listByProject(ctx.projectId);
   if (existing.rows.length === 0) {
     const tone = new Float32Array(2_000);
-    for (let i = 0; i < tone.length; i++)
-      {tone[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / ctx.projectSampleRate);}
+    for (let i = 0; i < tone.length; i++) {
+      tone[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / ctx.projectSampleRate);
+    }
     const { saveChannelsAsSample } = await import('@/core/audio/sampleImport');
     await saveChannelsAsSample([tone], ctx.projectSampleRate, 'probe tone', ['probe'], ctx);
   }
@@ -395,7 +396,11 @@ async function samplePipelineProof(engine: AudioEngine): Promise<{
     ...ctx,
     context: engine.context,
   });
-  const chops = await chopSampleToNewSamples(imported, { sensitivity: 0.6, minSpacingMs: 40 }, ctx);
+  const chops = await chopSampleToNewSamples(
+    imported,
+    { mode: 'transients', detect: { sensitivity: 0.6, minSpacingMs: 40 } },
+    ctx,
+  );
   const stretched = await stretchSampleToNewSample(imported, { rate: 0.5, pitchSemitones: 0 }, ctx);
   // The real SQLite worker can return INTEGER columns as BigInt (rpc value union) — coerce
   // before dividing so the ratio is a plain Number across the evaluate boundary. Read the frame

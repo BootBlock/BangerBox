@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fadeIn, fadeOut, normalise, peakOf, reverse, trim } from './sampleEdit';
+import { applyToRegion, fadeIn, fadeOut, normalise, peakOf, reverse, trim } from './sampleEdit';
 
 describe('sampleEdit — pure destructive-op DSP (spec §8.5.4)', () => {
   describe('normalise', () => {
@@ -66,6 +66,42 @@ describe('sampleEdit — pure destructive-op DSP (spec §8.5.4)', () => {
       const out = trim([Float32Array.from([0, 1, 2, 3])], -5, 999);
       expect(Array.from(out[0]!)).toEqual([0, 1, 2, 3]);
       expect(() => trim([Float32Array.from([0, 1, 2, 3])], 3, 3)).toThrow(/range/i);
+    });
+  });
+
+  describe('applyToRegion', () => {
+    it('transforms only the selected frames and copies the rest through', () => {
+      const out = applyToRegion([Float32Array.from([1, 2, 3, 4, 5, 6])], 2, 4, (region) =>
+        region.map((channel) => channel.map((value) => value * 10)),
+      );
+      expect(Array.from(out[0]!)).toEqual([1, 2, 30, 40, 5, 6]);
+    });
+
+    it('hands the transform the region alone, so a fade ramps across the selection', () => {
+      const out = applyToRegion([Float32Array.from([1, 1, 1, 1])], 0, 2, (region) => fadeIn(region, 2));
+      // The ramp spans the two selected frames, not the whole file.
+      expect(out[0]![0]).toBeCloseTo(0, 6);
+      expect(out[0]![1]).toBeCloseTo(0.5, 6);
+      expect(out[0]![2]).toBe(1);
+    });
+
+    it('preserves every channel and the total length', () => {
+      const out = applyToRegion(
+        [Float32Array.from([1, 2, 3, 4]), Float32Array.from([5, 6, 7, 8])],
+        1,
+        3,
+        (region) => region.map((channel) => channel.map(() => 0)),
+      );
+      expect(Array.from(out[0]!)).toEqual([1, 0, 0, 4]);
+      expect(Array.from(out[1]!)).toEqual([5, 0, 0, 8]);
+    });
+
+    it('clamps out-of-range bounds and rejects an empty range', () => {
+      const out = applyToRegion([Float32Array.from([1, 2])], -5, 999, (region) =>
+        region.map((channel) => channel.map((value) => value + 1)),
+      );
+      expect(Array.from(out[0]!)).toEqual([2, 3]);
+      expect(() => applyToRegion([Float32Array.from([1, 2])], 2, 2, (region) => region)).toThrow(/range/i);
     });
   });
 });

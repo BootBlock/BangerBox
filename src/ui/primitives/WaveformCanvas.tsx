@@ -4,9 +4,19 @@
  * reduction itself is done once per sample in the peak-pyramid worker (§8.5.4) — this component
  * only maps the cheapest sufficient pyramid level onto its own pixel columns, so drawing costs
  * the same whether the sample is one second or ten minutes long.
+ *
+ * This is the *static* waveform: the whole file, no interaction, used by Browser's per-row
+ * micro-preview (§8.5.7) where a hundred rows must stay cheap. The zoom/selection/marker editor
+ * is `WaveformEditor`, which shares this component's painting via `waveformDraw`.
+ *
+ * Per §8.4 the canvas resizes via `ResizeObserver` and skips redraws while scrolled out of view.
+ * There is no rAF loop: a static waveform changes only when its pyramid or its size does, so it
+ * redraws on those events instead of burning a frame budget re-painting an unchanging picture.
  */
 import { useEffect, useRef } from 'react';
-import { levelForColumns, type PeakPyramid } from '@/core/audio/peakPyramid';
+import type { PeakPyramid } from '@/core/audio/peakPyramid';
+import { fullView } from '@/core/audio/waveformView';
+import { drawWaveform, readWaveformTokens } from './waveformDraw';
 
 interface WaveformCanvasProps {
   /** The sample's cached peak pyramid, or null for an idle (empty) waveform. */
@@ -31,55 +41,58 @@ export function WaveformCanvas({
 }: WaveformCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // The effect re-runs whenever the pyramid changes, so the observers set up here always close
+  // over the current one — no ref mirror is needed to reach it from their callbacks.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const context = canvas.getContext('2d');
     if (!context) return;
+    const tokens = readWaveformTokens(canvas);
+    let visible = true;
 
-    const dpr = globalThis.devicePixelRatio || 1;
-    const cssWidth = canvas.clientWidth || 600;
-    const width = Math.max(1, Math.floor(cssWidth * dpr));
-    const pixelHeight = Math.floor(height * dpr);
-    canvas.width = width;
-    canvas.height = pixelHeight;
-
-    context.clearRect(0, 0, width, pixelHeight);
-    // Design tokens are CSS-only; read the resolved colours off the canvas element.
-    const styles = getComputedStyle(canvas);
-    context.fillStyle = styles.getPropertyValue('--wave-bg') || '#1b1a20';
-    context.fillRect(0, 0, width, pixelHeight);
-    const mid = pixelHeight / 2;
-    context.strokeStyle = styles.getPropertyValue('--wave-mid') || '#3a3846';
-    context.beginPath();
-    context.moveTo(0, mid);
-    context.lineTo(width, mid);
-    context.stroke();
-
-    if (!pyramid || pyramid.frames === 0) return;
-
-    // Pick the coarsest level that still backs every pixel column with its own bucket, so a
-    // 96 px micro-preview never walks the finest level of a ten-minute sample.
-    const level = levelForColumns(pyramid, width);
-    const bucketsPerColumn = level.min.length / width;
-
-    context.fillStyle = styles.getPropertyValue('--wave-fg') || '#7c5cff';
-    for (let x = 0; x < width; x++) {
-      const start = Math.floor(x * bucketsPerColumn);
-      const end = Math.max(start + 1, Math.floor((x + 1) * bucketsPerColumn));
-      let min = Infinity;
-      let max = -Infinity;
-      for (let bucket = start; bucket < end && bucket < level.min.length; bucket++) {
-        const lo = level.min[bucket]!;
-        const hi = level.max[bucket]!;
-        if (lo < min) min = lo;
-        if (hi > max) max = hi;
+    const render = () => {
+      if (!visible) return;
+      const dpr = globalThis.devicePixelRatio || 1;
+      // Measure the laid-out box rather than trusting a hardcoded fallback width, which would
+      // silently paint at the wrong scale whenever the element is measured before layout.
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(1, Math.round(rect.width * dpr));
+      const pixelHeight = Math.max(1, Math.round(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== pixelHeight) {
+        canvas.width = width;
+        canvas.height = pixelHeight;
       }
-      if (min === Infinity) continue; // past the end of the pyramid
-      const yTop = mid - max * mid;
-      const yBottom = mid - min * mid;
-      context.fillRect(x, yTop, 1, Math.max(1, yBottom - yTop));
-    }
+      drawWaveform(context, {
+        pyramid,
+        view: fullView(pyramid?.frames ?? 1),
+        width,
+        height: pixelHeight,
+        tokens,
+      });
+    };
+
+    render();
+    const resizeObserver = new ResizeObserver(render);
+    resizeObserver.observe(canvas);
+
+    // Offscreen-culled idle state (spec §8.4): a scrolled-away preview does no drawing, and
+    // redraws once when it returns so it is never left stale after a resize it skipped.
+    const intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        const nowVisible = entries.some((entry) => entry.isIntersecting);
+        const becameVisible = nowVisible && !visible;
+        visible = nowVisible;
+        if (becameVisible) render();
+      },
+      { threshold: 0 },
+    );
+    intersectionObserver.observe(canvas);
+
+    return () => {
+      resizeObserver.disconnect();
+      intersectionObserver.disconnect();
+    };
   }, [pyramid, height]);
 
   return (
@@ -89,12 +102,7 @@ export function WaveformCanvas({
       aria-hidden={decorative || undefined}
       aria-label={decorative ? undefined : ariaLabel}
       className={className}
-      style={{
-        height,
-        ['--wave-bg' as string]: '#1b1a20',
-        ['--wave-mid' as string]: '#3a3846',
-        ['--wave-fg' as string]: '#7c5cff',
-      }}
+      style={{ height }}
     />
   );
 }
