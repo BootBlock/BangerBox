@@ -18,6 +18,7 @@ import {
   INPUT_LATENCY_RANGE,
   useHardwareStore,
   useMixerStore,
+  useProgramStore,
   useUIStore,
 } from '@/store';
 import { hardwareService } from '@/core/midi/hardwareService';
@@ -29,7 +30,12 @@ import {
   channelSendPath,
   isAutomatable,
   parseParamTarget,
+  programParamPath,
+  PROGRAM_PARAM_RANGES,
   targetRange,
+  transportParamPath,
+  TRANSPORT_PARAM_RANGES,
+  type TransportParam,
 } from '@/core/audio/params/registry';
 import { qLinkModeSchema, type QLinkBinding, type QLinkMode } from '@/core/project/schemas';
 import { Knob, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
@@ -58,23 +64,45 @@ interface ParamChoice {
   readonly label: string;
 }
 
-/** Assignable parameters, built through the registry's own builders (spec §7.8). */
-function assignableParams(channelIds: readonly string[]): ParamChoice[] {
-  const choices: ParamChoice[] = [];
+/**
+ * Assignable parameters for the manual path picker (spec §8.5.11 "registry-driven"), built
+ * through the registry's own builders (spec §7.8) and filtered by its own gate — so the
+ * picker can never offer an address the runtime would refuse.
+ */
+function assignableParams(
+  channelIds: readonly string[],
+  programId: string | null,
+  padIndex: number | null,
+): ParamChoice[] {
+  const candidates: ParamChoice[] = [];
+
+  // Global transport macros (spec §10.3 project mode).
+  for (const param of Object.keys(TRANSPORT_PARAM_RANGES) as TransportParam[]) {
+    candidates.push({ path: transportParamPath(param), label: `transport · ${param}` });
+  }
+
+  // The selected pad's sound-design leaves (spec §10.3 pad/program modes).
+  if (programId !== null && padIndex !== null) {
+    for (const param of Object.keys(PROGRAM_PARAM_RANGES)) {
+      candidates.push({
+        path: programParamPath(programId, padIndex, param),
+        label: `pad ${padIndex + 1} · ${param}`,
+      });
+    }
+  }
+
   for (const channelId of channelIds) {
-    const candidates: ParamChoice[] = [
+    candidates.push(
       { path: channelLevelPath(channelId), label: `${channelId} · level` },
       { path: channelPanPath(channelId), label: `${channelId} · pan` },
       ...[0, 1, 2, 3].map((index) => ({
         path: channelSendPath(channelId, index),
         label: `${channelId} · send ${index + 1}`,
       })),
-    ];
-    for (const candidate of candidates) {
-      if (isAutomatable(candidate.path)) choices.push(candidate);
-    }
+    );
   }
-  return choices;
+
+  return candidates.filter((candidate) => isAutomatable(candidate.path));
 }
 
 /** Which store a registry path belongs to, for the binding's `targetStore` (spec §10.3). */
@@ -92,6 +120,8 @@ export function QLinkEditMode() {
   const channels = useMixerStore((s) => s.channels);
   const inputLatencyMs = useHardwareStore((s) => s.inputLatencyMs);
   const ccMappings = useHardwareStore((s) => s.ccMappings);
+  const activeProgramId = useProgramStore((s) => s.activeProgramId);
+  const activePadId = useProgramStore((s) => s.activePadId);
 
   /** Encoder awaiting either a parameter tap or a CC during the learn flow (spec §8.5.11). */
   const [learningEncoder, setLearningEncoder] = useState<number | null>(null);
@@ -130,7 +160,10 @@ export function QLinkEditMode() {
     }
   };
 
-  const choices = useMemo(() => assignableParams(Object.keys(channels).sort()), [channels]);
+  const choices = useMemo(
+    () => assignableParams(Object.keys(channels).sort(), activeProgramId, activePadId),
+    [channels, activeProgramId, activePadId],
+  );
 
   const bindingFor = (encoderIndex: number): QLinkBinding | undefined =>
     bindings.find((binding) => binding.encoderIndex === encoderIndex);

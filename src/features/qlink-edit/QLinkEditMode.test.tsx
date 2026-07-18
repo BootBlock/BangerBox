@@ -6,8 +6,12 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createDefaultChannelStrip } from '@/core/project/schemas';
-import { useHardwareStore, useMixerStore, useUIStore } from '@/store';
+import {
+  createDefaultChannelStrip,
+  createDefaultDrumProgram,
+  createDefaultPad,
+} from '@/core/project/schemas';
+import { useHardwareStore, useMixerStore, useProgramStore, useUIStore } from '@/store';
 import { QLinkEditMode } from './QLinkEditMode';
 
 function seed(bluetooth = true) {
@@ -114,6 +118,37 @@ describe('QLinkEditMode (spec §8.5.11)', () => {
     render(<QLinkEditMode />);
     await user.click(screen.getByTestId('qlink-learn-0'));
     expect(screen.getByRole('status')).toHaveTextContent(/Learning encoder Q1/i);
+  });
+
+  it('offers the global transport macros in the picker (spec §10.3 project mode)', async () => {
+    const user = userEvent.setup();
+    render(<QLinkEditMode />);
+    await user.selectOptions(screen.getByTestId('qlink-param-0'), 'transport.swing');
+    expect(useHardwareStore.getState().qLinkBindings[0]).toMatchObject({
+      targetParameterPath: 'transport.swing',
+      minValue: 50,
+      maxValue: 75,
+    });
+  });
+
+  it('offers the selected pad’s sound-design leaves (spec §10.3 pad mode)', async () => {
+    useProgramStore.setState({
+      programs: {
+        'prog-1': { ...createDefaultDrumProgram('Kit', 'prog-1'), pads: [createDefaultPad(0)] },
+      },
+      activeProgramId: 'prog-1',
+      activePadId: 0,
+    });
+    const user = userEvent.setup();
+    render(<QLinkEditMode />);
+    await user.selectOptions(
+      screen.getByTestId('qlink-param-0'),
+      'program:prog-1.pad:0.filter.cutoff',
+    );
+    expect(useHardwareStore.getState().qLinkBindings[0]).toMatchObject({
+      targetParameterPath: 'program:prog-1.pad:0.filter.cutoff',
+      targetStore: 'program',
+    });
   });
 
   it('labels every binding control for assistive technology (spec §8.2)', () => {
