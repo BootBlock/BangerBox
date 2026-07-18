@@ -182,12 +182,15 @@ class FakeAudioBufferSourceNode extends FakeAudioNode {
   constructor(context: FakeAudioContext) {
     super(context, 'bufferSource');
   }
+  /** `when` of the `stop()` call, so a fade-then-stop is assertable — spec §5.4. */
+  stopWhen: number | undefined;
   start(when?: number, offset?: number, duration?: number): void {
     this.started = true;
     this.startArgs = { when, offset, duration };
   }
-  stop(_when?: number): void {
+  stop(when?: number): void {
     this.stopped = true;
+    this.stopWhen = when;
   }
 }
 
