@@ -31,6 +31,9 @@ const DIST = resolve(root, 'dist');
 const BASE = '/BangerBox/';
 const PORT = 5297;
 const headed = process.argv.includes('--headed');
+// Where the per-document isolation log lives inside the page. Namespaced away from the
+// bootstrap's own sessionStorage reload guard.
+const ISOLATION_LOG_KEY = '__bangerbox_smoke_isolation__';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -97,8 +100,27 @@ async function withServer({ blockServiceWorker }, fn) {
   try {
     return await fn(page, { pageErrors, consoleErrors });
   } finally {
-    await browser.close();
-    await new Promise((r) => server.close(r));
+    // Both teardowns always run: a browser that fails to close must not leave the port
+    // held, or the next local run contends with this one's leftovers.
+    await browser.close().catch(() => {});
+    await new Promise((r) => server.close(() => r()));
+  }
+}
+
+/**
+ * Runs one scenario, converting any throw into a recorded failure. The scenarios are
+ * independent regression guards — B in particular guards §14 2026-07-18 (m) item 4 — so a
+ * fault in one must never stop the other from running.
+ */
+async function scenario(name, options, fn) {
+  try {
+    await withServer(options, fn);
+  } catch (error) {
+    record(
+      `scenario ${name} ran to completion`,
+      false,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
@@ -110,9 +132,21 @@ if (!existsSync(join(DIST, 'index.html'))) {
 console.log(`Pages smoke — serving dist/ at http://localhost:${PORT}${BASE} with NO COOP/COEP\n`);
 
 console.log('Scenario A — service worker available (the real Pages deploy)');
-await withServer({ blockServiceWorker: false }, async (page, { pageErrors, consoleErrors }) => {
+await scenario('A', { blockServiceWorker: false }, async (page, { pageErrors, consoleErrors }) => {
+  // `crossOriginIsolated` is recorded from inside the page, once per document, before any
+  // page script runs. Asking for it from the outside after `goto` races the bootstrap's
+  // reload: when the reload wins, `evaluate` either throws (context destroyed) or reports
+  // the *second* document's `true`, failing a check on an app that behaved perfectly.
+  await page.addInitScript((key) => {
+    try {
+      const log = JSON.parse(sessionStorage.getItem(key) ?? '[]');
+      log.push(window.crossOriginIsolated);
+      sessionStorage.setItem(key, JSON.stringify(log));
+    } catch {
+      // sessionStorage unavailable — the log check below will report the gap.
+    }
+  }, ISOLATION_LOG_KEY);
   await page.goto(`http://localhost:${PORT}${BASE}`, { waitUntil: 'load' });
-  record('first load is not yet isolated', (await page.evaluate(() => window.crossOriginIsolated)) === false);
 
   let isolated = false;
   const deadline = Date.now() + 30_000;
@@ -124,6 +158,12 @@ await withServer({ blockServiceWorker: false }, async (page, { pageErrors, conso
       // navigating mid-reload
     }
   }
+
+  const log = await page.evaluate(
+    (key) => JSON.parse(sessionStorage.getItem(key) ?? '[]'),
+    ISOLATION_LOG_KEY,
+  );
+  record('first load is not yet isolated', log[0] === false, `documents: ${JSON.stringify(log)}`);
   record('service worker reload achieves cross-origin isolation', isolated);
 
   const text = await page.evaluate(() => document.body.innerText);
@@ -133,7 +173,7 @@ await withServer({ blockServiceWorker: false }, async (page, { pageErrors, conso
 });
 
 console.log('\nScenario B — cannot isolate at all (unsupported browser)');
-await withServer({ blockServiceWorker: true }, async (page, { pageErrors }) => {
+await scenario('B', { blockServiceWorker: true }, async (page, { pageErrors }) => {
   await page.goto(`http://localhost:${PORT}${BASE}`, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 2500));
   const text = await page.evaluate(() => document.body.innerText.trim());
