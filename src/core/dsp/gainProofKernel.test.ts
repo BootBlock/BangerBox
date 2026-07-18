@@ -1,25 +1,11 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { loadBuiltKernel } from '@/test/wasmKernel';
 import { GainProofKernel } from './gainProofKernel';
-
-// Vitest serves modules under a non-file URL scheme, so the artefact path is resolved
-// from the working directory (always the project root under `npm run test`).
-const projectRoot = process.cwd();
-const wasmPath = resolve(projectRoot, 'src/core/dsp/dist/gainProof.wasm');
 
 let module: WebAssembly.Module;
 
 beforeAll(() => {
-  // The wasm artefact is gitignored (spec §2.5); build it on demand so the unit suite
-  // is self-sufficient on a fresh checkout.
-  if (!existsSync(wasmPath)) {
-    execFileSync(process.execPath, [resolve(projectRoot, 'scripts/build-wasm.mjs')], {
-      stdio: 'inherit',
-    });
-  }
-  module = new WebAssembly.Module(readFileSync(wasmPath));
+  module = loadBuiltKernel('gainProof');
 });
 
 describe('GainProofKernel — §5.6.1 kernel seam over the built wasm artefact', () => {
