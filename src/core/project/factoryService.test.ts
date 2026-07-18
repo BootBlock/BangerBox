@@ -40,10 +40,12 @@ const sampleCreate = vi.fn();
 const sampleRemove = vi.fn();
 /** Global-library lookup (spec §9.8 de-duplication) — `undefined` means "not installed yet". */
 const getGlobalByPath = vi.fn();
+/** Every program payload in the DB — the §8.5.7 "is this shared sample still played?" question. */
+const allPayloads = vi.fn<() => Promise<string[]>>();
 const installUnpackedAsNewProject = vi.fn();
 vi.mock('./projectService', () => ({
   getActiveRepositories: () => ({
-    programs: { create: programCreate, remove: programRemove },
+    programs: { create: programCreate, remove: programRemove, allPayloads },
     samples: { create: sampleCreate, remove: sampleRemove, getGlobalByPath },
   }),
   installUnpackedAsNewProject: (unpacked: unknown, options: unknown) =>
@@ -56,7 +58,7 @@ vi.mock('./packClient', () => ({
 }));
 
 const { FactoryStorageError, fetchFactoryCatalogue, installFactoryPack } = await import('./factoryService');
-const { useProgramStore } = await import('@/store');
+const { useProgramStore, useUIStore, useUndoStore, clearUndoHistory } = await import('@/store');
 
 function pack(overrides: Record<string, unknown> = {}) {
   return {
@@ -98,8 +100,11 @@ beforeEach(() => {
   sampleRemove.mockResolvedValue(undefined);
   // Default: nothing is in the global library, so every sample is a fresh write.
   getGlobalByPath.mockResolvedValue(undefined);
+  // Default: no program anywhere references anything, so an undo may reclaim every sample.
+  allPayloads.mockResolvedValue([]);
   installUnpackedAsNewProject.mockResolvedValue('new-project-id');
   useProgramStore.getState().setPrograms({});
+  clearUndoHistory();
 });
 
 describe('catalogue fetch (spec §9.8)', () => {
@@ -223,6 +228,120 @@ describe('kit merge (spec §9.8)', () => {
     stubFetch(archiveFor('kit-808.mpcweb'));
     await expect(installFactoryPack(pack(), null)).rejects.toThrow(/open a project/i);
     expect(writeFileAtomic).not.toHaveBeenCalled();
+  });
+});
+
+describe('kit merge undo (spec §4.5, §9.8)', () => {
+  /**
+   * The undo/redo legs reach OPFS and SQLite, so the §4.5 stack's synchronous `undo()` only
+   * STARTS them. Settle that work before asserting.
+   */
+  async function settle(): Promise<void> {
+    await vi.waitFor(() => expect(allPayloads).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it('records one entry for the whole merge, named after the pack', async () => {
+    stubFetch(archiveFor('kit-808.mpcweb'));
+    await installFactoryPack(pack(), ACTIVE_PROJECT);
+
+    // One step, not one per program: the merge is a single thing the user did (spec §4.5).
+    expect(useUndoStore.getState().undoDepth).toBe(1);
+    expect(useUndoStore.getState().undoLabel).toBe('Install “808 Kit”');
+  });
+
+  it('leaves no undo entry for a demo, which installs into a project of its own', async () => {
+    stubFetch(archiveFor('demo-house.mpcweb'));
+    await installFactoryPack(pack({ kind: 'demo', file: 'demo-house.mpcweb' }), ACTIVE_PROJECT);
+
+    // Nothing in the user's project changed, so there is nothing to take back (spec §9.8).
+    expect(useUndoStore.getState().undoDepth).toBe(0);
+  });
+
+  it('takes back the programs and the audio it wrote', async () => {
+    stubFetch(archiveFor('kit-808.mpcweb'));
+    const total = unpackMpcweb(archiveFor('kit-808.mpcweb')).snapshot.samples.length;
+    await installFactoryPack(pack(), ACTIVE_PROJECT);
+    const written = writeFileAtomic.mock.calls.map(([path]) => path);
+
+    useUndoStore.getState().undo();
+    await settle();
+
+    expect(Object.keys(useProgramStore.getState().programs)).toHaveLength(0);
+    expect(programRemove).toHaveBeenCalledTimes(1);
+    // The quota the install consumed is given back — that is half of why a mis-tap hurts.
+    expect(sampleRemove).toHaveBeenCalledTimes(total);
+    expect(deleteFile.mock.calls.map(([path]) => path).sort()).toEqual(written.sort());
+  });
+
+  it('keeps audio another program has since adopted (spec §8.5.7)', async () => {
+    stubFetch(archiveFor('kit-808.mpcweb'));
+    await installFactoryPack(pack(), ACTIVE_PROJECT);
+    const kept = sampleCreate.mock.calls[0]![0] as { id: string; opfs_path: string };
+
+    // A demo installed after the kit REUSED this stored copy rather than writing a second one,
+    // so the kit's record no longer means the kit is its only owner.
+    allPayloads.mockResolvedValue([JSON.stringify({ pads: [{ sampleId: kept.id }] })]);
+
+    useUndoStore.getState().undo();
+    await settle();
+
+    // Deleting it would silence the other pack — data loss, not cleanup.
+    expect(sampleRemove.mock.calls.map(([id]) => id)).not.toContain(kept.id);
+    expect(deleteFile.mock.calls.map(([path]) => path)).not.toContain(kept.opfs_path);
+  });
+
+  it('restores the merge on redo', async () => {
+    stubFetch(archiveFor('kit-808.mpcweb'));
+    const total = unpackMpcweb(archiveFor('kit-808.mpcweb')).snapshot.samples.length;
+    await installFactoryPack(pack(), ACTIVE_PROJECT);
+    const installedPrograms = Object.keys(useProgramStore.getState().programs);
+
+    useUndoStore.getState().undo();
+    await settle();
+    vi.clearAllMocks();
+    getGlobalByPath.mockResolvedValue(undefined);
+    useUndoStore.getState().redo();
+    await vi.waitFor(() => expect(programCreate).toHaveBeenCalled());
+
+    // Same ids as the first install — a redo replays the retained record rather than
+    // re-planning, which would mint fresh ones and orphan the undo entry.
+    expect(Object.keys(useProgramStore.getState().programs)).toEqual(installedPrograms);
+    expect(writeFileAtomic).toHaveBeenCalledTimes(total);
+    expect(sampleCreate).toHaveBeenCalledTimes(total);
+  });
+
+  it('does not re-write audio that is already stored again on redo', async () => {
+    stubFetch(archiveFor('kit-808.mpcweb'));
+    await installFactoryPack(pack(), ACTIVE_PROJECT);
+
+    useUndoStore.getState().undo();
+    await settle();
+    vi.clearAllMocks();
+    // Between the undo and the redo, another install put this content back at the same
+    // content-addressed path (spec §9.8) — so this redo owns none of it.
+    getGlobalByPath.mockImplementation((path: string) => Promise.resolve({ id: 'x', opfs_path: path }));
+    useUndoStore.getState().redo();
+    await vi.waitFor(() => expect(programCreate).toHaveBeenCalled());
+
+    expect(writeFileAtomic).not.toHaveBeenCalled();
+    expect(sampleCreate).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed undo rather than leaving it silent', async () => {
+    stubFetch(archiveFor('kit-808.mpcweb'));
+    await installFactoryPack(pack(), ACTIVE_PROJECT);
+    allPayloads.mockRejectedValue(new Error('db gone'));
+
+    useUndoStore.getState().undo();
+
+    // The §4.5 stack is synchronous and has already moved the entry, so the only honest
+    // signal left is a toast — silence would read as "undone".
+    await vi.waitFor(() =>
+      expect(
+        useUIStore.getState().toasts.some((toast) => /could not fully remove/i.test(toast.message)),
+      ).toBe(true),
+    );
   });
 });
 
