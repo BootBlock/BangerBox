@@ -11,7 +11,7 @@ import { getActiveRepositories, getAudioEngine, projectService } from '@/core/pr
 import { bounceActiveSequence } from '@/core/audio/bounceService';
 import { importAudioFile } from '@/core/audio/sampleImport';
 import { deleteFile, projectSamplesRoot, readFile } from '@/core/storage/opfs';
-import { useBrowserStore, useProjectStore, useUIStore } from '@/store';
+import { BROWSER_INITIAL_PATH, useBrowserStore, useProjectStore, useUIStore } from '@/store';
 import { Toggle } from '@/ui/primitives';
 import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
 import { FactorySection } from './FactorySection';
@@ -57,6 +57,9 @@ export function BrowserPanel() {
 
   // The list follows the selected node (spec §8.5.7); `refreshSamples` reads the path itself.
   useEffect(() => {
+    // On first render the store still holds its placeholder path and the effect above is about
+    // to point it at the project — querying now would only repeat itself a tick later.
+    if (projectId && currentPath === BROWSER_INITIAL_PATH) return;
     void refreshSamples();
   }, [currentPath, projectId]);
 

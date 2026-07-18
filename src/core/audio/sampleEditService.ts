@@ -34,15 +34,24 @@ export async function readSampleChannels(
   return { channels: decoded.channels, sampleRate: decoded.sampleRate };
 }
 
-/** Write processed channels as a new OPFS sample + row (spec §8.5.4 non-destructive result). */
+/**
+ * Write processed channels as a new OPFS sample + row (spec §8.5.4 non-destructive result).
+ *
+ * The result inherits the SOURCE sample's scope (spec §9.3): editing a global-library sample
+ * yields a global-library sample. Filing it under the active project instead would drop it out
+ * of the library the user is looking at, and would tie a shared sample's derivative to the
+ * lifetime of whichever project happened to be open.
+ */
 function writeNewSample(
+  source: SampleRow,
   channels: Float32Array[],
   sampleRate: number,
   name: string,
   tags: readonly string[],
   ctx: EditContext,
 ): Promise<SampleRow> {
-  return saveChannelsAsSample(channels, sampleRate, name, ['edited', ...tags], ctx);
+  const scope = source.project_id === null ? 'global' : 'project';
+  return saveChannelsAsSample(channels, sampleRate, name, ['edited', ...tags], { ...ctx, scope });
 }
 
 /** Apply a pure channel transform (Normalise/Reverse/Trim/Fade) to a new sample (spec §8.5.4). */
@@ -54,6 +63,7 @@ export async function applyEditToNewSample(
 ): Promise<SampleRow> {
   const { channels, sampleRate } = await readSampleChannels(row);
   return writeNewSample(
+    row,
     transform(channels),
     sampleRate,
     `${row.name} (${label})`,
@@ -74,7 +84,7 @@ export async function stretchSampleToNewSample(
   const kernel = GranularStretchKernel.fromModule(module, sampleRate, maxInput);
   try {
     const rendered = channels.map((channel) => kernel.render(channel, params));
-    return await writeNewSample(rendered, sampleRate, `${row.name} (stretch)`, ['stretch'], ctx);
+    return await writeNewSample(row, rendered, sampleRate, `${row.name} (stretch)`, ['stretch'], ctx);
   } finally {
     kernel.destroy();
   }
@@ -105,7 +115,9 @@ export async function chopSampleToNewSamples(
   for (let i = 0; i < regions.length; i++) {
     const { startFrame, endFrame } = regions[i]!;
     const sliceChannels = channels.map((channel) => channel.slice(startFrame, endFrame));
-    rows.push(await writeNewSample(sliceChannels, sampleRate, `${row.name} chop ${i + 1}`, ['chop'], ctx));
+    rows.push(
+      await writeNewSample(row, sliceChannels, sampleRate, `${row.name} chop ${i + 1}`, ['chop'], ctx),
+    );
   }
   return rows;
 }
