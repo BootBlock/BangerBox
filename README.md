@@ -61,20 +61,36 @@ server, and opens the browser against a concrete loopback address.
 
 ## Scripts
 
-| Script               | Purpose                                                    |
-| -------------------- | ---------------------------------------------------------- |
-| `npm run dev`        | Vite dev server with COOP/COEP headers                     |
-| `npm run build`      | Build the WASM kernels, type-check, and produce the bundle |
-| `npm run preview`    | Serve the production build locally                         |
-| `npm run build:wasm` | Compile the AssemblyScript DSP kernels via `asc`           |
-| `npm test`           | Vitest unit suite (`happy-dom`)                            |
-| `npm run test:e2e`   | Playwright smoke test on the system-installed Edge         |
-| `npm run lint`       | ESLint                                                     |
-| `npm run type-check` | TypeScript project references, no emit                     |
-| `npm run verify`     | Dependency, language, and stub enforcement checks          |
+| Script               | Purpose                                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| `npm run dev`        | Vite dev server with COOP/COEP headers                              |
+| `npm run build`      | Build the WASM kernels, type-check, and produce the bundle          |
+| `npm run preview`    | Serve the production build locally                                  |
+| `npm run build:wasm` | Compile the AssemblyScript DSP kernels via `asc`                    |
+| `npm test`           | Vitest unit suite (`happy-dom`)                                     |
+| `npm run test:e2e`   | Playwright smoke test on the system-installed Edge                  |
+| `npm run test:pages` | Pages smoke: isolation via the service worker on a header-less host |
+| `npm run lint`       | ESLint                                                              |
+| `npm run type-check` | TypeScript project references, no emit                              |
+| `npm run verify`     | Dependency, language, and stub enforcement checks                   |
 
 The `verify` script enforces project invariants mechanically: the dependency surface is closed to a
 fixed allowlist, all identifiers and prose use British English, and no unresolved stubs remain.
+
+## Running it hosted
+
+A build is published to GitHub Pages at **https://bootblock.github.io/BangerBox/** — open it in
+Chromium and install it from the address bar if you want it as a standalone app. Deployment is
+manual: the _Deploy to GitHub Pages_ workflow runs only via **Actions → Run workflow**, so
+publishing is a deliberate act rather than a consequence of merging.
+
+Getting a PWA that needs `SharedArrayBuffer` onto a static host takes a small amount of
+machinery, because GitHub Pages cannot send the COOP/COEP headers cross-origin isolation
+requires. The service worker adds those headers to everything it serves, and
+[public/coi-bootstrap.js](public/coi-bootstrap.js) registers that worker and reloads once so the
+first visit becomes isolated too. `npm run test:pages` exercises exactly this against a
+deliberately header-less server. Local development is unaffected — the Vite dev and preview
+servers send the headers directly, and the base path only changes for the Pages build.
 
 ## Architecture
 

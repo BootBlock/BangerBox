@@ -41,6 +41,7 @@
     "test:watch": "vitest",
     "test:e2e": "node scripts/browser-smoke.mjs",
     "test:e2e:quick": "node scripts/browser-smoke.mjs --dev-only",
+    "test:pages": "node scripts/pages-smoke.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "type-check": "tsc -b --noEmit",

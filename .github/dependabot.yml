@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # App dependencies. NOTE: spec §2.2 defines a CLOSED dependency surface enforced by
+  # `npm run check:deps` — Dependabot may bump versions but a PR that ADDS a package
+  # will fail that check by design. Close such PRs rather than widening the matrix.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Fold routine minor/patch bumps into one PR to keep the noise down; majors still
+      # arrive individually so each can be reviewed on its own merits.
+      npm-minor-patch:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+    ignore:
+      # Pinned deliberately — jsx-a11y caps at ESLint 9 and typescript-eslint caps at
+      # TS < 6.1. Revisit when those plugins catch up; bumping either breaks the lint run.
+      - dependency-name: eslint
+        update-types: ['version-update:semver-major']
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+
+  # Keep the actions used by the workflows current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

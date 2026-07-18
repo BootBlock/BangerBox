@@ -139,8 +139,24 @@ const sequenceMetaSchema = z.object({
   tempo: z.number().nullable(),
 });
 
+/**
+ * Validate the playhead SAB without dereferencing the global at module-evaluation time.
+ *
+ * `z.instanceof(SharedArrayBuffer)` reads the binding as this module is imported, and
+ * `SharedArrayBuffer` is UNDEFINED in a context that is not cross-origin isolated — so
+ * merely importing this file threw a ReferenceError there, taking down the whole entry
+ * bundle before `main.tsx` could run. That turned every unsupported browser, and the
+ * first (pre-service-worker) load on a static host, into a blank page instead of the
+ * §2.1 capability gate that is supposed to explain the problem. Checking `typeof` first
+ * keeps the schema inert until something actually validates a message.
+ */
+const playheadSabSchema = z.custom<SharedArrayBuffer>(
+  (value) => typeof SharedArrayBuffer !== 'undefined' && value instanceof SharedArrayBuffer,
+  { message: 'Expected a SharedArrayBuffer' },
+);
+
 const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('init'), playheadSab: z.instanceof(SharedArrayBuffer) }),
+  z.object({ kind: z.literal('init'), playheadSab: playheadSabSchema }),
   z.object({ kind: z.literal('clockSync'), contextTime: z.number(), performanceTime: z.number() }),
   z.object({
     kind: z.literal('transport'),

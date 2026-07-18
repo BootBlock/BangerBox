@@ -18,6 +18,13 @@
       }
     </style>
     <title>BangerBox</title>
+    <!--
+      Cross-origin isolation bootstrap — must run before src/main.tsx, which runs the
+      capability gate. On a static host (GitHub Pages) this registers the service worker
+      that supplies COOP/COEP and reloads once; locally it is a no-op because the dev
+      server already sets those headers. See public/coi-bootstrap.js.
+    -->
+    <script src="./coi-bootstrap.js"></script>
   </head>
   <body>
     <div id="root"></div>

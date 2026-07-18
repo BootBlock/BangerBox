@@ -16,12 +16,22 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
  * Cross-origin isolation headers — spec §2.3.1. SharedArrayBuffer and the SQLite OPFS
  * VFS require a cross-origin-isolated context; the canonical execution environment is
  * `npm run dev` / `npm run preview`, so both servers set the headers directly (locked
- * decision §1.3 #14 — no static-host header injection is in scope).
+ * decision §1.3 #14). On a static host that cannot send headers — GitHub Pages — the
+ * service worker injects the same three headers instead (src/sw.ts).
  */
 const crossOriginIsolationHeaders = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
 } as const;
+
+/**
+ * Public base path. Defaults to '/' so the canonical local-first environment (§1.3 #14)
+ * is unchanged: `npm run dev`, `npm run preview`, Run.ps1 and the browser smoke all keep
+ * serving from the root. The Pages deploy workflow sets BANGERBOX_BASE=/BangerBox/ for
+ * its build only — a project Pages site is served from a repository subpath, and the
+ * manifest `id`/`scope`/`start_url` must track it or the PWA will not install.
+ */
+const BASE = process.env.BANGERBOX_BASE ?? '/';
 
 // Dark theme colour for the manifest/splash — mirrors the `--color-bb-bg` design token
 // in src/styles/index.css (spec §2.4: manifest colours match the design tokens).
@@ -29,6 +39,8 @@ const THEME_COLOUR = '#141317';
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: BASE,
+
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
@@ -54,10 +66,11 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
       },
       manifest: {
-        // spec §2.4 — id/scope/start_url '/'; landscape tablet form factor; en-GB.
-        id: '/',
-        scope: '/',
-        start_url: '/',
+        // spec §2.4 — id/scope/start_url track the base path (see BASE above); landscape
+        // tablet form factor; en-GB.
+        id: BASE,
+        scope: BASE,
+        start_url: BASE,
         name: 'BangerBox',
         short_name: 'BangerBox',
         description: 'BangerBox — an offline-first, browser-based DAW, sequencer, and sampler.',

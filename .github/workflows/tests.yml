@@ -1,0 +1,93 @@
+name: Tests
+
+# Runs on every push to main and on pull requests. Node 25 throughout: package.json
+# `engines` requires >= 24, the dev machine runs 25 (spec §1.3 #2), and pinning the
+# same major here means `npm ci` resolves the committed lockfile identically.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least-privilege: these jobs only read the checkout.
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Type-check, lint & project checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 25
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Cheapest, highest-signal first: types, then lint, then the project's own
+      # invariant checks (closed dependency surface, British English, no open stubs).
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Project checks (deps, language, stubs)
+        run: npm run verify
+
+      # NOTE: `npm run format:check` is deliberately not run yet — 25 tracked files
+      # predate it and fail. Re-enable this step as part of the formatting cleanup so
+      # CI goes green in the same commit that fixes them.
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 25
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The DSP kernels are gitignored build artefacts and the golden-output tests load
+      # them from disk, so five test files fail without this. `npm test` does not build
+      # them; this step must come first.
+      - name: Build the WASM DSP kernels
+        run: npm run build:wasm
+
+      - name: Run unit tests
+        run: npm test
+
+  build:
+    name: Production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 25
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Proves the shipped artefact still builds (kernels + tsc -b + vite build). The
+      # Playwright browser smoke is NOT run here: it drives the system-installed Edge
+      # (`channel: 'msedge'`, spec §1.3 #13) rather than downloading a browser, so it
+      # belongs on the Windows dev machine, not an ubuntu runner.
+      - name: Build
+        run: npm run build

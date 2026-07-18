@@ -2,15 +2,18 @@
 /**
  * BangerBox service worker — vite-plugin-pwa `injectManifest` strategy (spec §2.4).
  *
- * One custom worker, one responsibility: offline-first precaching of the static app
- * shell with an offline navigation fallback. Updates are prompt-based — a new build
- * installs but stays waiting until the user accepts the "Reload to update" toast, so
- * the page never reloads out from under an unsaved project.
+ * One custom worker, two responsibilities:
+ *   1. Offline-first precaching of the static app shell, with an offline navigation
+ *      fallback. Updates are prompt-based — a new build installs but stays waiting until
+ *      the user accepts the "Reload to update" toast, so the page never reloads out from
+ *      under an unsaved project.
+ *   2. Injecting the cross-origin isolation headers on every response it serves, so
+ *      SharedArrayBuffer and the SQLite OPFS VFS work on a static host that cannot send
+ *      headers of its own — GitHub Pages (spec §1.3 #14, §14 2026-07-18 (m)). Locally
+ *      the dev/preview server already sets them and this is simply idempotent.
  *
  * The SW MUST NOT intercept OPFS or blob URLs; it caches only the static app shell and
- * audio data never transits it (spec §2.4). Cross-origin isolation comes from the
- * dev/preview server headers (locked decision §1.3 #14) — precached responses retain
- * those headers, so the offline shell stays isolated too.
+ * audio data never transits it (spec §2.4).
  */
 
 interface PrecacheEntry {
@@ -93,19 +96,33 @@ sw.addEventListener('fetch', (event) => {
 const MATCH_OPTIONS: CacheQueryOptions = { ignoreSearch: true, ignoreVary: true };
 
 /**
- * A worker's `self.location` comes from the RESPONSE URL, not the request URL. An
- * `ignoreSearch` cache hit returns the query-less stored response, which silently
- * strips `?vfs=opfs` from sqlite-wasm's OPFS async-proxy worker offline and breaks
- * the whole database (the proxy throws "Expecting vfs=… URL argument"). Re-wrapping
- * the body in a fresh Response clears `response.url`, making the browser fall back
- * to the request URL — query preserved.
+ * Re-wrap a response with the cross-origin isolation headers (spec §1.3 #14).
+ *
+ * COOP/COEP are what make `crossOriginIsolated` true, which the §2.1 capability gate
+ * treats as a HARD requirement; CORP is set so the app's own subresources remain
+ * loadable under `require-corp`.
+ *
+ * This also subsumes the response-URL fix that used to live in `preserveRequestUrl`: a
+ * worker's `self.location` comes from the RESPONSE URL, not the request URL, so an
+ * `ignoreSearch` cache hit would otherwise strip `?vfs=opfs` from sqlite-wasm's OPFS
+ * async-proxy worker offline and break the whole database (the proxy throws "Expecting
+ * vfs=… URL argument"). Constructing a fresh Response clears `response.url`, making the
+ * browser fall back to the request URL with its query intact.
  */
-function preserveRequestUrl(cached: Response, request: Request): Response {
-  if (cached.url === '' || cached.url === request.url) return cached;
-  return new Response(cached.body, {
-    status: cached.status,
-    statusText: cached.statusText,
-    headers: cached.headers,
+function withIsolationHeaders(response: Response): Response {
+  // Opaque and error responses have an immutable, unreadable body — rewrapping one
+  // would replace a real cross-origin result with a broken same-origin copy.
+  if (response.status === 0 || response.type === 'opaque' || response.type === 'opaqueredirect') {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+  headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
   });
 }
 
@@ -115,20 +132,20 @@ async function respond(request: Request): Promise<Response> {
   // App navigations resolve to the precached shell (offline-first).
   if (request.mode === 'navigate') {
     const index = await cache.match(INDEX_URL, MATCH_OPTIONS);
-    if (index) return index;
+    if (index) return withIsolationHeaders(index);
   }
 
   const cached = await cache.match(request, MATCH_OPTIONS);
-  if (cached) return preserveRequestUrl(cached, request);
+  if (cached) return withIsolationHeaders(cached);
 
   try {
-    return await fetch(request);
+    return withIsolationHeaders(await fetch(request));
   } catch {
     // The shell fallback applies to NAVIGATIONS only — serving index.html for a failed
     // script/asset request would hand a module loader text/html (strict MIME failure).
     if (request.mode === 'navigate') {
       const fallback = await cache.match(INDEX_URL, MATCH_OPTIONS);
-      if (fallback) return fallback;
+      if (fallback) return withIsolationHeaders(fallback);
     }
     return Response.error();
   }
