@@ -85,12 +85,19 @@ export interface FactoryInstallResult {
   tracksAfter: number;
   songEntriesBefore: number;
   songEntriesAfter: number;
-  /** Every merged sample's WAV is readable back from OPFS at its recorded path (§9.1). */
+  /** Every installed sample's WAV is readable back from OPFS at its recorded path (§9.1). */
   mergedSamplesReadable: boolean;
   /** A demo pack opens as a NEW, playable project (spec §9.8). */
   demoOpenedNewProject: boolean;
   demoSequences: number;
   demoSamples: number;
+  /**
+   * Global-library sample counts after installing a kit, then after installing the demo that
+   * plays it. They must be EQUAL: the demo ships the same audio, so it stores none of its own
+   * (spec §9.8 de-duplication, §9.1).
+   */
+  globalAfterKit: number;
+  globalAfterDemo: number;
 }
 
 declare global {
@@ -309,16 +316,26 @@ async function factoryInstallProof(): Promise<FactoryInstallResult> {
     };
   };
 
+  const globalSampleCount = async () =>
+    (await sampleEditContext().repos.samples.listGlobal({ limit: 1_000 })).rows.length;
+
+  // Pair a kit with the demo that PLAYS it, so the second install is the de-duplication case
+  // (spec §9.8). An unrelated pair would install disjoint audio and prove nothing.
+  const kit = kits.find((pack) => pack.id === 'kit-808') ?? kits[0]!;
+  const demoPack = demos.find((pack) => pack.id === 'demo-song') ?? demos[0]!;
+
   const activeId = before.projectId;
   const start = await count(activeId);
-  await installFactoryPack(kits[0]!, activeId);
+  await installFactoryPack(kit, activeId);
   const merged = await count(activeId);
+  const globalAfterKit = await globalSampleCount();
 
-  // Every merged sample must actually be on disk at the path its row records (spec §9.1).
+  // Every installed sample must actually be on disk at the path its row records (spec §9.1) —
+  // read back from the GLOBAL library, which is where factory audio now lives.
   const ctx = sampleEditContext();
-  const mergedSamples = await ctx.repos.samples.listByProject(activeId);
-  let mergedSamplesReadable = true;
-  for (const row of mergedSamples.rows) {
+  const globalSamples = await ctx.repos.samples.listGlobal({ limit: 1_000 });
+  let mergedSamplesReadable = globalSamples.rows.length > 0;
+  for (const row of globalSamples.rows) {
     try {
       const file = await readFile(row.opfs_path);
       if (file.size === 0) mergedSamplesReadable = false;
@@ -327,8 +344,9 @@ async function factoryInstallProof(): Promise<FactoryInstallResult> {
     }
   }
 
-  const demoResult = await installFactoryPack(demos[0]!, activeId);
+  const demoResult = await installFactoryPack(demoPack, activeId);
   const demo = await count(demoResult.projectId);
+  const globalAfterDemo = await globalSampleCount();
 
   return {
     catalogueSize: catalogue.length,
@@ -348,6 +366,8 @@ async function factoryInstallProof(): Promise<FactoryInstallResult> {
     demoOpenedNewProject: demoResult.projectId !== activeId,
     demoSequences: demo.sequences,
     demoSamples: demo.samples,
+    globalAfterKit,
+    globalAfterDemo,
   };
 }
 

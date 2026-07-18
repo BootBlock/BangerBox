@@ -28,8 +28,10 @@ import { chromium } from 'playwright';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const viteBin = resolve(root, 'node_modules/vite/bin/vite.js');
-const DEV_PORT = 5199;
-const PREVIEW_PORT = 5198;
+// Overridable because the defaults are not reserved: another project listening on 5199 fails
+// this smoke in a way that looks like a BangerBox fault rather than a port collision.
+const DEV_PORT = Number(process.env.BANGERBOX_SMOKE_PORT ?? 5199);
+const PREVIEW_PORT = Number(process.env.BANGERBOX_SMOKE_PREVIEW_PORT ?? 5198);
 const DEV_URL = `http://localhost:${DEV_PORT}/`;
 const PREVIEW_URL = `http://localhost:${PREVIEW_PORT}/`;
 const headed = process.argv.includes('--headed');
@@ -417,8 +419,18 @@ async function assertShellAndSelfTest(page, label) {
       }
       // A kit contributes sound...
       if (!(r.programsAfter > r.programsBefore)) throw new Error('kit merge added no program');
-      if (!(r.samplesAfter > r.samplesBefore)) throw new Error('kit merge added no samples');
-      if (!r.mergedSamplesReadable) throw new Error('a merged sample is missing or empty in OPFS (§9.1)');
+      if (!(r.globalAfterKit > 0)) throw new Error('kit merge installed no samples (§9.1, §9.8)');
+      if (!r.mergedSamplesReadable) throw new Error('an installed sample is missing or empty in OPFS (§9.1)');
+      // ...into the SHARED library, not the project: factory audio is content-addressed so a
+      // kit and the demo that plays it store one copy between them (spec §9.1, §9.8).
+      if (r.samplesAfter !== r.samplesBefore) {
+        throw new Error(`kit merge added project-scoped samples ${r.samplesBefore} → ${r.samplesAfter} (§9.8)`);
+      }
+      if (r.globalAfterDemo !== r.globalAfterKit) {
+        throw new Error(
+          `demo re-stored its kit's audio: global samples ${r.globalAfterKit} → ${r.globalAfterDemo} (§9.8)`,
+        );
+      }
       // ...and never arrangement: the active project's sequences, tracks and song are
       // exactly as they were (spec §9.8).
       if (r.sequencesAfter !== r.sequencesBefore) {
@@ -433,7 +445,11 @@ async function assertShellAndSelfTest(page, label) {
       // A demo opens as a new, populated project.
       if (!r.demoOpenedNewProject) throw new Error('demo pack did not open a new project');
       if (!(r.demoSequences >= 1)) throw new Error(`demo project has ${r.demoSequences} sequences — expected ≥ 1`);
-      if (!(r.demoSamples >= 1)) throw new Error(`demo project has ${r.demoSamples} samples — expected ≥ 1`);
+      // The demo's audio is in the shared library (asserted above), so the project itself owns
+      // no sample rows — its programs point at the global copies (spec §9.1, §9.8).
+      if (r.demoSamples !== 0) {
+        throw new Error(`demo project owns ${r.demoSamples} sample rows — expected 0, they are global (§9.8)`);
+      }
     });
   }
 }

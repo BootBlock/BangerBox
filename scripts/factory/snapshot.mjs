@@ -97,14 +97,21 @@ export function buildChannelStrip(packId, channelId, { level = 1, pan = 0, slots
 /**
  * Render one kit's samples to WAV bytes and their `samples` rows (spec §9.3). `opfs_path`
  * comes from the app's own §9.1 helper so it cannot drift; the install path rewrites it (§9.8).
+ *
+ * `sourceId` names the KIT the sounds belong to, which is not always the pack shipping them:
+ * a demo plays a kit it does not define. Both the sample id and the PRNG seed derive from it,
+ * so a demo renders byte-identical audio to the kit pack it draws on — which is what lets the
+ * install path recognise the two as the same sample and store it once (spec §9.1, §9.8).
+ * Seeding from the pack instead would produce a different noise realisation of the same sound
+ * and defeat de-duplication silently, since only bytes are compared.
  */
-export function renderSamples(packId, projectId, definitions, rngFor) {
+export function renderSamples(sourceId, projectId, definitions, rngFor) {
   const rows = [];
   const wavs = new Map();
   const resolved = [];
 
   for (const definition of definitions) {
-    const id = derivedId(`${packId}:sample:${definition.name}`);
+    const id = derivedId(`${sourceId}:sample:${definition.name}`);
     const channel = definition.build(rngFor(definition.name));
     const bytes = encodeWav([channel], SAMPLE_RATE, BIT_DEPTH);
     wavs.set(id, bytes);

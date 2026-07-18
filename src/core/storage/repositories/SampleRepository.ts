@@ -65,6 +65,21 @@ export class SampleRepository extends BaseRepository {
     return this.toPage(rows, limit, offset);
   }
 
+  /**
+   * The global-library sample stored at `opfsPath`, if one is (spec §9.8 de-duplication).
+   *
+   * Global paths are content-addressed (`globalContentPath`), so this answers "are these exact
+   * bytes already installed?" — the check that lets a second pack shipping the same audio reuse
+   * the existing row instead of writing a duplicate. Scoped to `project_id IS NULL` so a
+   * project-scoped row can never be mistaken for shared content.
+   */
+  getGlobalByPath(opfsPath: string): Promise<SampleRow | undefined> {
+    return this.driver.queryOne<SampleRow>(
+      'SELECT * FROM samples WHERE project_id IS NULL AND opfs_path = ?;',
+      [opfsPath],
+    );
+  }
+
   /** Samples carrying a tag (Browser tag chips — uses idx_sample_tags_tag). */
   async listByTag(tag: string, page: PageParams = {}): Promise<Page<SampleRow>> {
     const { limit, offset } = this.resolvePage(page);

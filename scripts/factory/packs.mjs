@@ -6,8 +6,11 @@
 // while still giving the pack something to play if it is opened directly.
 //
 // A DEMO pack is a complete project: sequences, tracks, events, automation and, for the
-// song demo, a song-mode arrangement (§7.9). Samples are duplicated per demo project, which
-// §9.8 accepts for v1 (`/global_library/` de-duplication is deferred).
+// song demo, a song-mode arrangement (§7.9). A demo embeds the audio of the kit it plays, so
+// it opens standalone without that kit installed — but it renders those samples under the
+// KIT's id (see `renderSamples`), making the bytes identical to the kit pack's. The install
+// path content-addresses them into `/global_library/` (§9.1), so a user who installs both a
+// kit and its demo stores one copy, not two (§9.8).
 import { createRng, derivedId, hashSeed } from './prng.mjs';
 import { KITS } from './kits.mjs';
 import {
@@ -175,7 +178,7 @@ function buildBoomBapDemo(appVersion) {
     rows: sampleRows,
     wavs,
     resolved,
-  } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
+  } = renderSamples(kit.id, projectId, kit.samples, rngFactory(kit.id));
 
   const program = buildDrumProgram(packId, 'Boom Bap Kit', resolved);
   const sequence = buildSequenceRow(packId, projectId, 0, 'Boom Bap', {
@@ -260,7 +263,7 @@ function buildHouseDemo(appVersion) {
     rows: sampleRows,
     wavs,
     resolved,
-  } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
+  } = renderSamples(kit.id, projectId, kit.samples, rngFactory(kit.id));
 
   const program = buildDrumProgram(packId, 'House Kit', resolved);
   const sequence = buildSequenceRow(packId, projectId, 0, 'House Groove', { lengthBars: 4, tempo: 124 });
@@ -364,7 +367,7 @@ function buildSongDemo(appVersion) {
     rows: sampleRows,
     wavs,
     resolved,
-  } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
+  } = renderSamples(kit.id, projectId, kit.samples, rngFactory(kit.id));
 
   const program = buildDrumProgram(packId, 'Song Kit', resolved);
   const pads = padIndexMap(resolved);

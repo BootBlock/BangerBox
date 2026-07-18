@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { buildFactory } from '../../../scripts/build-factory.mjs';
 import { parseFactoryCatalogue } from './factoryCatalogue';
 import { unpackMpcweb } from './mpcwebZip';
+import { contentHash } from './sampleSharing';
 import { programSchema } from './schemas';
 import { decodeWav } from '@/core/audio/wav';
 
@@ -194,5 +195,31 @@ describe('factory content shape (spec §9.8 "Content (v1)")', () => {
     const paths = new Set(snapshot.automation.map((point) => point.target_path));
     expect([...paths].some((path) => path.startsWith('mixer.') && path.endsWith('.level'))).toBe(true);
     expect([...paths].some((path) => path.startsWith('insert:') && path.endsWith('.cutoff'))).toBe(true);
+  });
+});
+
+/**
+ * De-duplication depends on a BUILD property that nothing else here would catch: a demo must
+ * render its kit's samples to the same bytes the kit pack ships. The install path compares
+ * content, so if a demo ever drifted to its own PRNG seed the sounds would still be right and
+ * every other test would still pass — the de-duplication would just silently stop happening.
+ */
+describe('demo packs share their kit’s audio byte-for-byte (spec §9.8, §9.1)', () => {
+  const digestsOf = async (file: string) => {
+    const { samples } = unpackMpcweb(built.archives.find((entry) => entry.file === file)!.bytes);
+    return new Set(await Promise.all([...samples.values()].map((bytes) => contentHash(bytes))));
+  };
+
+  it.each([
+    ['demo-boom-bap.mpcweb', 'kit-acoustic.mpcweb'],
+    ['demo-house.mpcweb', 'kit-909.mpcweb'],
+    ['demo-song.mpcweb', 'kit-808.mpcweb'],
+  ])('%s reuses every sample in %s', async (demo, kit) => {
+    const [demoDigests, kitDigests] = await Promise.all([digestsOf(demo), digestsOf(kit)]);
+
+    expect(kitDigests.size).toBeGreaterThan(0);
+    // Every sound the demo ships is one the kit already ships, so installing both stores one
+    // copy of each rather than two (spec §9.8 de-duplication).
+    for (const digest of demoDigests) expect(kitDigests).toContain(digest);
   });
 });

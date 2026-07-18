@@ -12,45 +12,25 @@
  * (spec §2.5, §11.1). It always runs on an already-UUID-remapped snapshot (§9.6), so the ids
  * it re-parents are guaranteed collision-free against the active project.
  */
-import { samplePath } from '@/core/storage/opfs';
 import type { ProjectSnapshot } from './mpcweb';
 
 /** The rows a kit merge contributes to the active project (spec §9.8). */
 export interface KitMerge {
   /** Program rows re-parented onto the active project. */
   readonly programs: ProjectSnapshot['programs'];
-  /** Sample rows re-parented, with OPFS paths rewritten under the active project (§9.1). */
-  readonly samples: ProjectSnapshot['samples'];
 }
 
 /**
- * Re-parent a remapped pack snapshot onto `projectId`, keeping only programs and samples.
+ * Re-parent a remapped pack snapshot's PROGRAMS onto `projectId` (spec §9.8).
  *
- * `remapSnapshot` rewrote every id — including the pack's own project id, which appears
- * inside each sample's `opfs_path`. That path must instead point under the ACTIVE project
- * (spec §9.1), so it is rebuilt from `samplePath` rather than patched, and never
- * hand-formatted at a call site.
+ * Only programs: a kit's samples are installed into the content-addressed global library
+ * rather than under the active project (spec §9.1, §9.8 de-duplication — see
+ * `sampleSharing.ts`), so nothing here rewrites a sample's `opfs_path`. The pads reference
+ * their samples by id, and `planSharedSamples` has already pointed those ids at whichever
+ * copy is stored, so the programs need no sample-side fixing up.
  */
 export function buildKitMerge(snapshot: ProjectSnapshot, projectId: string): KitMerge {
   return {
     programs: snapshot.programs.map((program) => ({ ...program, project_id: projectId })),
-    samples: snapshot.samples.map((sample) => ({
-      ...sample,
-      project_id: projectId,
-      opfs_path: samplePath(projectId, sample.id),
-    })),
   };
-}
-
-/**
- * Total uncompressed bytes a pack's samples will occupy in OPFS (spec §9.8 "Storage").
- *
- * The §9.7 hard stop is checked against THIS, not against the catalogue's `bytes` (the
- * compressed archive size) — a pack that deflates well would otherwise slip past a gate
- * meant to protect the quota it actually consumes once written.
- */
-export function uncompressedSampleBytes(samples: ReadonlyMap<string, Uint8Array>): number {
-  let total = 0;
-  for (const bytes of samples.values()) total += bytes.byteLength;
-  return total;
 }

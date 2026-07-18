@@ -21,10 +21,12 @@
  */
 import { checkWriteHeadroom } from '@/core/storage/safeguards';
 import { deleteFile, writeFileAtomic } from '@/core/storage/opfs';
+import type { Repositories } from '@/core/storage/repositories';
 import { programSchema } from './schemas';
 import { useProgramStore, useUIStore } from '@/store';
 import { parseFactoryCatalogue, type FactoryCatalogue, type FactoryPack } from './factoryCatalogue';
-import { buildKitMerge, uncompressedSampleBytes } from './factoryMerge';
+import { buildKitMerge } from './factoryMerge';
+import { planSharedSamples, type SharedSampleWrite } from './sampleSharing';
 import { remapSnapshot } from './mpcweb';
 import { unpackMpcwebInWorker } from './packClient';
 import { getActiveRepositories, installUnpackedAsNewProject } from './projectService';
@@ -97,13 +99,63 @@ async function fetchPack(pack: FactoryPack, signal?: AbortSignal): Promise<Unpac
 }
 
 /**
- * The §9.7 hard stop, checked against what the pack will actually occupy once written
+ * The §9.7 hard stop, checked against what the install will actually ADD to storage
  * (spec §9.8). Runs BEFORE any OPFS write, so a refusal leaves nothing behind.
+ *
+ * Sized on the bytes still to be written, not on the pack's whole payload: once samples are
+ * de-duplicated against the global library (§9.8), a demo whose kit is already installed adds
+ * almost nothing, and gating it on the full payload would refuse an install that needs no room.
  */
-async function assertStorageHeadroom(unpacked: UnpackedProject): Promise<void> {
-  const required = uncompressedSampleBytes(unpacked.samples);
+async function assertStorageHeadroom(required: number): Promise<void> {
   const headroom = await checkWriteHeadroom(required);
   if (!headroom.allowed) throw new FactoryStorageError(required);
+}
+
+/** Map a pack's remapped sample ids to the bytes the archive shipped for them (spec §9.6). */
+function bytesByRemappedId(
+  unpacked: UnpackedProject,
+  sampleIdMap: ReadonlyMap<string, string>,
+): Map<string, Uint8Array> {
+  const bytes = new Map<string, Uint8Array>();
+  for (const [oldId, data] of unpacked.samples) {
+    const newId = sampleIdMap.get(oldId);
+    if (newId) bytes.set(newId, data);
+  }
+  return bytes;
+}
+
+/**
+ * Write a plan's samples into the content-addressed global library (spec §9.1, §9.8).
+ *
+ * Returns the paths written and rows inserted so a failing install can unwind exactly what it
+ * added. Reused samples appear in neither list — they were already installed, possibly by a
+ * pack the user still has, so undoing this install must never remove them.
+ */
+async function installSharedSamples(
+  writes: readonly SharedSampleWrite[],
+  repos: Repositories,
+  written: string[],
+  inserted: string[],
+): Promise<void> {
+  for (const sample of writes) {
+    // Fresh ArrayBuffer-backed view — the OPFS stream API rejects shared buffers.
+    await writeFileAtomic(sample.opfs_path, new Uint8Array(sample.bytes));
+    written.push(sample.opfs_path);
+  }
+  for (const sample of writes) {
+    await repos.samples.create({
+      id: sample.id,
+      // NULL project id IS the global-library encoding (spec §9.3).
+      project_id: null,
+      name: sample.name,
+      opfs_path: sample.opfs_path,
+      frames: sample.frames,
+      sample_rate: sample.sample_rate,
+      channels: sample.channels,
+      root_note: sample.root_note,
+    });
+    inserted.push(sample.id);
+  }
 }
 
 /**
@@ -116,29 +168,22 @@ async function assertStorageHeadroom(unpacked: UnpackedProject): Promise<void> {
  * orphaned files (spec §9.8, §9.6).
  */
 async function installKitPack(unpacked: UnpackedProject, projectId: string): Promise<void> {
-  const { snapshot, sampleIdMap } = remapSnapshot(unpacked.snapshot);
-  const merge = buildKitMerge(snapshot, projectId);
   const repos = getActiveRepositories();
+  const { snapshot, sampleIdMap } = remapSnapshot(unpacked.snapshot);
 
-  // Old sample id → its packed bytes, re-keyed onto the remapped ids the rows now carry.
-  const bytesByNewId = new Map<string, Uint8Array>();
-  for (const [oldId, data] of unpacked.samples) {
-    const newId = sampleIdMap.get(oldId);
-    if (newId) bytesByNewId.set(newId, data);
-  }
+  // De-duplicate against the global library before sizing the write: a kit whose audio is
+  // already installed (its demo got there first) adds nothing and must not be refused (§9.8).
+  const plan = await planSharedSamples(snapshot, bytesByRemappedId(unpacked, sampleIdMap), repos);
+  await assertStorageHeadroom(plan.writes.reduce((sum, write) => sum + write.bytes.byteLength, 0));
+
+  const merge = buildKitMerge(plan.snapshot, projectId);
 
   const writtenPaths: string[] = [];
   const insertedSamples: string[] = [];
   const insertedPrograms: string[] = [];
 
   try {
-    for (const sample of merge.samples) {
-      const data = bytesByNewId.get(sample.id);
-      if (!data) throw new Error(`Pack is missing audio for sample “${sample.name}”.`);
-      // Fresh ArrayBuffer-backed view — the OPFS stream API rejects shared buffers.
-      await writeFileAtomic(sample.opfs_path, new Uint8Array(data));
-      writtenPaths.push(sample.opfs_path);
-    }
+    await installSharedSamples(plan.writes, repos, writtenPaths, insertedSamples);
 
     for (const program of merge.programs) {
       await repos.programs.create({
@@ -149,20 +194,6 @@ async function installKitPack(unpacked: UnpackedProject, projectId: string): Pro
         payload: program.payload,
       });
       insertedPrograms.push(program.id);
-    }
-
-    for (const sample of merge.samples) {
-      await repos.samples.create({
-        id: sample.id,
-        project_id: sample.project_id,
-        name: sample.name,
-        opfs_path: sample.opfs_path,
-        frames: sample.frames,
-        sample_rate: sample.sample_rate,
-        channels: sample.channels,
-        root_note: sample.root_note,
-      });
-      insertedSamples.push(sample.id);
     }
   } catch (error) {
     await unwindKitMerge({ writtenPaths, insertedSamples, insertedPrograms });
@@ -227,10 +258,15 @@ export async function installFactoryPack(
   signal?: AbortSignal,
 ): Promise<InstallResult> {
   const unpacked = await fetchPack(pack, signal);
-  await assertStorageHeadroom(unpacked);
 
   if (pack.kind === 'demo') {
-    return { kind: 'demo', projectId: await installUnpackedAsNewProject(unpacked) };
+    // Both install modes share their samples; each checks headroom against its own de-duplicated
+    // write set, so the gate lives inside them rather than on the whole payload out here (§9.8).
+    const projectId = await installUnpackedAsNewProject(unpacked, {
+      shareSamples: true,
+      assertHeadroom: assertStorageHeadroom,
+    });
+    return { kind: 'demo', projectId };
   }
 
   if (!activeProjectId) {
