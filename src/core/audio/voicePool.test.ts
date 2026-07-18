@@ -182,6 +182,48 @@ describe('voice endings (spec §5.4 declick)', () => {
     pool.destroy();
   });
 
+  it('moves the declick when a pitch bend retunes a sounding voice (spec §10.2)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'bend', when: 0 }));
+    // Half a second in, bend down an octave: the remaining 0.5 s of buffer now takes 1 s.
+    pool.applyProgramDetune('p1', -1200, 0.5);
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[ramps.length - 1]!.args).toEqual([0, 1.5]);
+    pool.destroy();
+  });
+
+  it('banks each rate segment, so successive retunes compose', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'two', when: 0 }));
+    pool.applyProgramDetune('p1', 1200, 0.5); // 0.5 s left, now at double rate → ends at 0.75
+    pool.applyProgramDetune('p1', 0, 0.6); // 0.2 s consumed since, 0.3 s left at unity → 0.9
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(0.9);
+    pool.destroy();
+  });
+
+  it('leaves a fade that has already begun alone rather than cutting it short', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'late', when: 0 })); // fade runs 0.997 → 1
+    pool.applyProgramDetune('p1', 1200, 0.998);
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[ramps.length - 1]!.args).toEqual([0, 1]);
+    pool.destroy();
+  });
+
+  it('moves the declick for a live pad detune edit too (spec §6)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'pad', when: 0 }));
+    pool.applyPadParam('p1:0', 'detune', 1200, 0.5); // 0.5 s left at double rate → ends at 0.75
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(0.75);
+    pool.destroy();
+  });
+
   it('starts the source at the trim offset for the trimmed duration (spec §6)', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);

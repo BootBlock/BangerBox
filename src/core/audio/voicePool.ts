@@ -89,6 +89,16 @@ interface Voice {
   readonly releaseMs: number;
   /** Base detune in cents (tune + static pitch mod) — the glide origin (spec §6). */
   readonly baseDetune: number;
+  /** Buffer seconds this voice sounds — its trimmed region at unity rate (spec §6). */
+  readonly regionSeconds: number;
+  /** Buffer seconds already consumed as of `rateSince`, for end-time bookkeeping. */
+  consumedSeconds: number;
+  /** Context time `rate` took effect — the origin the next retune integrates from. */
+  rateSince: number;
+  /** Playback rate implied by the voice's current detune (1 = unity). */
+  rate: number;
+  /** Context time the scheduled declick fade begins (spec §5.4). */
+  declickFadeStart: number;
   startTime: number;
   released: boolean;
   stopScheduled: boolean;
@@ -177,7 +187,7 @@ export class VoicePool {
           break;
         case 'detune':
           // Layered on the voice's base detune so tune/pitch-mod are not discarded (§6).
-          rampParamTarget(voice.source.detune, voice.baseDetune + value, when);
+          this.retune(voice, voice.baseDetune + value, when);
           break;
         default:
           // Channel-scope targets are the pad channel's business, not the voice's.
@@ -194,7 +204,7 @@ export class VoicePool {
   applyProgramDetune(programId: string, cents: number, when: number): void {
     for (const voice of this.voices.values()) {
       if (voice.programId !== programId || voice.stopScheduled) continue;
-      rampParamTarget(voice.source.detune, voice.baseDetune + cents, when);
+      this.retune(voice, voice.baseDetune + cents, when);
     }
   }
 
@@ -224,6 +234,44 @@ export class VoicePool {
       .filter((voice) => voice.programId === spec.programId && !voice.stopScheduled)
       .sort((a, b) => a.startTime - b.startTime);
     for (let i = 0; i <= live.length - cap; i++) this.fadeAndStop(live[i]!, now, VOICE_STEAL_FADE_MS);
+  }
+
+  /**
+   * Retune a live voice to an absolute detune and move its declick with it (spec §5.4,
+   * §10.2). The rate change alters when the buffer runs out, so a fade laid at trigger
+   * time would land in the wrong place for a bend held through the end of a sample.
+   */
+  private retune(voice: Voice, detuneCents: number, when: number): void {
+    rampParamTarget(voice.source.detune, detuneCents, when);
+    this.rescheduleDeclick(voice, detuneCents, when);
+  }
+
+  /**
+   * Re-lay the end-of-region declick after a rate change. The voice's consumption is
+   * integrated as piecewise-constant rate segments: whatever it played at the old rate is
+   * banked, and the remainder is divided by the new one. The `PARAM_RAMP_MS` dezipper on
+   * `detune` is treated as instantaneous — it is far shorter than the error it corrects.
+   *
+   * Two cases are left alone, because re-laying could only make them worse: a region that
+   * has already run out, and a fade that has already begun (the ramp in flight is nearer
+   * the truth than anything scheduled behind it, and cutting it short would click).
+   *
+   * This does not model the §6 modulators — pitch envelope, mono glide and a pitch-routed
+   * LFO all vary `detune` inside the AudioParam, where the pool cannot see it — so for
+   * those voices the end time stays an estimate (issue #87).
+   */
+  private rescheduleDeclick(voice: Voice, detuneCents: number, when: number): void {
+    const at = Math.max(when, voice.startTime);
+    voice.consumedSeconds += Math.max(0, at - voice.rateSince) * voice.rate;
+    voice.rateSince = at;
+    voice.rate = playbackRate(detuneCents);
+    const remaining = voice.regionSeconds - voice.consumedSeconds;
+    if (remaining <= 0 || at >= voice.declickFadeStart) return;
+    // Erase the stale fade first: holding at its own start leaves the amp on the level the
+    // AHDSR had reached there, which is exactly what the new fade wants to depart from.
+    voice.ampGain.gain.cancelAndHoldAtTime(voice.declickFadeStart);
+    const endTime = at + remaining / voice.rate;
+    voice.declickFadeStart = scheduleAmpDeclick(voice.ampGain.gain, endTime, at, DECLICK_FADE_MS);
   }
 
   /** The base detune of the sounding voice on a pad (mono glide origin, spec §6), or undefined. */
@@ -291,10 +339,12 @@ export class VoicePool {
 
     // Declick the natural end of the region (spec §5.4). The end time is derived from the
     // base detune only: a pitch envelope, glide or pitch LFO varies the real playback rate,
-    // so for those voices the fade is an approximation rather than frame-exact.
+    // so for those voices the fade is an approximation rather than frame-exact. A later
+    // retune (pad detune, pitch bend) moves the fade with it — see `rescheduleDeclick`.
     const region = playRegion(spec.buffer, spec.startFrame, spec.endFrame);
-    const endTime = now + region.durationSeconds / 2 ** (baseDetune / 1200);
-    scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS);
+    const rate = playbackRate(baseDetune);
+    const endTime = now + region.durationSeconds / rate;
+    const declickFadeStart = scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS);
 
     // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6).
     this.wireLfos(spec, source, filter, oscillators, modGains);
@@ -315,6 +365,11 @@ export class VoicePool {
       oneShot: spec.playbackMode === 'oneShot',
       releaseMs: spec.amp.release,
       baseDetune,
+      regionSeconds: region.durationSeconds,
+      consumedSeconds: 0,
+      rateSince: now,
+      rate,
+      declickFadeStart,
       startTime: now,
       released: false,
       stopScheduled: false,
@@ -445,6 +500,11 @@ export function playRegion(buffer: AudioBuffer, startFrame = 0, endFrame = 0): P
     offsetSeconds: start / buffer.sampleRate,
     durationSeconds: (end - start) / buffer.sampleRate,
   };
+}
+
+/** Buffer-consumption rate for a detune in cents — 1200 cents doubles the rate (spec §6). */
+function playbackRate(detuneCents: number): number {
+  return 2 ** (detuneCents / 1200);
 }
 
 /** Extract the pad index from a `${programId}:${padIndex}` key for the noteNumber source. */
