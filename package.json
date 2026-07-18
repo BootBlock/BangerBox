@@ -34,8 +34,9 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:wasm && tsc -b && vite build",
+    "build": "npm run build:wasm && npm run build:factory && tsc -b && vite build",
     "build:wasm": "node scripts/build-wasm.mjs",
+    "build:factory": "node scripts/build-factory.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

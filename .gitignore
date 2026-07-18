@@ -9,6 +9,9 @@ dev-dist/
 # Built WASM kernel artefacts (spec §2.5 — rebuilt via `npm run build:wasm`)
 src/core/dsp/dist/
 
+# Generated factory packs + catalogue (spec §2.5, §9.8 — rebuilt via `npm run build:factory`)
+public/factory/
+
 # Test artefacts
 coverage/
 scripts/smoke-artefacts/
