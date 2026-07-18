@@ -29,6 +29,7 @@ import {
   rowToY,
   snapTick,
   tickToX,
+  TOUCH_RESIZE_HANDLE_PX,
   velocityAtLaneY,
   xToTick,
   yToRow,
@@ -57,6 +58,13 @@ export interface GridCanvasProps {
   onErase: (id: string, coalesceKey?: string) => void;
   /** Seals a drag's undo entry on pointer release (spec §3.3 gesture end). */
   onGestureEnd: () => void;
+  /**
+   * Rolls back the edit a drag had already written, called when a second finger turns that
+   * drag into a two-finger pan/zoom (issue #43). The finger that starts a pan has usually
+   * drawn or moved a note first, and leaving that behind would make panning destructive.
+   * Only fires for a drag that actually wrote something, so it never eats an earlier edit.
+   */
+  onGestureCancel: () => void;
   onMove: (id: string, note: number, tickStart: number, coalesceKey?: string) => void;
   onResize: (id: string, durationTicks: number, coalesceKey?: string) => void;
   /**
@@ -92,6 +100,13 @@ const VELOCITY_GESTURE = 'grid-velocity';
  */
 const TAP_SLOP_PX = 4;
 
+/**
+ * Below this finger separation the pinch ratio is dominated by noise — two touches almost
+ * on top of each other can double their spread with a millimetre of tremor, which would
+ * read as a violent zoom. Panning still applies; only the zoom half is held back.
+ */
+const MIN_PINCH_SPREAD_PX = 24;
+
 export function GridCanvas({
   events,
   viewport,
@@ -109,6 +124,7 @@ export function GridCanvas({
   onSetVelocity,
   onScroll,
   onZoom,
+  onGestureCancel,
 }: GridCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -286,6 +302,134 @@ export function GridCanvas({
     };
   }, []);
 
+  /**
+   * Touch pointers currently down, in client coordinates. Two of them are a pan/zoom
+   * gesture rather than an edit (spec §8.5.2 "zoom/scroll (pinch + drag)", issue #43).
+   */
+  const touchPoints = useRef(new Map<number, { x: number; y: number }>());
+  /** The in-flight edit drag, if any, so a second finger can take the gesture over. */
+  const activeDrag = useRef<{ cancel: () => void } | null>(null);
+  const pinching = useRef(false);
+
+  // Forget lifted touches even when no gesture is listening — a finger that goes down and
+  // up without dragging would otherwise stay in the map and make the *next* single tap
+  // look like the second half of a pinch.
+  useEffect(() => {
+    const forget = (event: globalThis.PointerEvent) => {
+      touchPoints.current.delete(event.pointerId);
+    };
+    window.addEventListener('pointerup', forget);
+    window.addEventListener('pointercancel', forget);
+    return () => {
+      window.removeEventListener('pointerup', forget);
+      window.removeEventListener('pointercancel', forget);
+    };
+  }, []);
+
+  /**
+   * Attach a drag's window listeners and register it as the in-flight gesture. Window
+   * rather than element listeners so a drag survives the pointer leaving the canvas; the
+   * element is captured so it also survives the pointer leaving the window.
+   *
+   * `cancel` runs instead of `end` when a second finger takes the gesture over; it
+   * defaults to `end` for a drag with nothing to roll back.
+   */
+  const beginDrag = (
+    canvas: HTMLCanvasElement,
+    pointerId: number,
+    handlers: {
+      move: (event: globalThis.PointerEvent) => void;
+      end: () => void;
+      cancel?: () => void;
+    },
+  ) => {
+    canvas.setPointerCapture(pointerId);
+    const detach = () => {
+      window.removeEventListener('pointermove', handlers.move);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+      if (activeDrag.current === entry) activeDrag.current = null;
+    };
+    const release = () => {
+      detach();
+      handlers.end();
+    };
+    const entry = {
+      cancel: () => {
+        detach();
+        (handlers.cancel ?? handlers.end)();
+      },
+    };
+    window.addEventListener('pointermove', handlers.move);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+    activeDrag.current = entry;
+  };
+
+  /** Centre and separation of the two live touches, or null while there are not two. */
+  const pinchMetrics = () => {
+    const [first, second] = [...touchPoints.current.values()];
+    if (!first || !second) return null;
+    return {
+      centreX: (first.x + second.x) / 2,
+      centreY: (first.y + second.y) / 2,
+      spread: Math.hypot(first.x - second.x, first.y - second.y),
+    };
+  };
+
+  /**
+   * Two-finger pan and pinch-zoom (spec §8.5.2). The centre of the two touches drives the
+   * scroll and their separation drives the zoom, both as deltas against the previous
+   * sample, so the two run together the way they do on a map.
+   */
+  const beginPinch = (canvas: HTMLCanvasElement, pointerId: number) => {
+    if (pinching.current) return;
+    pinching.current = true;
+    canvas.setPointerCapture(pointerId);
+    let previous = pinchMetrics();
+    // Vertical scroll is quantised to whole rows, so sub-row travel is banked rather than
+    // discarded — otherwise a slow drag would never accumulate enough to move a row.
+    let rowRemainder = 0;
+
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      if (!touchPoints.current.has(moveEvent.pointerId)) return;
+      touchPoints.current.set(moveEvent.pointerId, { x: moveEvent.clientX, y: moveEvent.clientY });
+      const next = pinchMetrics();
+      if (!previous || !next) return;
+
+      const { ticksPerPixel, rowHeight } = latest.current.viewport;
+      rowRemainder += previous.centreY - next.centreY;
+      const rows = Math.trunc(rowRemainder / rowHeight);
+      rowRemainder -= rows * rowHeight;
+      // Fingers moving left drag the content left, which advances the viewport right.
+      onScroll((previous.centreX - next.centreX) * ticksPerPixel, rows);
+
+      if (previous.spread >= MIN_PINCH_SPREAD_PX && next.spread >= MIN_PINCH_SPREAD_PX) {
+        // Spreading the fingers zooms in, i.e. fewer ticks per pixel.
+        onZoom(previous.spread / next.spread);
+      }
+      previous = next;
+    };
+
+    const end = (endEvent: globalThis.PointerEvent) => {
+      touchPoints.current.delete(endEvent.pointerId);
+      // A third finger lifting leaves two behind: re-baseline and carry on rather than
+      // ending, so the gesture does not jump when the remaining pair takes over.
+      if (touchPoints.current.size >= 2) {
+        previous = pinchMetrics();
+        return;
+      }
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      pinching.current = false;
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  };
+
   /** Canvas-relative pointer position, with the label gutter removed from x. */
   const pointFrom = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -320,7 +464,6 @@ export function GridCanvas({
     let previous = pointFrom(pointerEvent);
     visitOnce(rowToNote(yToRow(previous.y, view), view), snapTick(xToTick(previous.x, view), snapTicks));
 
-    canvas.setPointerCapture(pointerEvent.pointerId);
     const move = (moveEvent: globalThis.PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
       const next = { x: moveEvent.clientX - rect.left - LABEL_GUTTER_PX, y: moveEvent.clientY - rect.top };
@@ -331,19 +474,36 @@ export function GridCanvas({
       }
       previous = { ...previous, ...next };
     };
-    const end = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', end);
-      window.removeEventListener('pointercancel', end);
+    beginDrag(canvas, pointerEvent.pointerId, {
+      move,
       // Seal the stroke so the next one is a separate undo entry (spec §3.3).
-      if (painted.size > 0) onGestureEnd();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', end);
-    window.addEventListener('pointercancel', end);
+      end: () => {
+        if (painted.size > 0) onGestureEnd();
+      },
+      cancel: () => {
+        if (painted.size === 0) return;
+        onGestureEnd();
+        onGestureCancel();
+      },
+    });
   };
 
   const handlePointerDown = (pointerEvent: React.PointerEvent<HTMLCanvasElement>) => {
+    const touch = pointerEvent.pointerType === 'touch';
+    if (touch) {
+      touchPoints.current.set(pointerEvent.pointerId, {
+        x: pointerEvent.clientX,
+        y: pointerEvent.clientY,
+      });
+      // A second finger reclassifies the gesture: whatever the first one had started
+      // editing is rolled back and the pair pans and zooms instead (issue #43).
+      if (touchPoints.current.size >= 2) {
+        activeDrag.current?.cancel();
+        beginPinch(pointerEvent.currentTarget, pointerEvent.pointerId);
+        return;
+      }
+    }
+
     const point = pointFrom(pointerEvent);
     const view: GridViewport = { ...viewport, width: point.width, height: point.gridHeight };
 
@@ -364,7 +524,6 @@ export function GridCanvas({
       // handler returns, so reading it from a later listener throws — and from a window
       // listener the throw never reaches the console, it just looks inert.
       const canvas = pointerEvent.currentTarget;
-      canvas.setPointerCapture(pointerEvent.pointerId);
       let previousTick = pressTick;
       const move = (moveEvent: globalThis.PointerEvent) => {
         const rect = canvas.getBoundingClientRect();
@@ -380,16 +539,16 @@ export function GridCanvas({
         apply([...ids], laneY);
         previousTick = moveTick;
       };
-      const end = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', end);
-        window.removeEventListener('pointercancel', end);
+      beginDrag(canvas, pointerEvent.pointerId, {
+        move,
         // One drag is one undo step, however many frames it spanned (spec §3.3).
-        onGestureEnd();
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', end);
-      window.addEventListener('pointercancel', end);
+        end: onGestureEnd,
+        // The press itself already set a velocity, so an aborted drag has one to undo.
+        cancel: () => {
+          onGestureEnd();
+          onGestureCancel();
+        },
+      });
       return;
     }
 
@@ -405,15 +564,24 @@ export function GridCanvas({
     }
 
     // Resize takes precedence over move, so the tail of a note is grabbable (spec §8.5.2).
-    const resizeTarget = resizeHandleAtPoint(events, point.x, point.y, view);
+    // A finger gets a much wider handle than a mouse pointer (issue #43): at 6 px it is
+    // neither deliberately hittable nor reliably avoidable by touch.
+    const resizeTarget = resizeHandleAtPoint(
+      events,
+      point.x,
+      point.y,
+      view,
+      touch ? TOUCH_RESIZE_HANDLE_PX : undefined,
+    );
     if (resizeTarget) {
       // Hold the element, not the React event: React nulls `currentTarget` once the
       // handler returns, so reading it from a later listener throws.
       const canvas = pointerEvent.currentTarget;
-      canvas.setPointerCapture(pointerEvent.pointerId);
+      let resized = false;
       const move = (moveEvent: globalThis.PointerEvent) => {
         const rect = canvas.getBoundingClientRect();
         const moveTick = xToTick(moveEvent.clientX - rect.left - LABEL_GUTTER_PX, view);
+        resized = true;
         // A note is at least one tick long (spec §7.7 min duration 1 tick).
         onResize(
           resizeTarget.id,
@@ -421,16 +589,16 @@ export function GridCanvas({
           RESIZE_GESTURE,
         );
       };
-      const end = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', end);
-        window.removeEventListener('pointercancel', end);
+      beginDrag(canvas, pointerEvent.pointerId, {
+        move,
         // One drag is one undo step, however many frames it spanned (spec §3.3).
-        onGestureEnd();
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', end);
-      window.addEventListener('pointercancel', end);
+        end: onGestureEnd,
+        cancel: () => {
+          if (!resized) return;
+          onGestureEnd();
+          onGestureCancel();
+        },
+      });
       return;
     }
 
@@ -446,7 +614,6 @@ export function GridCanvas({
       const grabOffsetTicks = tick - hit.tickStart;
       // As above: capture the element before the synthetic event is recycled.
       const canvas = pointerEvent.currentTarget;
-      canvas.setPointerCapture(pointerEvent.pointerId);
       const originX = pointerEvent.clientX;
       const originY = pointerEvent.clientY;
       let dragged = false;
@@ -466,19 +633,23 @@ export function GridCanvas({
         const nextTick = Math.max(0, snapTick(xToTick(moveX, view) - grabOffsetTicks, snapTicks));
         onMove(hit.id, rowToNote(yToRow(moveY, view), view), nextTick, MOVE_GESTURE);
       };
-      const end = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', end);
-        window.removeEventListener('pointercancel', end);
-        // Tapping a note with the draw tool toggles it off (issue #92); the select tool
-        // keeps the tap as a plain selection, and a drag is a move either way.
-        if (!dragged && tool === 'draw') onErase(hit.id);
-        // A move drag is one undo step, however many frames it spanned (spec §3.3).
-        onGestureEnd();
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', end);
-      window.addEventListener('pointercancel', end);
+      beginDrag(canvas, pointerEvent.pointerId, {
+        move,
+        end: () => {
+          // Tapping a note with the draw tool toggles it off (issue #92); the select tool
+          // keeps the tap as a plain selection, and a drag is a move either way.
+          if (!dragged && tool === 'draw') onErase(hit.id);
+          // A move drag is one undo step, however many frames it spanned (spec §3.3).
+          onGestureEnd();
+        },
+        // A first finger that never left the slop radius wrote nothing, and must not be
+        // treated as the tap-to-delete either — panning is not a way to erase a note.
+        cancel: () => {
+          if (!dragged) return;
+          onGestureEnd();
+          onGestureCancel();
+        },
+      });
       return;
     }
 

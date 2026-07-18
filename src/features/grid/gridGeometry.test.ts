@@ -10,6 +10,7 @@ import {
   rowToNote,
   snapTick,
   tickToX,
+  TOUCH_RESIZE_HANDLE_PX,
   velocityAtLaneY,
   visibleRows,
   xToTick,
@@ -109,6 +110,24 @@ describe('gridGeometry — hit testing (spec §8.5.2 draw/erase/select/move/resi
     expect(resizeHandleAtPoint(events, 118, 10, viewport)?.id).toBe('a');
     // The body of the note is a move target, not a resize target.
     expect(resizeHandleAtPoint(events, 40, 10, viewport)).toBeNull();
+  });
+
+  it('widens the resize handle for touch (issue #43)', () => {
+    // 'a' spans x 0..120. At the mouse handle 100 is the note body; a fingertip-sized
+    // handle reaches it, so the tail of a note is grabbable without a mouse.
+    expect(resizeHandleAtPoint(events, 100, 10, viewport)).toBeNull();
+    expect(resizeHandleAtPoint(events, 100, 10, viewport, TOUCH_RESIZE_HANDLE_PX)?.id).toBe('a');
+  });
+
+  it('caps the touch handle at half a note, so short notes stay draggable (issue #43)', () => {
+    // A 1/16 note at ticksPerPixel 4 is only 30 px wide — narrower than the touch handle.
+    const short = [
+      { id: 'short', tickStart: 0, durationTicks: 120, note: 72, velocity: 100, extra: null },
+    ];
+    // The front half moves…
+    expect(resizeHandleAtPoint(short, 10, 10, viewport, TOUCH_RESIZE_HANDLE_PX)).toBeNull();
+    // …and only the back half resizes.
+    expect(resizeHandleAtPoint(short, 20, 10, viewport, TOUCH_RESIZE_HANDLE_PX)?.id).toBe('short');
   });
 
   it('prefers the topmost (last) event when two overlap', () => {
