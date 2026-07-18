@@ -9,14 +9,24 @@ function note(id: string, tickStart: number, note = 36, durationTicks = 120): Mi
 
 /** Metadata message for a single 1-bar 4/4 sequence at the project tempo. */
 function oneBarMeta(core: SchedulerCore, ids: string[], activeId: string | null, mode: 'sequence' | 'song') {
-  const sequences: Record<string, { lengthBars: number; timeSigNumerator: number; timeSigDenominator: 4; tempo: null }> = {};
-  for (const id of ids) sequences[id] = { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: null };
+  const sequences: Record<
+    string,
+    { lengthBars: number; timeSigNumerator: number; timeSigDenominator: 4; tempo: null }
+  > = {};
+  for (const id of ids)
+    sequences[id] = { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: null };
   core.setSequenceMeta(sequences, 120, activeId, mode);
 }
 
 /** Run tick() across a series of context times and merge the results. */
 function run(core: SchedulerCore, times: number[]): SchedulerTickResult {
-  const merged: SchedulerTickResult = { batch: [], recorded: [], erased: [], loopWrapped: [], songAdvanced: [] };
+  const merged: SchedulerTickResult = {
+    batch: [],
+    recorded: [],
+    erased: [],
+    loopWrapped: [],
+    songAdvanced: [],
+  };
   for (const t of times) {
     const r = core.tick(t);
     merged.batch.push(...r.batch);
@@ -219,8 +229,21 @@ describe('SchedulerCore — live erase (spec §7.7)', () => {
 });
 
 describe('SchedulerCore — automation (spec §7.8)', () => {
-  function point(scope: AutomationPoint['scope'], ownerId: string, tick: number, value: number): AutomationPoint {
-    return { id: `${scope}-${tick}`, scope, ownerId, targetPath: 'mixer.track:t1.level', tick, value, curve: 'linear' };
+  function point(
+    scope: AutomationPoint['scope'],
+    ownerId: string,
+    tick: number,
+    value: number,
+  ): AutomationPoint {
+    return {
+      id: `${scope}-${tick}`,
+      scope,
+      ownerId,
+      targetPath: 'mixer.track:t1.level',
+      tick,
+      value,
+      curve: 'linear',
+    };
   }
 
   it('schedules automation ramps toward the lane value', () => {
@@ -228,7 +251,10 @@ describe('SchedulerCore — automation (spec §7.8)', () => {
     oneBarMeta(core, ['S'], 'S', 'sequence');
     core.setTempo(120);
     core.setLoop(LOOP_1_BAR);
-    core.applyAutomationDiff('sequence', 'S', 'mixer.track:t1.level', [point('sequence', 'S', 0, 0), point('sequence', 'S', 3840, 1)]);
+    core.applyAutomationDiff('sequence', 'S', 'mixer.track:t1.level', [
+      point('sequence', 'S', 0, 0),
+      point('sequence', 'S', 3840, 1),
+    ]);
     core.setTransport(true, false, 0);
 
     const result = run(core, steps(0.5));

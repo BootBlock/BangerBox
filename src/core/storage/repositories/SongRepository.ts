@@ -28,13 +28,7 @@ export class SongRepository extends BaseRepository {
       { sql: 'DELETE FROM song_entries WHERE project_id = ?;', params: [projectId] },
       ...entries.map((entry, position) => ({
         sql: 'INSERT INTO song_entries (id, project_id, position, sequence_id, repeats) VALUES (?, ?, ?, ?, ?);',
-        params: [
-          entry.id ?? crypto.randomUUID(),
-          projectId,
-          position,
-          entry.sequence_id,
-          entry.repeats ?? 1,
-        ],
+        params: [entry.id ?? crypto.randomUUID(), projectId, position, entry.sequence_id, entry.repeats ?? 1],
       })),
     ]);
   }

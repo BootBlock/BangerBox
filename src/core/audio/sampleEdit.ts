@@ -51,7 +51,11 @@ function fadeGain(progress: number, curve: FadeCurve): number {
 }
 
 /** Ramp the first `frames` samples up from silence to unity (spec §8.5.4). */
-export function fadeIn(channels: readonly Float32Array[], frames: number, curve: FadeCurve = 'linear'): Float32Array[] {
+export function fadeIn(
+  channels: readonly Float32Array[],
+  frames: number,
+  curve: FadeCurve = 'linear',
+): Float32Array[] {
   return channels.map((channel) => {
     const span = Math.max(0, Math.min(frames, channel.length));
     const out = Float32Array.from(channel);
@@ -65,7 +69,11 @@ export function fadeIn(channels: readonly Float32Array[], frames: number, curve:
  * mirror of {@link fadeIn}: gain steps from `(span−1)/span` at the region start down to 0 at
  * the last sample, so a full-length fade-out is exactly the reverse of a full-length fade-in.
  */
-export function fadeOut(channels: readonly Float32Array[], frames: number, curve: FadeCurve = 'linear'): Float32Array[] {
+export function fadeOut(
+  channels: readonly Float32Array[],
+  frames: number,
+  curve: FadeCurve = 'linear',
+): Float32Array[] {
   return channels.map((channel) => {
     const span = Math.max(0, Math.min(frames, channel.length));
     const out = Float32Array.from(channel);
@@ -83,7 +91,11 @@ export function fadeOut(channels: readonly Float32Array[], frames: number, curve
  * Trim). Bounds are clamped into the sample; an empty or inverted resulting range throws so a
  * zero-length sample is never written.
  */
-export function trim(channels: readonly Float32Array[], startFrame: number, endFrame: number): Float32Array[] {
+export function trim(
+  channels: readonly Float32Array[],
+  startFrame: number,
+  endFrame: number,
+): Float32Array[] {
   const length = channels[0]?.length ?? 0;
   const start = Math.max(0, Math.min(startFrame, length));
   const end = Math.max(0, Math.min(endFrame, length));

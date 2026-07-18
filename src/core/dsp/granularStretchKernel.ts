@@ -52,7 +52,11 @@ export class GranularStretchKernel {
   }
 
   /** Allocate for up to `maxInputFrames`; the output buffer holds the 4× worst-case expansion. */
-  static fromModule(module: WebAssembly.Module, sampleRate: number, maxInputFrames: number): GranularStretchKernel {
+  static fromModule(
+    module: WebAssembly.Module,
+    sampleRate: number,
+    maxInputFrames: number,
+  ): GranularStretchKernel {
     const instance = new WebAssembly.Instance(module, {});
     const exports = instance.exports as unknown as GranularStretchExports;
     const handle = exports.create(sampleRate, maxInputFrames);

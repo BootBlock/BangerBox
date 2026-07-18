@@ -42,6 +42,8 @@ export function GridMode() {
   const tracks = useSequenceStore((s) => s.tracks);
   const eventsByTrack = useSequenceStore((s) => s.events);
   const automation = useSequenceStore((s) => s.automation);
+  const grooveTemplates = useSequenceStore((s) => s.grooveTemplates);
+  const trackGrooveIds = useSequenceStore((s) => s.trackGrooveIds);
   const programs = useProgramStore((s) => s.programs);
 
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
@@ -243,6 +245,30 @@ export function GridMode() {
               ))}
             </select>
           </label>
+
+          {/* Groove is applied at schedule time like swing — non-destructive (spec §7.5).
+              Templates come from Sample Edit's groove extraction. */}
+          <span className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+            Groove
+            <select
+              aria-label="Track groove"
+              value={trackId ? (trackGrooveIds[trackId] ?? '') : ''}
+              disabled={trackId === null}
+              onChange={(event) => {
+                if (!trackId) return;
+                sequence().assignTrackGroove(trackId, event.target.value || null);
+              }}
+              data-testid="grid-groove"
+              className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs font-normal text-bb-text normal-case disabled:opacity-40"
+            >
+              <option value="">None</option>
+              {Object.keys(grooveTemplates).map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </span>
 
           <ValueReadout label="Notes" value={events.length} showLabel data-testid="grid-note-count" />
           <ValueReadout

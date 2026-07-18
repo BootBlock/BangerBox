@@ -21,6 +21,7 @@ import {
   type SongEntry,
   type Track,
 } from '@/core/project/schemas';
+import type { GrooveTemplate } from '@/core/sequencer/groove';
 import { commit } from './commit';
 import { useProjectStore } from './useProjectStore';
 
@@ -31,9 +32,17 @@ export interface SequenceHydration {
   readonly events: Record<string, MidiEvent[]>;
   readonly automation: Record<string, AutomationPoint[]>;
   readonly songEntries: SongEntry[];
+  /**
+   * Groove templates extracted from samples, stored per project (spec §7.5), keyed by an
+   * id the tracks reference. Optional so a snapshot written before Phase 7 (or a fixture
+   * that has no groove) still hydrates. Added in Phase 7 — see §14 2026-07-18 (i).
+   */
+  readonly grooveTemplates?: Record<string, GrooveTemplate>;
+  /** Track id → groove template id, or absent for "no groove" (spec §7.5). */
+  readonly trackGrooveIds?: Record<string, string>;
 }
 
-interface SequenceState extends SequenceHydration {
+interface SequenceState extends Required<SequenceHydration> {
   /** Replace the whole model on project load (spec §4.4). Clears no undo — that is the loader's job. */
   hydrate: (snapshot: SequenceHydration) => void;
 
@@ -64,14 +73,21 @@ interface SequenceState extends SequenceHydration {
   ) => void;
 
   setSongEntries: (entries: readonly SongEntry[]) => void;
+
+  /** Store a named groove template for the project (spec §7.5). */
+  setGrooveTemplate: (id: string, template: GrooveTemplate) => void;
+  /** Apply a groove to a track non-destructively, or clear it with null (spec §7.5). */
+  assignTrackGroove: (trackId: string, templateId: string | null) => void;
 }
 
-const EMPTY: SequenceHydration = {
+const EMPTY: Required<SequenceHydration> = {
   sequences: {},
   tracks: {},
   events: {},
   automation: {},
   songEntries: [],
+  grooveTemplates: {},
+  trackGrooveIds: {},
 };
 
 /** Events are kept in tick order for hydration and scheduling (spec §4.2). */
@@ -107,6 +123,8 @@ export const useSequenceStore = create<SequenceState>()(
         ),
         automation: { ...snapshot.automation },
         songEntries: [...snapshot.songEntries],
+        grooveTemplates: { ...(snapshot.grooveTemplates ?? {}) },
+        trackGrooveIds: { ...(snapshot.trackGrooveIds ?? {}) },
       }),
 
     // --- Sequences (structure changes are undoable — spec §4.5) --------------------
@@ -289,6 +307,25 @@ export const useSequenceStore = create<SequenceState>()(
         revert: () => setEntries(prev),
         // Song entries persist as a project-scoped playlist (spec §9.3 song_entries).
         dirtyKeys: [dirtyKey.song(projectId)],
+      });
+    },
+
+    // --- Groove (spec §7.5) ---------------------------------------------------------
+    setGrooveTemplate: (id, template) =>
+      set((state) => ({ grooveTemplates: { ...state.grooveTemplates, [id]: template } })),
+
+    assignTrackGroove: (trackId, templateId) => {
+      const prev = get().trackGrooveIds;
+      const next = { ...prev };
+      if (templateId === null) delete next[trackId];
+      else next[trackId] = templateId;
+      const write = (value: Record<string, string>) => set({ trackGrooveIds: value });
+      commit({
+        label: templateId === null ? 'Clear track groove' : 'Apply groove to track',
+        apply: () => write(next),
+        revert: () => write(prev),
+        // The assignment rides with the track it shapes (spec §9.3 tracks).
+        dirtyKeys: [dirtyKey.track(trackId)],
       });
     },
   })),

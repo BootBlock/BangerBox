@@ -36,7 +36,11 @@ export type AudioBridge = SyncBridge & {
   applyAutomation: (targetPath: string, value: number, when: number, rampEnd: number) => void;
 };
 
-function applyInserts(context: BaseAudioContext, channel: ChannelHandle, inserts: readonly InsertSlotState[]): void {
+function applyInserts(
+  context: BaseAudioContext,
+  channel: ChannelHandle,
+  inserts: readonly InsertSlotState[],
+): void {
   const handles = inserts
     .filter((slot) => slot.effectType !== null)
     .map((slot) => {

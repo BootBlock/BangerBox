@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  applyGrooveToEvents,
-  grooveFromTransients,
-  grooveShiftAtTick,
-  type Transient,
-} from './groove';
+import { applyGrooveToEvents, grooveFromTransients, grooveShiftAtTick, type Transient } from './groove';
 
 const PPQN = 960;
 
@@ -63,19 +58,23 @@ describe('grooveFromTransients — timing+velocity template (spec §7.5)', () =>
 
 describe('grooveShiftAtTick — schedule-time lookup (spec §7.5, applied like swing)', () => {
   it('returns the offset and velocity scale of the grid point nearest the tick', () => {
-    const template = grooveFromTransients(
-      [{ frame: tickToFrame(30, 120, 48_000), magnitude: 0.9 }],
-      { bpm: 120, sampleRate: 48_000, lengthTicks: PPQN * 4, division: 16 },
-    );
+    const template = grooveFromTransients([{ frame: tickToFrame(30, 120, 48_000), magnitude: 0.9 }], {
+      bpm: 120,
+      sampleRate: 48_000,
+      lengthTicks: PPQN * 4,
+      division: 16,
+    });
     const shift = grooveShiftAtTick(template, 5); // near grid tick 0
     expect(shift.offsetTicks).toBeCloseTo(30, 0);
   });
 
   it('wraps ticks beyond the template length back into the pattern', () => {
-    const template = grooveFromTransients(
-      [{ frame: tickToFrame(30, 120, 48_000), magnitude: 0.9 }],
-      { bpm: 120, sampleRate: 48_000, lengthTicks: PPQN * 4, division: 16 },
-    );
+    const template = grooveFromTransients([{ frame: tickToFrame(30, 120, 48_000), magnitude: 0.9 }], {
+      bpm: 120,
+      sampleRate: 48_000,
+      lengthTicks: PPQN * 4,
+      division: 16,
+    });
     const shift = grooveShiftAtTick(template, PPQN * 4 + 5); // one bar on, near grid 0 again
     expect(shift.offsetTicks).toBeCloseTo(30, 0);
   });
@@ -83,10 +82,12 @@ describe('grooveShiftAtTick — schedule-time lookup (spec §7.5, applied like s
 
 describe('applyGrooveToEvents — destructive bake (spec §7.5)', () => {
   it('shifts event ticks and scales velocity, clamped to valid ranges', () => {
-    const template = grooveFromTransients(
-      [{ frame: tickToFrame(30, 120, 48_000), magnitude: 1 }],
-      { bpm: 120, sampleRate: 48_000, lengthTicks: PPQN * 4, division: 16 },
-    );
+    const template = grooveFromTransients([{ frame: tickToFrame(30, 120, 48_000), magnitude: 1 }], {
+      bpm: 120,
+      sampleRate: 48_000,
+      lengthTicks: PPQN * 4,
+      division: 16,
+    });
     const events = [{ id: 'a', tickStart: 0, velocity: 100, note: 36 }];
     const baked = applyGrooveToEvents(events, template);
     expect(baked[0]!.tickStart).toBeCloseTo(30, 0);

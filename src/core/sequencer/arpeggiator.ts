@@ -48,11 +48,7 @@ function acrossOctaves(held: readonly ArpHeldNote[], octaves: number): ArpHeldNo
  * returns the ascending pool; the caller picks from it per step so the sequence stays a
  * pure function of the step index (repeatable, spec §7.1.5).
  */
-export function arpSequence(
-  held: readonly ArpHeldNote[],
-  mode: ArpMode,
-  octaves: number,
-): ArpHeldNote[] {
+export function arpSequence(held: readonly ArpHeldNote[], mode: ArpMode, octaves: number): ArpHeldNote[] {
   if (held.length === 0) return [];
   const played = acrossOctaves(held, octaves); // preserves held order
   const up = [...played].sort((a, b) => a.note - b.note);

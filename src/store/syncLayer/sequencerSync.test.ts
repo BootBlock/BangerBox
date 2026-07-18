@@ -103,12 +103,7 @@ describe('subscribeSequencerSync — incremental forwarding (spec §4.3)', () =>
     scheduler.sendEventsDiff.mockClear();
 
     useSequenceStore.getState().addEvents('t1', [event('n1', 0)]);
-    expect(scheduler.sendEventsDiff).toHaveBeenCalledWith(
-      't1',
-      'S',
-      [event('n1', 0)],
-      [],
-    );
+    expect(scheduler.sendEventsDiff).toHaveBeenCalledWith('t1', 'S', [event('n1', 0)], []);
   });
 
   it('stops forwarding after dispose', () => {

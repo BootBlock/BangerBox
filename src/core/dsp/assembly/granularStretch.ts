@@ -144,7 +144,14 @@ export function render(
   rate: f32,
   pitchSemitones: f32,
 ): i32 {
-  return changetype<GranularStretchKernel>(handle).render(inPtr, inFrames, outPtr, outCapacity, rate, pitchSemitones);
+  return changetype<GranularStretchKernel>(handle).render(
+    inPtr,
+    inFrames,
+    outPtr,
+    outCapacity,
+    rate,
+    pitchSemitones,
+  );
 }
 export function free(handle: usize): void {
   // Linear memory released when the host drops this instance (spec §5.6.3).

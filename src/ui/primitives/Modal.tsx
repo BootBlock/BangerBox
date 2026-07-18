@@ -32,7 +32,15 @@ const SIZE: Record<'sm' | 'md' | 'lg', string> = {
 const FOCUSABLE =
   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
-export function Modal({ open, title, onClose, children, footer, size = 'md', 'data-testid': testId }: ModalProps) {
+export function Modal({
+  open,
+  title,
+  onClose,
+  children,
+  footer,
+  size = 'md',
+  'data-testid': testId,
+}: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusTo = useRef<HTMLElement | null>(null);
   const titleId = useId();

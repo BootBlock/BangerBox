@@ -88,6 +88,8 @@ describe('GranularStretchKernel — §5.6.4 / §5.7.9 independent time/pitch ove
   it('is unusable after destroy() (spec §5.6.3)', () => {
     const kernel = GranularStretchKernel.fromModule(module, SAMPLE_RATE, 1000);
     kernel.destroy();
-    expect(() => kernel.render(new Float32Array(10), { rate: 1, pitchSemitones: 0 })).toThrow(/after destroy/);
+    expect(() => kernel.render(new Float32Array(10), { rate: 1, pitchSemitones: 0 })).toThrow(
+      /after destroy/,
+    );
   });
 });

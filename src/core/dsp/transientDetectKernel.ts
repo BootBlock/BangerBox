@@ -41,7 +41,11 @@ export class TransientDetectKernel {
     this.inView = new Float32Array(exports.memory.buffer, inPtr, maxFrames);
   }
 
-  static fromModule(module: WebAssembly.Module, sampleRate: number, maxFrames: number): TransientDetectKernel {
+  static fromModule(
+    module: WebAssembly.Module,
+    sampleRate: number,
+    maxFrames: number,
+  ): TransientDetectKernel {
     const instance = new WebAssembly.Instance(module, {});
     const exports = instance.exports as unknown as TransientDetectExports;
     const handle = exports.create(sampleRate, maxFrames);

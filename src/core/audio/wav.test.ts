@@ -4,7 +4,8 @@ import { decodeWav, encodeWav } from './wav';
 /** Read a little-endian uint32 from a byte view at an offset. */
 function u32(bytes: Uint8Array, offset: number): number {
   return (
-    (bytes[offset]! | (bytes[offset + 1]! << 8) | (bytes[offset + 2]! << 16) | (bytes[offset + 3]! << 24)) >>> 0
+    (bytes[offset]! | (bytes[offset + 1]! << 8) | (bytes[offset + 2]! << 16) | (bytes[offset + 3]! << 24)) >>>
+    0
   );
 }
 function u16(bytes: Uint8Array, offset: number): number {

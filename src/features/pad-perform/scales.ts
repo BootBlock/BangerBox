@@ -100,9 +100,7 @@ export const CHORD_SETS: Readonly<Record<ChordSetId, readonly ChordDefinition[]>
 export function chordNotes(set: ChordSetId, chordId: string, root: number): number[] {
   const chord = CHORD_SETS[set].find((candidate) => candidate.id === chordId);
   if (!chord) return [Math.min(MIDI_MAX, Math.max(MIDI_MIN, root))];
-  return chord.intervals.map((interval) =>
-    Math.min(MIDI_MAX, Math.max(MIDI_MIN, root + interval)),
-  );
+  return chord.intervals.map((interval) => Math.min(MIDI_MAX, Math.max(MIDI_MIN, root + interval)));
 }
 
 /** Pitch-class names using the sharp spelling and a typographic ♯ (spec §8.2 readable text). */

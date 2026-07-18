@@ -50,7 +50,10 @@ export function mixdownToStereo(channels: readonly Float32Array[]): Float32Array
 
 let encodeWorker: Worker | null = null;
 let nextId = 1;
-const pendingEncodes = new Map<number, { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }>();
+const pendingEncodes = new Map<
+  number,
+  { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
+>();
 
 function ensureEncodeWorker(): Worker {
   if (encodeWorker) return encodeWorker;
@@ -141,7 +144,7 @@ export async function saveChannelsAsSample(
 /** Resample a decoded buffer to `targetRate` if needed, via an OfflineAudioContext (spec §9.4). */
 async function resampleIfNeeded(buffer: AudioBuffer, targetRate: number): Promise<Float32Array[]> {
   if (buffer.sampleRate === targetRate) return planarChannels(buffer);
-  const frames = Math.ceil((buffer.duration * targetRate));
+  const frames = Math.ceil(buffer.duration * targetRate);
   const offline = new OfflineAudioContext(buffer.numberOfChannels, frames, targetRate);
   const source = offline.createBufferSource();
   source.buffer = buffer;

@@ -54,10 +54,7 @@ describe('StoragePanel (Phase 1 shell)', () => {
 
     const run = await screen.findByTestId('storage-self-test-run');
     await user.click(run);
-    expect(await screen.findByTestId('storage-self-test-status')).toHaveAttribute(
-      'data-status',
-      'passed',
-    );
+    expect(await screen.findByTestId('storage-self-test-status')).toHaveAttribute('data-status', 'passed');
     expect(screen.getByTestId('storage-self-test-detail')).toHaveTextContent('All layers round-tripped.');
   });
 
@@ -73,10 +70,7 @@ describe('StoragePanel (Phase 1 shell)', () => {
       />,
     );
     await user.click(await screen.findByTestId('storage-self-test-run'));
-    expect(await screen.findByTestId('storage-self-test-status')).toHaveAttribute(
-      'data-status',
-      'failed',
-    );
+    expect(await screen.findByTestId('storage-self-test-status')).toHaveAttribute('data-status', 'failed');
     expect(screen.getByTestId('storage-self-test-detail')).toHaveTextContent('quota hard-stop');
   });
 });

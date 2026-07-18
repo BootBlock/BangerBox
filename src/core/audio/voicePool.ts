@@ -20,16 +20,17 @@ import {
   type PlaybackMode,
 } from '@/core/project/schemas';
 import { scheduleAmpAttack, scheduleAmpRelease, scheduleModEnvelope, velocityToGain } from './voiceEnvelope';
-import { biquadFilterType, lfoOscillator, staticModulation, FILTER_MOD_OCTAVES, PITCH_MOD_CENTS } from './voiceModulation';
+import {
+  biquadFilterType,
+  lfoOscillator,
+  staticModulation,
+  FILTER_MOD_OCTAVES,
+  PITCH_MOD_CENTS,
+} from './voiceModulation';
 import { routesForSource } from './modMatrix';
 import { rampParamTarget } from './params/ramps';
 import type { ProgramParamTarget } from './voiceParams';
-import {
-  selectChokeVictims,
-  selectStealVictim,
-  type ChokeCandidate,
-  type VoiceRef,
-} from './voiceSelection';
+import { selectChokeVictims, selectStealVictim, type ChokeCandidate, type VoiceRef } from './voiceSelection';
 
 /** The §6 sound-design surface for one voice (optional — omitted by the demo path). */
 export interface VoiceSoundDesign {

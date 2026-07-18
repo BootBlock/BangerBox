@@ -69,7 +69,9 @@ export interface ContinuousControlApi {
 
 /** Coarse arrow-key step for a range, honouring an explicit `step` when given. */
 function coarseStepFor(options: ContinuousControlOptions): number {
-  return options.step && options.step > 0 ? options.step : Math.abs(options.range[1] - options.range[0]) / 100;
+  return options.step && options.step > 0
+    ? options.step
+    : Math.abs(options.range[1] - options.range[0]) / 100;
 }
 
 export function useContinuousControl(options: ContinuousControlOptions): ContinuousControlApi {

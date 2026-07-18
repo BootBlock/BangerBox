@@ -7,7 +7,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function stubLocks(request: (name: string, options: LockOptions, callback: LockCallback) => Promise<unknown>) {
+function stubLocks(
+  request: (name: string, options: LockOptions, callback: LockCallback) => Promise<unknown>,
+) {
   vi.stubGlobal('navigator', { ...navigator, locks: { request } });
 }
 

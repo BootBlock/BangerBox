@@ -19,7 +19,10 @@ const pending = new Map<number, Pending>();
 function ensureWorker(): Worker {
   if (worker) return worker;
   // The exact `new Worker(new URL(...), { type: 'module' })` form Vite statically bundles.
-  worker = new Worker(new URL('./pack.worker.ts', import.meta.url), { type: 'module', name: 'bangerbox-pack' });
+  worker = new Worker(new URL('./pack.worker.ts', import.meta.url), {
+    type: 'module',
+    name: 'bangerbox-pack',
+  });
   worker.addEventListener('message', (event: MessageEvent<PackWorkerResponse>) => {
     const response = event.data;
     const entry = pending.get(response.id);

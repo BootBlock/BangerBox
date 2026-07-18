@@ -6,7 +6,6 @@
  */
 import { useRef, type KeyboardEvent } from 'react';
 
-
 export interface SegmentOption<T extends string | number> {
   readonly value: T;
   readonly label: string;

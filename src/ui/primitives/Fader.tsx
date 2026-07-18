@@ -125,7 +125,11 @@ export function Fader({
       <span className="max-w-16 truncate text-center text-[0.625rem] leading-tight text-bb-muted">
         {label}
       </span>
-      <span ref={readoutRef} aria-hidden="true" className="font-mono text-[0.625rem] tabular-nums text-bb-text">
+      <span
+        ref={readoutRef}
+        aria-hidden="true"
+        className="font-mono text-[0.625rem] tabular-nums text-bb-text"
+      >
         {valueText}
       </span>
     </div>

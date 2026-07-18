@@ -52,6 +52,9 @@ function handle(request: SchedulerRequest): void {
     case 'swing':
       core.setSwing(request.amount, request.division);
       return;
+    case 'groove':
+      core.setGroove(request.trackId, request.template);
+      return;
     case 'loop':
       core.setLoop({ enabled: request.enabled, startTick: request.startTick, endTick: request.endTick });
       return;
@@ -65,7 +68,12 @@ function handle(request: SchedulerRequest): void {
       core.setSongSequence(request.orderedSequenceIds);
       return;
     case 'sequenceMeta':
-      core.setSequenceMeta(request.sequences, request.projectBpm, request.activeSequenceId, request.playbackMode);
+      core.setSequenceMeta(
+        request.sequences,
+        request.projectBpm,
+        request.activeSequenceId,
+        request.playbackMode,
+      );
       return;
     case 'liveNote': {
       // The BLE/UI timestamp is in the performance.now() domain — map it to context time.
@@ -107,8 +115,10 @@ function wake(): void {
   const result = core.tick(now);
 
   if (result.batch.length > 0) post({ kind: 'scheduleBatch', events: result.batch });
-  for (const flush of result.recorded) post({ kind: 'recorded', trackId: flush.trackId, events: flush.events });
-  for (const erase of result.erased) post({ kind: 'erased', trackId: erase.trackId, eventIds: erase.eventIds });
+  for (const flush of result.recorded)
+    post({ kind: 'recorded', trackId: flush.trackId, events: flush.events });
+  for (const erase of result.erased)
+    post({ kind: 'erased', trackId: erase.trackId, eventIds: erase.eventIds });
   for (const tick of result.loopWrapped) post({ kind: 'loopWrapped', tick });
   for (const entryIndex of result.songAdvanced) post({ kind: 'songAdvanced', entryIndex });
 

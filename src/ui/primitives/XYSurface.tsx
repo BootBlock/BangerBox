@@ -34,7 +34,14 @@ export interface XYSurfaceProps {
   'data-testid'?: string;
 }
 
-export function XYSurface({ x, y, onTransient, onCommit, disabled = false, 'data-testid': testId }: XYSurfaceProps) {
+export function XYSurface({
+  x,
+  y,
+  onTransient,
+  onCommit,
+  disabled = false,
+  'data-testid': testId,
+}: XYSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   /** Live normalised position — the rAF loop's only input (no React state, spec §3.3). */
@@ -219,7 +226,11 @@ export function XYSurface({ x, y, onTransient, onCommit, disabled = false, 'data
           [
             { axis: x, control: xControl, orientation: 'horizontal' as const },
             { axis: y, control: yControl, orientation: 'vertical' as const },
-          ] satisfies readonly { axis: XYAxis; control: ReturnType<typeof useContinuousControl>; orientation: 'horizontal' | 'vertical' }[]
+          ] satisfies readonly {
+            axis: XYAxis;
+            control: ReturnType<typeof useContinuousControl>;
+            orientation: 'horizontal' | 'vertical';
+          }[]
         ).map(({ axis, control, orientation }) => (
           <div
             key={orientation}

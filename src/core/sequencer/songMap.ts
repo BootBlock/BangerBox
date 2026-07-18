@@ -73,10 +73,7 @@ export function songTotalSeconds(map: readonly SongSegment[]): number {
 }
 
 /** The segment covering an absolute song tick, or undefined past the end (spec §7.9). */
-export function segmentAtSongTick(
-  map: readonly SongSegment[],
-  songTick: number,
-): SongSegment | undefined {
+export function segmentAtSongTick(map: readonly SongSegment[], songTick: number): SongSegment | undefined {
   return map.find((seg) => songTick >= seg.startTick && songTick < seg.startTick + seg.lengthTicks);
 }
 
@@ -112,11 +109,7 @@ export interface SongWindowSlice {
  * Slice a song-tick window `[from, to)` per segment so the scheduler can select each
  * sequence's events for its portion — correctly spanning entry boundaries (spec §7.9).
  */
-export function songWindowSlices(
-  map: readonly SongSegment[],
-  from: number,
-  to: number,
-): SongWindowSlice[] {
+export function songWindowSlices(map: readonly SongSegment[], from: number, to: number): SongWindowSlice[] {
   const slices: SongWindowSlice[] = [];
   for (const segment of map) {
     const segEnd = segment.startTick + segment.lengthTicks;

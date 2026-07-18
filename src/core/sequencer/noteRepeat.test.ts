@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PPQN } from '@/core/constants';
-import {
-  noteRepeatHits,
-  noteRepeatStepTicks,
-  repeatTicksInWindow,
-  type HeldNote,
-} from './noteRepeat';
+import { noteRepeatHits, noteRepeatStepTicks, repeatTicksInWindow, type HeldNote } from './noteRepeat';
 
 describe('noteRepeatStepTicks (spec §7.3)', () => {
   it('derives straight and triplet step sizes', () => {

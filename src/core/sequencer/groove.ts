@@ -57,7 +57,10 @@ export function grooveFromTransients(
   const meanMagnitude =
     transients.length > 0 ? transients.reduce((sum, t) => sum + t.magnitude, 0) / transients.length : 1;
 
-  const onsets = transients.map((t) => ({ tick: frameToTick(t.frame, bpm, sampleRate), magnitude: t.magnitude }));
+  const onsets = transients.map((t) => ({
+    tick: frameToTick(t.frame, bpm, sampleRate),
+    magnitude: t.magnitude,
+  }));
 
   const points: GroovePoint[] = [];
   for (let i = 0; i < gridCount; i++) {
@@ -103,7 +106,10 @@ function nearestPoint(template: GrooveTemplate, tick: number): GroovePoint {
  * Schedule-time groove lookup (spec §7.5, applied like swing §7.4): the timing offset and
  * velocity scale for a note landing on `tick`, from the nearest grid position.
  */
-export function grooveShiftAtTick(template: GrooveTemplate, tick: number): {
+export function grooveShiftAtTick(
+  template: GrooveTemplate,
+  tick: number,
+): {
   offsetTicks: number;
   velocityScale: number;
 } {

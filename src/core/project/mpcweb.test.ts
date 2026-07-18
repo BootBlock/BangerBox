@@ -56,7 +56,15 @@ function fixtureSnapshot(): ProjectSnapshot {
       },
     ],
     midiEvents: [
-      { id: 'evt-1', track_id: trackId, tick_start: 0, duration_ticks: 240, note: 36, velocity: 100, extra: null },
+      {
+        id: 'evt-1',
+        track_id: trackId,
+        tick_start: 0,
+        duration_ticks: 240,
+        note: 36,
+        velocity: 100,
+        extra: null,
+      },
     ],
     automation: [
       {

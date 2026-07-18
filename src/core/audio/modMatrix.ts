@@ -50,10 +50,7 @@ export const MOD_SOURCE_POLARITY: Readonly<Record<ModSource, 'bipolar' | 'unipol
  * Sum every route's `sourceValue × amount` into its target (spec §6). Targets with no
  * routes are absent from the result; a target with several routes carries their sum.
  */
-export function evaluateModMatrix(
-  routes: readonly ModRoute[],
-  sources: ModSourceValues,
-): ModMatrixResult {
+export function evaluateModMatrix(routes: readonly ModRoute[], sources: ModSourceValues): ModMatrixResult {
   const result: ModMatrixResult = new Map();
   for (const route of routes) {
     const contribution = sources[route.source] * route.amount;

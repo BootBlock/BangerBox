@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARAM_RAMP_MS } from '@/core/constants';
-import {
-  rampEndTime,
-  rampParamLinear,
-  rampTimeConstantSeconds,
-  setParamNow,
-} from './ramps';
+import { rampEndTime, rampParamLinear, rampTimeConstantSeconds, setParamNow } from './ramps';
 
 /** A fake AudioParam that records the scheduling calls made against it. */
 function fakeParam(initial = 0) {

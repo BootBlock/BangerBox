@@ -91,7 +91,10 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
   scheduler.setTempo(useTransportStore.getState().bpm);
   scheduler.setSwing(useTransportStore.getState().swingAmount, useTransportStore.getState().swingDivision);
   pushLoop(scheduler);
-  scheduler.setMetronome(useTransportStore.getState().metronomeEnabled, useTransportStore.getState().countInBars);
+  scheduler.setMetronome(
+    useTransportStore.getState().metronomeEnabled,
+    useTransportStore.getState().countInBars,
+  );
   for (const [trackId, events] of Object.entries(useSequenceStore.getState().events)) {
     diffTrackEvents(scheduler, trackId, [], events);
   }
@@ -99,16 +102,25 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     const { scope, ownerId, targetPath } = splitLaneKey(key);
     scheduler.sendAutomationDiff(scope, ownerId, targetPath, points);
   }
+  pushGrooves(scheduler);
   pushTransport(scheduler);
 
+  let prevTrackGrooves = useSequenceStore.getState().trackGrooveIds;
   let prevEvents = useSequenceStore.getState().events;
   let prevAutomation = useSequenceStore.getState().automation;
 
   const unsubs: Unsubscribe[] = [
-    useTransportStore.subscribe((s) => s.bpm, (bpm) => scheduler.setTempo(bpm)),
+    useTransportStore.subscribe(
+      (s) => s.bpm,
+      (bpm) => scheduler.setTempo(bpm),
+    ),
     useTransportStore.subscribe(
       (s) => `${s.swingAmount}:${s.swingDivision}`,
-      () => scheduler.setSwing(useTransportStore.getState().swingAmount, useTransportStore.getState().swingDivision),
+      () =>
+        scheduler.setSwing(
+          useTransportStore.getState().swingAmount,
+          useTransportStore.getState().swingDivision,
+        ),
     ),
     useTransportStore.subscribe(
       (s) => `${s.loopEnabled}:${s.loopStartTick}:${s.loopEndTick}`,
@@ -116,7 +128,11 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     ),
     useTransportStore.subscribe(
       (s) => `${s.metronomeEnabled}:${s.countInBars}`,
-      () => scheduler.setMetronome(useTransportStore.getState().metronomeEnabled, useTransportStore.getState().countInBars),
+      () =>
+        scheduler.setMetronome(
+          useTransportStore.getState().metronomeEnabled,
+          useTransportStore.getState().countInBars,
+        ),
     ),
     useTransportStore.subscribe(
       (s) => `${s.activeSequenceId}:${s.playbackMode}`,
@@ -135,11 +151,29 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
       (s) => s.songEntries,
       () => scheduler.setSongSequence(flattenSong()),
     ),
+    // Groove is non-destructive schedule-time shaping, so only the assignment travels —
+    // the events themselves never change (spec §7.5).
+    useSequenceStore.subscribe(
+      (s) => s.trackGrooveIds,
+      (assignments) => {
+        const templates = useSequenceStore.getState().grooveTemplates;
+        for (const [trackId, templateId] of Object.entries(assignments)) {
+          if (assignments[trackId] !== prevTrackGrooves[trackId]) {
+            scheduler.setGroove(trackId, templates[templateId] ?? null);
+          }
+        }
+        for (const trackId of Object.keys(prevTrackGrooves)) {
+          if (!(trackId in assignments)) scheduler.setGroove(trackId, null);
+        }
+        prevTrackGrooves = assignments;
+      },
+    ),
     useSequenceStore.subscribe(
       (s) => s.events,
       (events) => {
         for (const [trackId, list] of Object.entries(events)) {
-          if (list !== prevEvents[trackId]) diffTrackEvents(scheduler, trackId, prevEvents[trackId] ?? [], list);
+          if (list !== prevEvents[trackId])
+            diffTrackEvents(scheduler, trackId, prevEvents[trackId] ?? [], list);
         }
         prevEvents = events;
       },
@@ -165,6 +199,14 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
   ];
 
   return combineUnsubscribers(unsubs);
+}
+
+/** Push every track's groove assignment to the worker (spec §7.5). */
+function pushGrooves(scheduler: SchedulerClient): void {
+  const { trackGrooveIds, grooveTemplates } = useSequenceStore.getState();
+  for (const [trackId, templateId] of Object.entries(trackGrooveIds)) {
+    scheduler.setGroove(trackId, grooveTemplates[templateId] ?? null);
+  }
 }
 
 /** Split a lane key `${scope}:${ownerId}:${targetPath}` (targetPath may contain colons). */

@@ -27,11 +27,7 @@ export function valueToNormalised(value: number, range: ControlRange, curve: Con
 }
 
 /** Normalised travel (0..1) → value. The exact inverse of {@link valueToNormalised}. */
-export function normalisedToValue(
-  normalised: number,
-  range: ControlRange,
-  curve: ControlCurve,
-): number {
+export function normalisedToValue(normalised: number, range: ControlRange, curve: ControlCurve): number {
   const [min, max] = range;
   const t = clamp01(normalised);
   if (logTaperUsable(range, curve)) {

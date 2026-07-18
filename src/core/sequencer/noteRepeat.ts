@@ -40,11 +40,7 @@ export function noteRepeatStepTicks(division: NoteRepeatDivision): number {
  * The division grid ticks in `[from, to)` (spec §7.3). The grid is absolute (locked to the
  * transport origin, tick 0), so repeats stay phase-aligned to the bar as the window advances.
  */
-export function repeatTicksInWindow(
-  from: number,
-  to: number,
-  division: NoteRepeatDivision,
-): number[] {
+export function repeatTicksInWindow(from: number, to: number, division: NoteRepeatDivision): number[] {
   const step = noteRepeatStepTicks(division);
   const ticks: number[] = [];
   let tick = Math.ceil(from / step) * step;

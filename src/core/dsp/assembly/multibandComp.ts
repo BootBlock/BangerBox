@@ -12,7 +12,14 @@ class Band {
   makeup: f32 = 1.0;
   env: f32 = 0.0;
 
-  setParams(sampleRate: f32, thresholdDb: f32, ratio: f32, attackMs: f32, releaseMs: f32, makeupDb: f32): void {
+  setParams(
+    sampleRate: f32,
+    thresholdDb: f32,
+    ratio: f32,
+    attackMs: f32,
+    releaseMs: f32,
+    makeupDb: f32,
+  ): void {
     this.threshold = <f32>Math.pow(10.0, <f64>thresholdDb / 20.0);
     this.ratio = ratio < 1.0 ? 1.0 : ratio;
     this.makeup = <f32>Math.pow(10.0, <f64>makeupDb / 20.0);

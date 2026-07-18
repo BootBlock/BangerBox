@@ -6,12 +6,7 @@
  * allocates nothing in `process()` (spec §5.5). The node has one input and one output so
  * it can sit inline (input passes through unchanged) or as a branch tap.
  */
-import {
-  HEADER_INTS,
-  METER_SLOTS,
-  VALUES_PER_SLOT,
-  slotFloatBase,
-} from '../metering';
+import { HEADER_INTS, METER_SLOTS, VALUES_PER_SLOT, slotFloatBase } from '../metering';
 
 interface MeterTapOptions {
   sab: SharedArrayBuffer;

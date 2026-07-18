@@ -99,7 +99,12 @@ export function decodeWav(bytes: Uint8Array): DecodedWav {
   if (bytes.byteLength < 44) throw new Error('decodeWav: byte stream too short for a WAV header');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const tag = (offset: number): string =>
-    String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
+    String.fromCharCode(
+      view.getUint8(offset),
+      view.getUint8(offset + 1),
+      view.getUint8(offset + 2),
+      view.getUint8(offset + 3),
+    );
   if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') throw new Error('decodeWav: not a RIFF/WAVE stream');
 
   let audioFormat = 1;

@@ -34,8 +34,18 @@ export type ParamTarget =
   | { readonly kind: 'channelLevel'; readonly channelId: string }
   | { readonly kind: 'channelPan'; readonly channelId: string }
   | { readonly kind: 'channelSend'; readonly channelId: string; readonly sendIndex: number }
-  | { readonly kind: 'insertParam'; readonly channelId: string; readonly slot: number; readonly param: string }
-  | { readonly kind: 'programParam'; readonly programId: string; readonly padIndex: number; readonly param: string };
+  | {
+      readonly kind: 'insertParam';
+      readonly channelId: string;
+      readonly slot: number;
+      readonly param: string;
+    }
+  | {
+      readonly kind: 'programParam';
+      readonly programId: string;
+      readonly padIndex: number;
+      readonly param: string;
+    };
 
 const SEND_PATTERN = /^mixer\.(.+)\.sendLevels\.(\d+)$/;
 const LEVEL_PATTERN = /^mixer\.(.+)\.level$/;

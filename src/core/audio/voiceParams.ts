@@ -14,12 +14,7 @@
 /** Cents per semitone — `AudioBufferSourceNode.detune` is expressed in cents. */
 const CENTS_PER_SEMITONE = 100;
 
-export type ProgramParamTarget =
-  | 'filterFrequency'
-  | 'filterQ'
-  | 'detune'
-  | 'channelLevel'
-  | 'channelPan';
+export type ProgramParamTarget = 'filterFrequency' | 'filterQ' | 'detune' | 'channelLevel' | 'channelPan';
 
 export interface ProgramParamChange {
   readonly target: ProgramParamTarget;

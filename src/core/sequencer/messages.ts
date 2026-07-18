@@ -21,6 +21,7 @@ import {
   type MidiEvent,
 } from '@/core/project/schemas';
 import type { NoteRepeatDivision } from './noteRepeat';
+import type { GrooveTemplate } from './groove';
 import type { ArpMode } from './arpeggiator';
 
 /** Protocol version — bumped on any breaking change to the message shapes (spec §7.1.3). */
@@ -63,17 +64,55 @@ export interface SchedulerSequenceMeta {
 export type SchedulerRequest =
   | { readonly kind: 'init'; readonly playheadSab: SharedArrayBuffer }
   | { readonly kind: 'clockSync'; readonly contextTime: number; readonly performanceTime: number }
-  | { readonly kind: 'transport'; readonly isPlaying: boolean; readonly isRecording: boolean; readonly startTick: number }
+  | {
+      readonly kind: 'transport';
+      readonly isPlaying: boolean;
+      readonly isRecording: boolean;
+      readonly startTick: number;
+    }
   | { readonly kind: 'tempo'; readonly bpm: number }
   | { readonly kind: 'swing'; readonly amount: number; readonly division: 8 | 16 }
   | { readonly kind: 'loop'; readonly enabled: boolean; readonly startTick: number; readonly endTick: number }
-  | { readonly kind: 'eventsDiff'; readonly trackId: string; readonly sequenceId: string; readonly upserts: readonly MidiEvent[]; readonly deletes: readonly string[] }
-  | { readonly kind: 'automationDiff'; readonly scope: AutomationPoint['scope']; readonly ownerId: string; readonly targetPath: string; readonly points: readonly AutomationPoint[] }
+  | { readonly kind: 'groove'; readonly trackId: string; readonly template: GrooveTemplate | null }
+  | {
+      readonly kind: 'eventsDiff';
+      readonly trackId: string;
+      readonly sequenceId: string;
+      readonly upserts: readonly MidiEvent[];
+      readonly deletes: readonly string[];
+    }
+  | {
+      readonly kind: 'automationDiff';
+      readonly scope: AutomationPoint['scope'];
+      readonly ownerId: string;
+      readonly targetPath: string;
+      readonly points: readonly AutomationPoint[];
+    }
   | { readonly kind: 'songSequence'; readonly orderedSequenceIds: readonly string[] }
-  | { readonly kind: 'sequenceMeta'; readonly sequences: Readonly<Record<string, SchedulerSequenceMeta>>; readonly projectBpm: number; readonly activeSequenceId: string | null; readonly playbackMode: 'sequence' | 'song' }
-  | { readonly kind: 'liveNote'; readonly note: number; readonly velocity: number; readonly on: boolean; readonly timestamp: number; readonly trackId: string }
+  | {
+      readonly kind: 'sequenceMeta';
+      readonly sequences: Readonly<Record<string, SchedulerSequenceMeta>>;
+      readonly projectBpm: number;
+      readonly activeSequenceId: string | null;
+      readonly playbackMode: 'sequence' | 'song';
+    }
+  | {
+      readonly kind: 'liveNote';
+      readonly note: number;
+      readonly velocity: number;
+      readonly on: boolean;
+      readonly timestamp: number;
+      readonly trackId: string;
+    }
   | { readonly kind: 'noteRepeat'; readonly enabled: boolean; readonly division: NoteRepeatDivision }
-  | { readonly kind: 'arp'; readonly enabled: boolean; readonly mode: ArpMode; readonly octaves: number; readonly gate: number; readonly division: NoteRepeatDivision }
+  | {
+      readonly kind: 'arp';
+      readonly enabled: boolean;
+      readonly mode: ArpMode;
+      readonly octaves: number;
+      readonly gate: number;
+      readonly division: NoteRepeatDivision;
+    }
   | { readonly kind: 'metronome'; readonly enabled: boolean; readonly countInBars: 0 | 1 | 2 }
   | { readonly kind: 'liveErase'; readonly trackId: string; readonly note: number; readonly active: boolean };
 
@@ -103,19 +142,69 @@ const sequenceMetaSchema = z.object({
 const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('init'), playheadSab: z.instanceof(SharedArrayBuffer) }),
   z.object({ kind: z.literal('clockSync'), contextTime: z.number(), performanceTime: z.number() }),
-  z.object({ kind: z.literal('transport'), isPlaying: z.boolean(), isRecording: z.boolean(), startTick: z.number() }),
+  z.object({
+    kind: z.literal('transport'),
+    isPlaying: z.boolean(),
+    isRecording: z.boolean(),
+    startTick: z.number(),
+  }),
   z.object({ kind: z.literal('tempo'), bpm: z.number() }),
-  z.object({ kind: z.literal('swing'), amount: z.number(), division: z.union([z.literal(8), z.literal(16)]) }),
+  z.object({
+    kind: z.literal('swing'),
+    amount: z.number(),
+    division: z.union([z.literal(8), z.literal(16)]),
+  }),
   z.object({ kind: z.literal('loop'), enabled: z.boolean(), startTick: z.number(), endTick: z.number() }),
-  z.object({ kind: z.literal('eventsDiff'), trackId: z.string(), sequenceId: z.string(), upserts: z.array(midiEventSchema), deletes: z.array(z.string()) }),
-  z.object({ kind: z.literal('automationDiff'), scope: z.enum(['sequence', 'track']), ownerId: z.string(), targetPath: z.string(), points: z.array(automationPointSchema) }),
+  z.object({
+    kind: z.literal('eventsDiff'),
+    trackId: z.string(),
+    sequenceId: z.string(),
+    upserts: z.array(midiEventSchema),
+    deletes: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal('automationDiff'),
+    scope: z.enum(['sequence', 'track']),
+    ownerId: z.string(),
+    targetPath: z.string(),
+    points: z.array(automationPointSchema),
+  }),
   z.object({ kind: z.literal('songSequence'), orderedSequenceIds: z.array(z.string()) }),
-  z.object({ kind: z.literal('sequenceMeta'), sequences: z.record(z.string(), sequenceMetaSchema), projectBpm: z.number(), activeSequenceId: z.string().nullable(), playbackMode: z.enum(['sequence', 'song']) }),
-  z.object({ kind: z.literal('liveNote'), note: z.number().int(), velocity: z.number().int(), on: z.boolean(), timestamp: z.number(), trackId: z.string() }),
+  z.object({
+    kind: z.literal('sequenceMeta'),
+    sequences: z.record(z.string(), sequenceMetaSchema),
+    projectBpm: z.number(),
+    activeSequenceId: z.string().nullable(),
+    playbackMode: z.enum(['sequence', 'song']),
+  }),
+  z.object({
+    kind: z.literal('liveNote'),
+    note: z.number().int(),
+    velocity: z.number().int(),
+    on: z.boolean(),
+    timestamp: z.number(),
+    trackId: z.string(),
+  }),
   z.object({ kind: z.literal('noteRepeat'), enabled: z.boolean(), division: noteRepeatDivisionSchema }),
-  z.object({ kind: z.literal('arp'), enabled: z.boolean(), mode: z.enum(['up', 'down', 'upDown', 'played', 'random']), octaves: z.number().int(), gate: z.number(), division: noteRepeatDivisionSchema }),
-  z.object({ kind: z.literal('metronome'), enabled: z.boolean(), countInBars: z.union([z.literal(0), z.literal(1), z.literal(2)]) }),
-  z.object({ kind: z.literal('liveErase'), trackId: z.string(), note: z.number().int(), active: z.boolean() }),
+  z.object({
+    kind: z.literal('arp'),
+    enabled: z.boolean(),
+    mode: z.enum(['up', 'down', 'upDown', 'played', 'random']),
+    octaves: z.number().int(),
+    gate: z.number(),
+    division: noteRepeatDivisionSchema,
+  }),
+  z.object({
+    kind: z.literal('metronome'),
+    enabled: z.boolean(),
+    countInBars: z.union([z.literal(0), z.literal(1), z.literal(2)]),
+  }),
+  z.object({
+    kind: z.literal('liveErase'),
+    trackId: z.string(),
+    note: z.number().int(),
+    active: z.boolean(),
+  }),
 ]) as z.ZodType<SchedulerRequest>;
 
 const scheduledEventSchema = z.object({

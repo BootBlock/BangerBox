@@ -11,12 +11,7 @@ describe('OPFS path building (spec §9.1)', () => {
   });
 
   it('splits canonical paths into segments', () => {
-    expect(splitOpfsPath('/projects/p1/samples/s1.wav')).toEqual([
-      'projects',
-      'p1',
-      'samples',
-      's1.wav',
-    ]);
+    expect(splitOpfsPath('/projects/p1/samples/s1.wav')).toEqual(['projects', 'p1', 'samples', 's1.wav']);
     expect(splitOpfsPath('global_library/s.wav')).toEqual(['global_library', 's.wav']);
   });
 

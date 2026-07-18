@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CHORD_SETS,
-  SCALES,
-  chordNotes,
-  noteName,
-  scaleNotes,
-  type ScaleId,
-} from './scales';
+import { CHORD_SETS, SCALES, chordNotes, noteName, scaleNotes, type ScaleId } from './scales';
 
 describe('scales (spec §8.5.9)', () => {
   it('offers every scale the spec names', () => {

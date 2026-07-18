@@ -16,7 +16,9 @@ import { Toggle } from './Toggle';
 
 describe('Knob (spec §8.2 ARIA + keyboard)', () => {
   it('exposes the full slider ARIA contract with human units', () => {
-    render(<Knob label="Cutoff" value={1200} range={[20, 20_000]} unit="Hz" curve="log" onCommit={vi.fn()} />);
+    render(
+      <Knob label="Cutoff" value={1200} range={[20, 20_000]} unit="Hz" curve="log" onCommit={vi.fn()} />,
+    );
     const knob = screen.getByRole('slider', { name: 'Cutoff' });
     expect(knob).toHaveAttribute('aria-valuemin', '20');
     expect(knob).toHaveAttribute('aria-valuemax', '20000');
@@ -62,7 +64,14 @@ describe('Knob (spec §8.2 ARIA + keyboard)', () => {
     const onTransient = vi.fn();
     const onCommit = vi.fn();
     render(
-      <Knob label="Level" value={50} range={[0, 100]} step={1} onTransient={onTransient} onCommit={onCommit} />,
+      <Knob
+        label="Level"
+        value={50}
+        range={[0, 100]}
+        step={1}
+        onTransient={onTransient}
+        onCommit={onCommit}
+      />,
     );
     await user.tab();
     await user.keyboard('{ArrowUp}{ArrowUp}');

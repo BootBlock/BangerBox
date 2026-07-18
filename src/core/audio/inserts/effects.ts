@@ -14,12 +14,7 @@ import { rampParamTarget, setParamNow } from '../params/ramps';
 import type { DspEffectMessage } from '../worklets/dspEffectProtocol';
 import { DSP_EFFECT_PROCESSOR } from '../worklets/dspEffectProtocol';
 import { makeReverbImpulse, makeSaturatorCurve } from './dspCurves';
-import {
-  EFFECT_PARAM_RANGES,
-  FILTER_TYPES,
-  FILTER_TYPE_TO_BIQUAD,
-  SATURATOR_CURVES,
-} from './effectParams';
+import { EFFECT_PARAM_RANGES, FILTER_TYPES, FILTER_TYPE_TO_BIQUAD, SATURATOR_CURVES } from './effectParams';
 
 export interface EffectCore {
   readonly input: AudioNode;
@@ -86,8 +81,10 @@ function buildFilter(context: BaseAudioContext, params: Record<string, number>):
     biquad.type = FILTER_TYPE_TO_BIQUAD[FILTER_TYPES[clamp(Math.round(index), 0, 3)]!];
   };
   setType(params.type ?? 0);
-  if (params.cutoff !== undefined) setParamNow(biquad.frequency, clampParam('filter', 'cutoff', params.cutoff), now);
-  if (params.resonance !== undefined) setParamNow(biquad.Q, clampParam('filter', 'resonance', params.resonance), now);
+  if (params.cutoff !== undefined)
+    setParamNow(biquad.frequency, clampParam('filter', 'cutoff', params.cutoff), now);
+  if (params.resonance !== undefined)
+    setParamNow(biquad.Q, clampParam('filter', 'resonance', params.resonance), now);
 
   return {
     input: biquad,
@@ -95,8 +92,10 @@ function buildFilter(context: BaseAudioContext, params: Record<string, number>):
     latencySamples: 0,
     setParam: (name, value, when) => {
       if (name === 'type') setType(value);
-      else if (name === 'cutoff') rampParamTarget(biquad.frequency, clampParam('filter', 'cutoff', value), when);
-      else if (name === 'resonance') rampParamTarget(biquad.Q, clampParam('filter', 'resonance', value), when);
+      else if (name === 'cutoff')
+        rampParamTarget(biquad.frequency, clampParam('filter', 'cutoff', value), when);
+      else if (name === 'resonance')
+        rampParamTarget(biquad.Q, clampParam('filter', 'resonance', value), when);
     },
     destroy: () => biquad.disconnect(),
   };
@@ -123,7 +122,8 @@ function buildDelay(context: BaseAudioContext, params: Record<string, number>): 
     latencySamples: 0,
     setParam: (name, value, when) => {
       if (name === 'time') rampParamTarget(delay.delayTime, clampParam('delay', 'time', value) / 1000, when);
-      else if (name === 'feedback') rampParamTarget(feedback.gain, clampParam('delay', 'feedback', value), when);
+      else if (name === 'feedback')
+        rampParamTarget(feedback.gain, clampParam('delay', 'feedback', value), when);
       else if (name === 'tone') rampParamTarget(tone.frequency, clampParam('delay', 'tone', value), when);
     },
     destroy: () => {
@@ -137,10 +137,14 @@ function buildCompressor(context: BaseAudioContext, params: Record<string, numbe
   const makeup = context.createGain();
   comp.connect(makeup);
   const now = context.currentTime;
-  if (params.threshold !== undefined) setParamNow(comp.threshold, clampParam('compressor', 'threshold', params.threshold), now);
-  if (params.ratio !== undefined) setParamNow(comp.ratio, clampParam('compressor', 'ratio', params.ratio), now);
-  if (params.attack !== undefined) setParamNow(comp.attack, clampParam('compressor', 'attack', params.attack) / 1000, now);
-  if (params.release !== undefined) setParamNow(comp.release, clampParam('compressor', 'release', params.release) / 1000, now);
+  if (params.threshold !== undefined)
+    setParamNow(comp.threshold, clampParam('compressor', 'threshold', params.threshold), now);
+  if (params.ratio !== undefined)
+    setParamNow(comp.ratio, clampParam('compressor', 'ratio', params.ratio), now);
+  if (params.attack !== undefined)
+    setParamNow(comp.attack, clampParam('compressor', 'attack', params.attack) / 1000, now);
+  if (params.release !== undefined)
+    setParamNow(comp.release, clampParam('compressor', 'release', params.release) / 1000, now);
   if (params.knee !== undefined) setParamNow(comp.knee, clampParam('compressor', 'knee', params.knee), now);
   setParamNow(makeup.gain, dbToGain(clampParam('compressor', 'makeup', params.makeup ?? 0)), now);
 
@@ -149,12 +153,16 @@ function buildCompressor(context: BaseAudioContext, params: Record<string, numbe
     output: makeup,
     latencySamples: 0,
     setParam: (name, value, when) => {
-      if (name === 'threshold') rampParamTarget(comp.threshold, clampParam('compressor', 'threshold', value), when);
+      if (name === 'threshold')
+        rampParamTarget(comp.threshold, clampParam('compressor', 'threshold', value), when);
       else if (name === 'ratio') rampParamTarget(comp.ratio, clampParam('compressor', 'ratio', value), when);
-      else if (name === 'attack') rampParamTarget(comp.attack, clampParam('compressor', 'attack', value) / 1000, when);
-      else if (name === 'release') rampParamTarget(comp.release, clampParam('compressor', 'release', value) / 1000, when);
+      else if (name === 'attack')
+        rampParamTarget(comp.attack, clampParam('compressor', 'attack', value) / 1000, when);
+      else if (name === 'release')
+        rampParamTarget(comp.release, clampParam('compressor', 'release', value) / 1000, when);
       else if (name === 'knee') rampParamTarget(comp.knee, clampParam('compressor', 'knee', value), when);
-      else if (name === 'makeup') rampParamTarget(makeup.gain, dbToGain(clampParam('compressor', 'makeup', value)), when);
+      else if (name === 'makeup')
+        rampParamTarget(makeup.gain, dbToGain(clampParam('compressor', 'makeup', value)), when);
     },
     destroy: () => {
       comp.disconnect();
@@ -175,7 +183,11 @@ function buildSaturator(context: BaseAudioContext, params: Record<string, number
     shaper.curve = makeSaturatorCurve(SATURATOR_CURVES[curveIndex]!, drive);
   };
   regenerate();
-  setParamNow(trim.gain, dbToGain(clampParam('saturator', 'output', params.output ?? 0)), context.currentTime);
+  setParamNow(
+    trim.gain,
+    dbToGain(clampParam('saturator', 'output', params.output ?? 0)),
+    context.currentTime,
+  );
 
   return {
     input: shaper,
@@ -215,7 +227,11 @@ function buildReverb(context: BaseAudioContext, params: Record<string, number>):
     convolver.buffer = buffer;
   };
   regenerate();
-  setParamNow(predelay.delayTime, clampParam('reverb', 'predelay', params.predelay ?? 12) / 1000, context.currentTime);
+  setParamNow(
+    predelay.delayTime,
+    clampParam('reverb', 'predelay', params.predelay ?? 12) / 1000,
+    context.currentTime,
+  );
 
   return {
     input: predelay,
@@ -330,7 +346,9 @@ export function buildEffectCore(
     }
     case 'limiter': {
       const module = getKernelModule('limiter');
-      return module ? buildWorkletEffect(context, 'limiter', 'limiter', module, params) : buildPassthrough(context);
+      return module
+        ? buildWorkletEffect(context, 'limiter', 'limiter', module, params)
+        : buildPassthrough(context);
     }
     default:
       return buildPassthrough(context);

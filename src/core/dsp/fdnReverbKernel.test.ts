@@ -14,7 +14,11 @@ function peak(data: Float32Array): number {
 }
 
 /** Render an impulse through the reverb and return the wet tail. */
-function renderImpulse(module: WebAssembly.Module, configure: (k: FdnReverbKernel) => void, frames = 48_000): Float32Array {
+function renderImpulse(
+  module: WebAssembly.Module,
+  configure: (k: FdnReverbKernel) => void,
+  frames = 48_000,
+): Float32Array {
   const kernel = FdnReverbKernel.fromModule(module, 48_000, frames);
   configure(kernel);
   const input = new Float32Array(frames);
