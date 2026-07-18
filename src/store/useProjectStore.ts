@@ -9,6 +9,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { clampInt } from '@/core/math';
 import { dirtyKey, markDirty } from '@/core/project/dirty';
 import { getProjectService } from '@/core/project/service';
+import type { SaveOutcome } from '@/core/project/autosave';
 import { GLOBAL_INSERT_LIMIT_RANGE, type BitDepth } from '@/core/project/schemas';
 
 /** Project sample-rate options (spec §1.3 #18). */
@@ -40,7 +41,7 @@ interface ProjectState extends ProjectSettings {
   // Lifecycle — delegated to the registered service (spec §4.2, §4.4).
   newProject: (name?: string) => Promise<string>;
   loadProject: (id: string) => Promise<void>;
-  saveNow: () => Promise<void>;
+  saveNow: () => Promise<SaveOutcome>;
   exportMpcweb: () => Promise<Blob>;
   importMpcweb: (file: File) => Promise<string>;
 }

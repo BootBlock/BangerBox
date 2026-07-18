@@ -8,7 +8,7 @@ import { getDatabaseDriver } from '@/core/storage/client';
 import { createRepositories, type Repositories } from '@/core/storage/repositories';
 import { readFile, samplePath, writeFileAtomic } from '@/core/storage/opfs';
 import { useProjectStore, useUIStore } from '@/store';
-import { AutosaveQueue } from './autosave';
+import { AutosaveQueue, type SaveOutcome } from './autosave';
 import { registerAutosave, unregisterAutosave } from './dirty';
 import { hydrateStores } from './hydrate';
 import { remapSnapshot } from './mpcweb';
@@ -104,8 +104,9 @@ async function loadProject(id: string): Promise<void> {
   registerAutosave(queue, { onDirty: () => useProjectStore.getState().setModified(true) });
 }
 
-async function saveNow(): Promise<void> {
-  await queue?.flushNow();
+async function saveNow(): Promise<SaveOutcome> {
+  // No queue means no open project — nothing to save, which is not a save.
+  return (await queue?.flushNow()) ?? 'idle';
 }
 
 /**
