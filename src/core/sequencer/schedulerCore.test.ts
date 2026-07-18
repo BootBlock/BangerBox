@@ -226,6 +226,25 @@ describe('SchedulerCore — live erase (spec §7.7)', () => {
     // The kept note (different pad) is untouched and still schedules.
     expect(notes(result).some((e) => e.note === 38)).toBe(true);
   });
+
+  it('erases only the ticks under the playhead when the window straddles the loop end', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    // Same pad on both sides of the bar: one just before the loop end, one early next pass.
+    core.applyEventsDiff('t1', 'S', [note('early', 100), note('late', 3800)], []);
+    core.setTransport(true, false, 0);
+
+    // Play up to just before the wrap with erase disarmed, then arm it. The offsets keep the
+    // lookahead window off the 3840-tick boundary so the next wake genuinely straddles it.
+    run(core, [0, 1.86]);
+    core.setLiveErase('t1', 36, true);
+    const result = run(core, [1.91]);
+
+    // Window is linear [3763.2, 3859.2) → sequence [3763.2, 3840) ∪ [0, 19.2): 'late' only.
+    expect(result.erased).toEqual([{ trackId: 't1', eventIds: ['late'] }]);
+  });
 });
 
 describe('SchedulerCore — automation (spec §7.8)', () => {
