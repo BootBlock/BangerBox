@@ -44,7 +44,7 @@ export function AppShell() {
           // A mode fits its viewport rather than scrolling as a page (spec §8.4) — the give
           // comes from the panels built to absorb it. Below `lg` the modes stack into one
           // column where fitting is not possible, so the scroll stays there.
-          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 lg:overflow-hidden"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3 lg:overflow-hidden"
         >
           <AnimatePresence mode="wait">
             <motion.div

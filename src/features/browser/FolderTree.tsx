@@ -61,7 +61,7 @@ export function FolderTree() {
       role="tree"
       aria-label="Library folders"
       data-testid="browser-folder-tree"
-      className="w-44 shrink-0 overflow-auto rounded-bb-sm border border-bb-line p-1"
+      className="w-44 shrink-0 overflow-auto overscroll-contain rounded-bb-sm border border-bb-line p-1"
     >
       <li role="treeitem" aria-expanded={projectsExpanded} aria-selected={false}>
         <button

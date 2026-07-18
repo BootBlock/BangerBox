@@ -112,6 +112,10 @@ export function Button({
         // No radius here — every entry in SIZE/ICON_SIZE sets its own, and specifying one
         // in both places would leave the winner to stylesheet emission order.
         'inline-flex shrink-0 items-center justify-center border font-semibold',
+        // Every button clears the ~44 px touch minimum as a hit target regardless of its
+        // drawn size (spec §8.1). `sm`/`md` icon buttons draw at 22–32 px because the rows
+        // they sit in have no room to grow; the pointer area grows instead.
+        'bb-touch-target',
         // One transition for every button in the app, using the token easing, so a button
         // never snaps in one mode and eases in another.
         'transition-colors duration-150 ease-bb-snap',

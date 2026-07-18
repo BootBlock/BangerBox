@@ -170,7 +170,7 @@ export function SampleEditPanel() {
 
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[16rem_1fr]">
         <ul
-          className="max-h-56 overflow-auto rounded-bb-sm border border-bb-line"
+          className="max-h-56 overflow-auto overscroll-contain rounded-bb-sm border border-bb-line"
           aria-label="Project samples"
         >
           {samples.map((row) => (

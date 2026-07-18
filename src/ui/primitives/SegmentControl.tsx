@@ -21,9 +21,17 @@ export interface SegmentControlProps<T extends string | number> {
   'data-testid'?: string;
 }
 
+/**
+ * Both sizes clear the ~44 px touch minimum in height (spec §8.1) — `sm` differs from `md`
+ * in type and horizontal padding, not in how tappable it is. Unlike Button and Toggle this
+ * cannot lean on `bb-touch-target`: the group clips to `overflow-hidden` so its options
+ * inherit the rounded ends, and that clips a pseudo-element hit area with them. The height
+ * is therefore real, which is also the honest answer for options sitting shoulder to
+ * shoulder with no gap to expand into.
+ */
 const SIZE: Record<'sm' | 'md', string> = {
-  sm: 'px-2 py-0.5 text-[0.625rem]',
-  md: 'px-3 py-1.5 text-xs',
+  sm: 'min-h-11 px-3 text-[0.625rem]',
+  md: 'min-h-11 px-4 text-xs',
 };
 
 export function SegmentControl<T extends string | number>({
@@ -80,7 +88,9 @@ export function SegmentControl<T extends string | number>({
             onKeyDown={handleKeyDown}
             onClick={() => onChange(option.value)}
             className={[
-              'font-semibold transition-colors duration-150 ease-bb-snap',
+              // Explicit centring: `min-h` alone leaves a button's anonymous content box to
+              // the UA's default alignment, which is not consistent across engines.
+              'inline-flex items-center justify-center font-semibold transition-colors duration-150 ease-bb-snap',
               SIZE[size],
               selected ? 'bg-bb-accent text-bb-bg' : 'text-bb-muted hover:text-bb-text',
               disabled ? 'cursor-not-allowed opacity-40' : '',

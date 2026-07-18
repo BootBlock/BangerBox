@@ -107,7 +107,11 @@ export function MutingMode() {
           label={`${label} solo`}
           pressed={soloed}
           tone="warn"
-          size="sm"
+          // Sized to sit under the `min-h-20` mute button as a peer. §8.5.3 asks for large
+          // hitboxes for live mute *and* solo; solo had been left at the default small
+          // toggle, so the two halves of one performance gesture were 80 px and 24 px.
+          size="lg"
+          block
           onChange={(next) => useMixerStore.getState().setSolo(channelId, next)}
           data-testid={`${testIdPrefix}-solo`}
         />

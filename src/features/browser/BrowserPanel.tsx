@@ -328,7 +328,7 @@ export function BrowserPanel() {
       <div className="flex min-h-0 flex-1 gap-3">
         <FolderTree />
         <ul
-          className="min-h-0 flex-1 overflow-auto rounded-bb-sm border border-bb-line"
+          className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-bb-sm border border-bb-line"
           aria-label={browsingGlobal ? 'Global library samples' : 'Project samples'}
         >
           {visibleSamples.map((row) => (

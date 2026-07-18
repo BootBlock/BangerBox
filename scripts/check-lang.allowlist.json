@@ -66,6 +66,10 @@
       "reason": "Vite configuration API name is platform-fixed"
     },
     {
+      "pattern": "\\boverscroll-behaviou?r\\b",
+      "reason": "CSS 'overscroll-behavior' property name is platform-fixed"
+    },
+    {
       "pattern": "\\bstop-color\\b",
       "reason": "SVG gradient attribute name is platform-fixed"
     },
