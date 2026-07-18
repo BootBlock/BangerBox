@@ -41,7 +41,7 @@ export interface ResolvedVoice {
   /** Coupled repitch in cents: drum layer tune, or keygroup key distance (spec §6). */
   readonly detuneCents: number;
   readonly gainDb: number;
-  /** Non-destructive per-layer trim; 0/0 = whole sample (spec §6; applied Phase 6). */
+  /** Non-destructive per-layer trim; 0/0 = whole sample (spec §6). */
   readonly startFrame: number;
   readonly endFrame: number;
   readonly reverse: boolean;
@@ -205,8 +205,9 @@ export interface VoiceTriggerParams {
 
 /**
  * Map a resolved §6 voice + runtime particulars to a voice-pool trigger spec (spec §5.4).
- * The whole coupled repitch is carried in `tuneCents`; the §6 sound-design surface (filter,
- * envelopes, LFOs, mod matrix, polyphony, glide) is forwarded so the pool builds the voice.
+ * The whole coupled repitch is carried in `tuneCents`; the layer trim and the §6 sound-design
+ * surface (filter, envelopes, LFOs, mod matrix, polyphony, glide) are forwarded so the pool
+ * builds the voice.
  * Shared by the engine dispatcher and the offline pitch renders so they never diverge.
  */
 export function resolvedVoiceToTrigger(
@@ -227,6 +228,8 @@ export function resolvedVoiceToTrigger(
     gainDb: resolved.gainDb,
     tuneSemitones: 0,
     tuneCents: resolved.detuneCents,
+    startFrame: resolved.startFrame,
+    endFrame: resolved.endFrame,
     filter: resolved.filter,
     pitchEnv: resolved.envelopes.pitch,
     filterEnv: resolved.envelopes.filter,

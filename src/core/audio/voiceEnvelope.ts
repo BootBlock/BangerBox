@@ -64,6 +64,33 @@ export function scheduleModEnvelope(
 }
 
 /**
+ * Schedule the declick fade that lands a voice on silence at `endTime` — the moment its
+ * buffer runs out (spec §5.4: a voice never ends on a hard cut). Without this the amp gain
+ * sits at the sustain level and output steps from the sample's last frame straight to zero,
+ * which clicks for any sample not ending at a zero crossing.
+ *
+ * The fade starts `declickMs` before `endTime`, or at `earliest` (the voice's start) for a
+ * voice shorter than the fade itself, so the ramp never reaches back before the note-on.
+ * `cancelAndHoldAtTime` truncates whatever AHDSR segment is still running at that point:
+ * reaching zero by `endTime` outranks completing the contour. A later note-off or steal
+ * cancels this ramp in turn, since both hold the param at their own earlier time.
+ *
+ * Returns the context time the fade begins.
+ */
+export function scheduleAmpDeclick(
+  param: AudioParam,
+  endTime: number,
+  earliest: number,
+  declickMs: number,
+): number {
+  const fadeStart = Math.max(earliest, endTime - declickMs / 1000);
+  if (endTime <= fadeStart) return fadeStart; // zero-length region: nothing to fade
+  param.cancelAndHoldAtTime(fadeStart);
+  param.linearRampToValueAtTime(0, endTime);
+  return fadeStart;
+}
+
+/**
  * Schedule the release ramp from `when` to silence over `releaseMs`, holding whatever
  * level the envelope had reached. Returns the context time the voice is silent (when the
  * source should stop).

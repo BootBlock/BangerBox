@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultEnvelope } from '@/core/project/schemas';
 import { createFakeAudioContext } from '@/test/mocks/audioContext';
-import { scheduleAmpAttack, scheduleModEnvelope, velocityToGain } from './voiceEnvelope';
+import {
+  scheduleAmpAttack,
+  scheduleAmpDeclick,
+  scheduleModEnvelope,
+  velocityToGain,
+} from './voiceEnvelope';
 
 /** Access a fake AudioParam's recorded schedule calls. */
 function calls(param: unknown): { method: string; args: number[] }[] {
@@ -13,6 +18,41 @@ describe('velocityToGain (spec §5.4)', () => {
     expect(velocityToGain(127, 0)).toBeCloseTo(1);
     expect(velocityToGain(0, 0)).toBe(0);
     expect(velocityToGain(127, 6)).toBeCloseTo(10 ** (6 / 20));
+  });
+});
+
+describe('scheduleAmpDeclick (spec §5.4)', () => {
+  it('ramps to true zero exactly at the end of the buffer', () => {
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    const fadeStart = scheduleAmpDeclick(gain.gain, 2, 0, 3);
+    expect(fadeStart).toBeCloseTo(2 - 0.003);
+    const ramp = calls(gain.gain).find((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramp?.args).toEqual([0, 2]);
+  });
+
+  it('holds the running envelope at the fade start so the contour is truncated', () => {
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    scheduleAmpDeclick(gain.gain, 2, 0, 3);
+    const hold = calls(gain.gain).find((c) => c.method === 'cancelAndHoldAtTime');
+    expect(hold?.args[0]).toBeCloseTo(2 - 0.003);
+  });
+
+  it('never reaches back before note-on for a voice shorter than the fade', () => {
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    // A 1 ms voice with a 3 ms declick: the fade is clamped to the voice's own start.
+    const fadeStart = scheduleAmpDeclick(gain.gain, 5.001, 5, 3);
+    expect(fadeStart).toBe(5);
+    expect(calls(gain.gain).find((c) => c.method === 'linearRampToValueAtTime')?.args).toEqual([0, 5.001]);
+  });
+
+  it('schedules nothing for a zero-length region', () => {
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    scheduleAmpDeclick(gain.gain, 5, 5, 3);
+    expect(calls(gain.gain)).toHaveLength(0);
   });
 });
 
