@@ -61,8 +61,14 @@ interface SequenceState extends Required<SequenceHydration> {
    * `overdub` merges into the track; `replace` swaps the track's events for the take.
    */
   commitRecordedTake: (trackId: string, events: readonly MidiEvent[], mode: 'overdub' | 'replace') => void;
-  addEvents: (trackId: string, events: readonly MidiEvent[]) => void;
-  removeEvents: (trackId: string, ids: readonly string[]) => void;
+  /**
+   * Add events. `coalesceKey` folds consecutive calls into one undo entry, so a paint
+   * drag across the grid undoes as a single stroke rather than note by note (spec §3.3);
+   * the caller seals the run with `endUndoGesture` on pointer release.
+   */
+  addEvents: (trackId: string, events: readonly MidiEvent[], coalesceKey?: string) => void;
+  /** Remove events; `coalesceKey` groups an erase drag as one undo entry (spec §3.3). */
+  removeEvents: (trackId: string, ids: readonly string[], coalesceKey?: string) => void;
 
   /** Atomically replace one automation lane (owner + target path — spec §7.8). */
   setAutomationLane: (
@@ -249,7 +255,7 @@ export const useSequenceStore = create<SequenceState>()(
         dirtyKeys: [dirtyKey.events(trackId)],
       });
     },
-    addEvents: (trackId, events) => {
+    addEvents: (trackId, events, coalesceKey) => {
       const prev = get().events[trackId] ?? [];
       const next = sortEvents([...prev, ...events]);
       const setEvents = (value: MidiEvent[]) =>
@@ -259,9 +265,10 @@ export const useSequenceStore = create<SequenceState>()(
         apply: () => setEvents(next),
         revert: () => setEvents(prev),
         dirtyKeys: [dirtyKey.events(trackId)],
+        ...(coalesceKey !== undefined ? { coalesceKey } : {}),
       });
     },
-    removeEvents: (trackId, ids) => {
+    removeEvents: (trackId, ids, coalesceKey) => {
       const prev = get().events[trackId] ?? [];
       const removeSet = new Set(ids);
       const next = prev.filter((event) => !removeSet.has(event.id));
@@ -272,6 +279,7 @@ export const useSequenceStore = create<SequenceState>()(
         apply: () => setEvents(next),
         revert: () => setEvents(prev),
         dirtyKeys: [dirtyKey.events(trackId)],
+        ...(coalesceKey !== undefined ? { coalesceKey } : {}),
       });
     },
 

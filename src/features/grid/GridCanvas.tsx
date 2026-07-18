@@ -18,11 +18,14 @@ import { getAudioEngine } from '@/core/project/session';
 import { secondsToTicks } from '@/core/sequencer/ppqn';
 import { useTransportStore } from '@/store';
 import {
+  cellsAlongSegment,
+  eventAtCell,
   eventAtPoint,
   noteToRow,
   resizeHandleAtPoint,
   rowToNote,
   rowToY,
+  snapTick,
   tickToX,
   xToTick,
   yToRow,
@@ -46,8 +49,11 @@ export interface GridCanvasProps {
   rowLabel: (note: number) => string;
   selectedIds: readonly string[];
   onSelect: (ids: readonly string[]) => void;
-  onDraw: (note: number, tickStart: number, durationTicks: number) => void;
-  onErase: (id: string) => void;
+  /** `coalesceKey` is set while painting, so the whole stroke is one undo entry. */
+  onDraw: (note: number, tickStart: number, durationTicks: number, coalesceKey?: string) => void;
+  onErase: (id: string, coalesceKey?: string) => void;
+  /** Seals a paint stroke's undo entry on pointer release (spec §3.3 gesture end). */
+  onGestureEnd: () => void;
   onMove: (id: string, note: number, tickStart: number) => void;
   onResize: (id: string, durationTicks: number) => void;
   onSetVelocity: (id: string, velocity: number) => void;
@@ -58,10 +64,12 @@ export interface GridCanvasProps {
 const MAX_VELOCITY = 127;
 const LABEL_GUTTER_PX = 56;
 
-/** Snap a tick to the grid, or pass it through when snapping is off. */
-function snap(tick: number, snapTicks: number): number {
-  return snapTicks > 0 ? Math.round(tick / snapTicks) * snapTicks : Math.round(tick);
-}
+/**
+ * Undo coalesce keys for the paint gestures (spec §3.3): every note a single drag adds
+ * or erases folds into one undo entry, sealed on pointer release.
+ */
+const DRAW_GESTURE = 'grid-draw';
+const ERASE_GESTURE = 'grid-erase';
 
 export function GridCanvas({
   events,
@@ -74,6 +82,7 @@ export function GridCanvas({
   onSelect,
   onDraw,
   onErase,
+  onGestureEnd,
   onMove,
   onResize,
   onSetVelocity,
@@ -267,6 +276,52 @@ export function GridCanvas({
     };
   };
 
+  /**
+   * Run a paint stroke: visit the cell under the pointer, then every cell the pointer
+   * crosses until release (issue #91 — one tap per cell was the old cost). Cells are
+   * visited once per stroke, so re-entering one after wandering off does not double up,
+   * and the segment between two pointer samples is walked so a fast swipe skips nothing.
+   */
+  const paintStroke = (
+    pointerEvent: React.PointerEvent<HTMLCanvasElement>,
+    view: GridViewport,
+    visit: (note: number, tick: number) => void,
+  ) => {
+    const canvas = pointerEvent.currentTarget;
+    const painted = new Set<string>();
+    const visitOnce = (note: number, tick: number) => {
+      const key = `${note}:${tick}`;
+      if (painted.has(key)) return;
+      painted.add(key);
+      visit(note, tick);
+    };
+
+    let previous = pointFrom(pointerEvent);
+    visitOnce(rowToNote(yToRow(previous.y, view), view), snapTick(xToTick(previous.x, view), snapTicks));
+
+    canvas.setPointerCapture(pointerEvent.pointerId);
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const next = { x: moveEvent.clientX - rect.left - LABEL_GUTTER_PX, y: moveEvent.clientY - rect.top };
+      // Painting stays in the note grid; the velocity lane below is a different gesture.
+      if (next.y >= rect.height - VELOCITY_LANE_HEIGHT) return;
+      for (const cell of cellsAlongSegment(previous, next, view, snapTicks)) {
+        visitOnce(cell.note, cell.tick);
+      }
+      previous = { ...previous, ...next };
+    };
+    const end = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      // Seal the stroke so the next one is a separate undo entry (spec §3.3).
+      if (painted.size > 0) onGestureEnd();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  };
+
   const handlePointerDown = (pointerEvent: React.PointerEvent<HTMLCanvasElement>) => {
     const point = pointFrom(pointerEvent);
     const view: GridViewport = { ...viewport, width: point.width, height: point.gridHeight };
@@ -285,12 +340,14 @@ export function GridCanvas({
       return;
     }
 
-    const note = rowToNote(yToRow(point.y, view), view);
     const tick = xToTick(point.x, view);
 
     if (tool === 'erase') {
-      const hit = eventAtPoint(events, point.x, point.y, view);
-      if (hit) onErase(hit.id);
+      // Erase paints too: dragging wipes every note the pointer crosses (issue #91).
+      paintStroke(pointerEvent, view, (strokeNote, strokeTick) => {
+        const hit = eventAtCell(latest.current.events, strokeNote, strokeTick);
+        if (hit) onErase(hit.id, ERASE_GESTURE);
+      });
       return;
     }
 
@@ -302,7 +359,7 @@ export function GridCanvas({
         const rect = pointerEvent.currentTarget.getBoundingClientRect();
         const moveTick = xToTick(moveEvent.clientX - rect.left - LABEL_GUTTER_PX, view);
         // A note is at least one tick long (spec §7.7 min duration 1 tick).
-        onResize(resizeTarget.id, Math.max(1, snap(moveTick, snapTicks) - resizeTarget.tickStart));
+        onResize(resizeTarget.id, Math.max(1, snapTick(moveTick, snapTicks) - resizeTarget.tickStart));
       };
       const end = () => {
         window.removeEventListener('pointermove', move);
@@ -323,7 +380,7 @@ export function GridCanvas({
         const rect = pointerEvent.currentTarget.getBoundingClientRect();
         const moveX = moveEvent.clientX - rect.left - LABEL_GUTTER_PX;
         const moveY = moveEvent.clientY - rect.top;
-        const nextTick = Math.max(0, snap(xToTick(moveX, view) - grabOffsetTicks, snapTicks));
+        const nextTick = Math.max(0, snapTick(xToTick(moveX, view) - grabOffsetTicks, snapTicks));
         onMove(hit.id, rowToNote(yToRow(moveY, view), view), nextTick);
       };
       const end = () => {
@@ -336,7 +393,12 @@ export function GridCanvas({
     }
 
     if (tool === 'draw') {
-      onDraw(note, snap(tick, snapTicks), defaultDurationTicks);
+      // Drag to paint a run of notes rather than tapping each cell (issue #91).
+      paintStroke(pointerEvent, view, (strokeNote, strokeTick) => {
+        // Never stack a second note on a cell that already holds one.
+        if (eventAtCell(latest.current.events, strokeNote, strokeTick)) return;
+        onDraw(strokeNote, strokeTick, defaultDurationTicks, DRAW_GESTURE);
+      });
     } else {
       onSelect([]);
     }
