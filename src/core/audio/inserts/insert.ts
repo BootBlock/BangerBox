@@ -12,6 +12,7 @@
 import type { EffectType } from '@/core/project/schemas';
 import { buildEffectCore, type EffectCore } from './effects';
 import { defaultEffectParams } from './effectParams';
+import { cancelParams } from '../params/ramps';
 import type { InsertHandle } from '../types';
 
 /** Equal-power dry/wet gains for a 0..1 mix (spec §5.7): mix 1 ⇒ fully wet. */
@@ -78,6 +79,7 @@ export function createInsert(
       else core.setParam(name, value, when);
     },
     destroy: () => {
+      cancelParams(dryGain.gain, wetGain.gain, pdcDelay.delayTime);
       input.disconnect();
       wetGain.disconnect();
       dryGain.disconnect();

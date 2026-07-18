@@ -43,7 +43,7 @@ import {
   PITCH_MOD_CENTS,
 } from './voiceModulation';
 import { routesForSource } from './modMatrix';
-import { rampParamTarget } from './params/ramps';
+import { cancelParams, rampParamTarget } from './params/ramps';
 import type { ProgramParamTarget } from './voiceParams';
 import { selectChokeVictims, selectStealVictim, type ChokeCandidate, type VoiceRef } from './voiceSelection';
 
@@ -497,21 +497,30 @@ export class VoicePool {
     if (!voice) return;
     this.voices.delete(id);
     voice.source.onended = null;
+    // Every param the voice automates, cancelled before the nodes go (spec §3.2): the amp
+    // declick/AHDSR, the detune contour, and the §6 modulation and §10.2 bend depths.
+    cancelParams(voice.ampGain.gain, voice.source.detune, voice.source.playbackRate);
     for (const osc of voice.oscillators) {
       try {
         osc.stop();
       } catch {
         // Never started / already stopped.
       }
+      cancelParams(osc.frequency, osc.detune);
       osc.disconnect();
     }
-    for (const gain of voice.modGains) gain.disconnect();
+    for (const gain of voice.modGains) {
+      cancelParams(gain.gain);
+      gain.disconnect();
+    }
+    if (voice.filter) cancelParams(voice.filter.frequency, voice.filter.Q, voice.filter.detune);
     if (voice.bendSource) {
       try {
         voice.bendSource.stop();
       } catch {
         // Already stopped.
       }
+      cancelParams(voice.bendSource.offset);
       voice.bendSource.disconnect();
       voice.bendSource = null;
     }

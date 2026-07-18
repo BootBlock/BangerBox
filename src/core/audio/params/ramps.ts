@@ -56,3 +56,22 @@ export function rampParamTarget(
 export function setParamNow(param: AudioParam, value: number, ctxTime: number): void {
   param.setValueAtTime(value, ctxTime);
 }
+
+/**
+ * Erase every pending automation event on `params` — the second conjunct of the §3.2
+ * destroy obligation, which every node-creating factory owes alongside `disconnect()`
+ * and dropping references.
+ *
+ * Cancelling from time 0 (rather than `currentTime`) is deliberate: a destroy is not a
+ * musical transition, so there is nothing to hold or ramp from, and events scheduled for
+ * the past can still be part of a segment that is currently interpolating. The
+ * {@link rampParamTarget} case matters most — `setTargetAtTime` schedules an event with
+ * no end time, so without this it stays pending on the param forever.
+ *
+ * This is teardown-only. To stop automation on a param that keeps sounding, use
+ * `cancelAndHoldAtTime` (see `voiceEnvelope.ts`), which leaves the signal where it is
+ * instead of jumping it back to the last set value.
+ */
+export function cancelParams(...params: readonly (AudioParam | null | undefined)[]): void {
+  for (const param of params) param?.cancelScheduledValues(0);
+}

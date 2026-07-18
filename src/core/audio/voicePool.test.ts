@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultEnvelope, createDefaultLfo, type ModRoute } from '@/core/project/schemas';
-import { createFakeAudioContext, liveNodeCount, type FakeAudioContext } from '@/test/mocks/audioContext';
+import {
+  createFakeAudioContext,
+  liveNodeCount,
+  pendingParamCount,
+  type FakeAudioContext,
+} from '@/test/mocks/audioContext';
 import { playRegion, VoicePool, type VoiceTriggerSpec } from './voicePool';
 
 /** Count fake nodes of a given type registered on the context. */
@@ -145,6 +150,24 @@ describe('voice pool (spec §5.4)', () => {
     pool.destroy();
     expect(pool.activeVoiceCount()).toBe(0);
     expect(liveNodeCount(fake)).toBe(0);
+  });
+
+  it('cancels every voice param it scheduled on destroy (spec §3.2)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(
+      spec(context, {
+        id: 'loaded',
+        filter: { type: 'lp', cutoff: 800, resonance: 4, envDepth: 0.5 },
+        lfos: [createDefaultLfo(), createDefaultLfo()],
+        modMatrix: [{ source: 'lfo1', target: 'pitch', amount: 0.5 }],
+      }),
+    );
+    // A bend leaves an open-ended `setTargetAtTime` on the bend node — the worst case.
+    pool.applyProgramDetune('p1', -700, 0.1);
+    expect(pendingParamCount(fake)).toBeGreaterThan(0);
+    pool.destroy();
+    expect(pendingParamCount(fake)).toBe(0);
   });
 });
 

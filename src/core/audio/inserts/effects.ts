@@ -3,14 +3,15 @@
  * (`eq4`, `filter`, `delay`, `compressor`, `saturator`, `reverb` v1) and exposes a
  * uniform {@link EffectCore}: a single input/output, a `setParam` that dezippers changes
  * (spec §4.3), a reported `latencySamples` for PDC (spec §5.7.3 — native effects report
- * 0), and a `destroy()` that disconnects every node (spec §3.2). The dry/wet `mix` and
+ * 0), and a `destroy()` that disconnects every node and cancels its scheduled params
+ * (spec §3.2). The dry/wet `mix` and
  * true-bypass are the wrapper's concern (spec §5.7), not the core's.
  */
 import { clamp } from '@/core/math';
 import type { EffectType } from '@/core/project/schemas';
 import { getKernelModule, type WorkletKernelName } from '@/core/dsp/kernelModules';
 import { dbToGain } from '../params/faderLaw';
-import { rampParamTarget, setParamNow } from '../params/ramps';
+import { cancelParams, rampParamTarget, setParamNow } from '../params/ramps';
 import type { DspEffectMessage } from '../worklets/dspEffectProtocol';
 import { DSP_EFFECT_PROCESSOR } from '../worklets/dspEffectProtocol';
 import { makeReverbImpulse, makeSaturatorCurve } from './dspCurves';
@@ -69,6 +70,7 @@ function buildEq4(context: BaseAudioContext, params: Record<string, number>): Ef
       if (param) rampParamTarget(param, clampParam('eq4', name, value), when);
     },
     destroy: () => {
+      cancelParams(...Object.values(bands));
       for (const node of [low, p1, p2, high]) node.disconnect();
     },
   };
@@ -97,7 +99,10 @@ function buildFilter(context: BaseAudioContext, params: Record<string, number>):
       else if (name === 'resonance')
         {rampParamTarget(biquad.Q, clampParam('filter', 'resonance', value), when);}
     },
-    destroy: () => biquad.disconnect(),
+    destroy: () => {
+      cancelParams(biquad.frequency, biquad.Q);
+      biquad.disconnect();
+    },
   };
 }
 
@@ -127,6 +132,7 @@ function buildDelay(context: BaseAudioContext, params: Record<string, number>): 
       else if (name === 'tone') rampParamTarget(tone.frequency, clampParam('delay', 'tone', value), when);
     },
     destroy: () => {
+      cancelParams(delay.delayTime, feedback.gain, tone.frequency);
       for (const node of [delay, feedback, tone]) node.disconnect();
     },
   };
@@ -165,6 +171,7 @@ function buildCompressor(context: BaseAudioContext, params: Record<string, numbe
         {rampParamTarget(makeup.gain, dbToGain(clampParam('compressor', 'makeup', value)), when);}
     },
     destroy: () => {
+      cancelParams(comp.threshold, comp.ratio, comp.attack, comp.release, comp.knee, makeup.gain);
       comp.disconnect();
       makeup.disconnect();
     },
@@ -205,6 +212,7 @@ function buildSaturator(context: BaseAudioContext, params: Record<string, number
       }
     },
     destroy: () => {
+      cancelParams(trim.gain);
       shaper.curve = null;
       shaper.disconnect();
       trim.disconnect();
@@ -249,6 +257,7 @@ function buildReverb(context: BaseAudioContext, params: Record<string, number>):
       }
     },
     destroy: () => {
+      cancelParams(predelay.delayTime);
       convolver.buffer = null;
       predelay.disconnect();
       convolver.disconnect();

@@ -10,7 +10,7 @@
  * master carry no sends (spec §5.2 forbids return→return feedback structurally).
  */
 import { faderLevelToGain } from './params/faderLaw';
-import { rampParamLinear, rampParamTarget, setParamNow } from './params/ramps';
+import { cancelParams, rampParamLinear, rampParamTarget, setParamNow } from './params/ramps';
 import type { InsertHandle } from './types';
 
 /** Number of post-fader send taps on a full channel strip (spec §1.3.1: 4 returns). */
@@ -128,6 +128,7 @@ function createChannelStrip(context: BaseAudioContext, { id, sendCount }: StripO
 
     destroy: () => {
       setInserts([]); // disposes any live insert handles
+      cancelParams(panner.pan, levelGain.gain, muteGain.gain, ...sends.map((send) => send.gain));
       input.disconnect();
       insertOut.disconnect();
       panner.disconnect();
