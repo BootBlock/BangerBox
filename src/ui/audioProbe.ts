@@ -196,7 +196,7 @@ async function packRoundTrip(): Promise<{ imported: boolean; samples: number }> 
   if (existing.rows.length === 0) {
     const tone = new Float32Array(2_000);
     for (let i = 0; i < tone.length; i++)
-      tone[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / ctx.projectSampleRate);
+      {tone[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / ctx.projectSampleRate);}
     const { saveChannelsAsSample } = await import('@/core/audio/sampleImport');
     await saveChannelsAsSample([tone], ctx.projectSampleRate, 'probe tone', ['probe'], ctx);
   }

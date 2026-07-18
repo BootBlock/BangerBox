@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { CapabilityReport } from '@/core/platform/capabilities';
 import { useUIStore } from '@/store';
 import { AppShell } from '@/ui/shell/AppShell';
+import { StartGate } from '@/ui/shell/StartGate';
 import { PwaUpdatePrompt } from '@/ui/PwaUpdatePrompt';
 import { ToastViewport } from '@/ui/ToastViewport';
 import { useUndoKeyboard } from '@/ui/useUndoKeyboard';
@@ -30,7 +31,10 @@ export function App({ capabilities, pwaApiOverride }: AppProps) {
 
   return (
     <>
-      <AppShell />
+      {/* Nothing behind the gate mounts until the engine is running (spec §5.1). */}
+      <StartGate>
+        <AppShell />
+      </StartGate>
       <PwaUpdatePrompt apiOverride={pwaApiOverride} />
       <ToastViewport />
     </>

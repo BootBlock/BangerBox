@@ -183,10 +183,10 @@ export class SchedulerCore {
     const key = automationLaneKey(scope, ownerId, targetPath);
     if (points.length === 0) this.automation.delete(key);
     else
-      this.automation.set(
+      {this.automation.set(
         key,
         [...points].sort((a, b) => a.tick - b.tick),
-      );
+      );}
   }
 
   setSongSequence(orderedSequenceIds: readonly string[]): void {
@@ -364,7 +364,7 @@ export class SchedulerCore {
     const newPass = loopPassAt(to, this.loop);
     if (loopActive(this.loop) && newPass > this.lastLoopPass) {
       for (let pass = this.lastLoopPass + 1; pass <= newPass; pass++)
-        result.loopWrapped.push(this.loop.startTick);
+        {result.loopWrapped.push(this.loop.startTick);}
       this.flushRecording(result); // overdub: merge each pass (spec §7.7)
       this.lastLoopPass = newPass;
     }
@@ -451,7 +451,7 @@ export class SchedulerCore {
           durationSec: ticksToSeconds(hit.durationTicks, this.bpm),
         });
         if (this.recording)
-          this.captureAt(trackId, hit.note, hit.velocity, seqTick, seqTick + hit.durationTicks);
+          {this.captureAt(trackId, hit.note, hit.velocity, seqTick, seqTick + hit.durationTicks);}
       }
     }
   }

@@ -109,12 +109,30 @@ async function assertShellAndSelfTest(page, label) {
   });
 
   await step(`${label}: app shell boots past the capability gate`, async () => {
+    // Phase 7: the start gate (spec §5.1) is the first screen; the shell mounts behind it.
     await page.locator('h1', { hasText: 'BangerBox' }).waitFor({ timeout: 15_000 });
-    await page.locator('h2', { hasText: 'Programs' }).waitFor({ timeout: 15_000 });
+    await page.getByTestId('audio-start').waitFor({ timeout: 15_000 });
+  });
+
+  // Phase 3 exit criteria (spec §12): audible end-to-end path, meters reflect real
+  // peaks, leak-free create/destroy churn (§5.3), OfflineAudioContext effect asserts
+  // (§11.2). The audio probe (window.__bangerboxAudioProbe) is the §11.4 test seam.
+  await step(`${label}: audio engine starts on the user gesture (spec §5.1)`, async () => {
+    await page.getByTestId('audio-start').click();
+    await page
+      .getByTestId('audio-engine-status')
+      .and(page.locator('[data-status="running"]'))
+      .waitFor({ timeout: 20_000 });
+    await page.waitForFunction(
+      () => typeof globalThis.__bangerboxAudioProbe?.masterPeak === 'function',
+      undefined,
+      { timeout: 10_000 },
+    );
   });
 
   // Phase 1 exit criterion (spec §12): the real-OPFS path — SQLite worker boot +
-  // migrations, then a project row AND an OPFS file round-trip on this device.
+  // migrations, then a project row AND an OPFS file round-trip on this device. From
+  // Phase 7 these diagnostics live in Main mode (spec §8.5.1), behind the start gate.
   await step(`${label}: database worker boots on the OPFS VFS with schema v1`, async () => {
     const status = page.getByTestId('storage-panel-status');
     await status.and(page.locator('[data-status="ready"], [data-status="failed"]')).waitFor({
@@ -142,22 +160,6 @@ async function assertShellAndSelfTest(page, label) {
       const detail = await page.getByTestId('storage-self-test-detail').textContent();
       throw new Error(`storage self-test ${outcome}: ${detail}`);
     }
-  });
-
-  // Phase 3 exit criteria (spec §12): audible end-to-end path, meters reflect real
-  // peaks, leak-free create/destroy churn (§5.3), OfflineAudioContext effect asserts
-  // (§11.2). The audio probe (window.__bangerboxAudioProbe) is the §11.4 test seam.
-  await step(`${label}: audio engine starts on the user gesture (spec §5.1)`, async () => {
-    await page.getByTestId('audio-start').click();
-    await page
-      .getByTestId('audio-engine-status')
-      .and(page.locator('[data-status="running"]'))
-      .waitFor({ timeout: 20_000 });
-    await page.waitForFunction(
-      () => typeof globalThis.__bangerboxAudioProbe?.masterPeak === 'function',
-      undefined,
-      { timeout: 10_000 },
-    );
   });
 
   await step(`${label}: a pad plays an audible signal and the master meter tracks it`, async () => {
@@ -270,6 +272,24 @@ async function assertShellAndSelfTest(page, label) {
     if (!(ratio > 1.94 && ratio < 2.06)) {
       throw new Error(`keygroup octave pitch ratio ${ratio.toFixed(3)} (expected ~2.0)`);
     }
+  });
+
+  // Phase 7 exit criteria (spec §12): the 12-mode surface mounts for real and every mode
+  // is reachable, with no console errors from any of them (spec §8.5, §3.4 no dead modes).
+  await step(`${label}: all 12 modes mount from the rail (spec §8.5)`, async () => {
+    const tabs = page.getByRole('tab');
+    const count = await tabs.count();
+    if (count !== 12) throw new Error(`expected 12 mode tabs, found ${count}`);
+    for (let index = 0; index < count; index += 1) {
+      const tab = tabs.nth(index);
+      const id = await tab.getAttribute('data-testid');
+      await tab.click();
+      await page.locator('[role="tabpanel"]').waitFor({ timeout: 5_000 });
+      const selected = await tab.getAttribute('aria-selected');
+      if (selected !== 'true') throw new Error(`${id} did not become the selected mode`);
+    }
+    // Leave the rail on Main so later steps see the diagnostics panels.
+    await page.getByTestId('mode-tab-main').click();
   });
 
   // The transport UI is wired end to end (spec §3.4): Play drives the scheduler and the

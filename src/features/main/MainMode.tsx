@@ -10,6 +10,7 @@ import { useProgramStore, useProjectStore, useSequenceStore, useTransportStore }
 import { estimateStorage } from '@/core/storage/safeguards';
 import { Pad, SegmentControl, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
+import { AudioEnginePanel } from '@/ui/AudioEnginePanel';
 import { StoragePanel } from '@/ui/StoragePanel';
 import { usePadTrigger } from '@/ui/usePadTrigger';
 
@@ -149,6 +150,10 @@ export function MainMode() {
       </div>
 
       <div className="flex min-h-0 flex-col gap-3">
+        <Panel title="Engine">
+          <AudioEnginePanel />
+        </Panel>
+
         <Panel title="Sequences" scroll>
           <ul className="flex flex-col gap-1">
             {Object.values(sequences).length === 0 && (

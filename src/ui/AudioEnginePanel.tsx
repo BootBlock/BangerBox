@@ -1,59 +1,40 @@
 /**
- * AudioEnginePanel — the Phase 3 minimal test UI (spec §12). The explicit Start button is
- * the autoplay-policy gate (spec §5.1): the first user gesture resumes the AudioContext,
- * loads the worklets, and swaps the sync layer onto the live graph. Once running it offers
- * a pad-grid stub (audible OPFS sample playback, §5.4), a metronome click (§5.9), a master
- * fader wired through the store → sync → graph path (§4.3), and a live master meter (§5.8).
- * The polished 12-mode surface is Phase 7; this proves the engine end to end.
+ * Audio engine diagnostics — the always-available proof that the graph is sounding
+ * (spec §12 Phase 3 exit criteria, kept green by the §11.4 smoke): demo pad triggers over
+ * the real OPFS sample path (§5.4), a metronome click (§5.9), the master fader wired
+ * store → sync → graph (§4.3), and a live master meter (§5.8).
+ *
+ * The autoplay start gate moved to {@link StartGate} in Phase 7 (spec §5.1), so this panel
+ * only ever renders with a running engine behind it. It lives in Main mode's diagnostics
+ * beside the storage self-test. Transport controls are NOT duplicated here — the shell's
+ * persistent TransportBar (spec §8.1) superseded the Phase 4 stub.
  */
-import { useEffect, useRef, useState } from 'react';
-import type { AudioEngine } from '@/core/audio/engine';
-import { startAudioEngine } from '@/core/project';
-import { useMixerStore, useUIStore } from '@/store';
+import { useEffect, useState } from 'react';
+import { getAudioEngine } from '@/core/project/session';
+import { useMixerStore } from '@/store';
 import { LEVEL_RANGE } from '@/core/project/schemas';
-import { installAudioProbe } from './audioProbe';
-import { MeterCanvas } from './primitives/MeterCanvas';
-import { SequencerTransport } from './SequencerTransport';
+import { faderLevelToDb } from '@/core/audio/params/faderLaw';
+import { Fader, MeterCanvas, formatValueText } from './primitives';
 
-type EngineStatus = 'idle' | 'starting' | 'running' | 'suspended';
-
+/** The four bundled demo pads the engine proof triggers (spec §12 Phase 3). */
 const DEMO_PADS = [0, 1, 2, 3];
 
 export function AudioEnginePanel() {
-  const [status, setStatus] = useState<EngineStatus>('idle');
-  const engineRef = useRef<AudioEngine | null>(null);
-  const pushToast = useUIStore((state) => state.pushToast);
   const masterLevel = useMixerStore((state) => state.channels.master?.level ?? 1);
+  // Seeded from the live context rather than set inside the effect: a synchronous setState
+  // in an effect triggers a cascading render, and the initial value is knowable up front.
+  const [contextState, setContextState] = useState<AudioContextState>(
+    () => getAudioEngine()?.context.state ?? 'running',
+  );
 
+  // Mirror the context state for the readout; the gate owns re-surfacing (spec §5.1).
   useEffect(() => {
-    // Re-surface the gate if the context is externally suspended (spec §5.1).
-    const engine = engineRef.current;
+    const engine = getAudioEngine();
     if (!engine) return;
-    const onStateChange = () => setStatus(engine.context.state === 'running' ? 'running' : 'suspended');
+    const onStateChange = () => setContextState(engine.context.state);
     engine.context.addEventListener('statechange', onStateChange);
     return () => engine.context.removeEventListener('statechange', onStateChange);
-  }, [status]);
-
-  const start = async () => {
-    setStatus('starting');
-    try {
-      const engine = await startAudioEngine();
-      engineRef.current = engine;
-      installAudioProbe(engine); // the smoke's §11.4 test seam
-      setStatus('running');
-    } catch (error) {
-      setStatus('idle');
-      pushToast(error instanceof Error ? error.message : 'The audio engine could not start.', 'error');
-    }
-  };
-
-  const resume = () => {
-    void engineRef.current?.context.resume();
-  };
-
-  const triggerPad = (index: number) => {
-    void engineRef.current?.triggerDemoPad(80 + index * 12);
-  };
+  }, []);
 
   const setMaster = (value: number, commit: boolean) => {
     const store = useMixerStore.getState();
@@ -61,100 +42,65 @@ export function AudioEnginePanel() {
     else store.setTransient('master.level', value);
   };
 
-  const running = status === 'running';
+  const running = contextState === 'running';
 
   return (
-    <section aria-labelledby="audio-engine-heading" className="mt-6">
-      <h3 id="audio-engine-heading" className="text-sm font-semibold">
-        Audio engine
-      </h3>
-      <p className="mt-1 text-xs leading-relaxed text-bb-muted">
-        Sound out: start the engine (a user gesture is required), then tap a pad to play the bundled sample
-        through the mixer graph. The meter shows the master level.
-      </p>
+    <section aria-labelledby="audio-engine-heading" className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <h4 id="audio-engine-heading" className="text-xs font-bold tracking-wide text-bb-text uppercase">
+          Audio engine
+        </h4>
+        <span
+          data-testid="audio-engine-status"
+          data-status={running ? 'running' : 'suspended'}
+          className={`text-xs font-semibold ${running ? 'text-bb-ok' : 'text-bb-warn'}`}
+        >
+          {running ? 'Running' : 'Suspended'}
+        </span>
+      </div>
 
-      {status === 'idle' || status === 'starting' ? (
+      <div className="flex flex-wrap items-end gap-4">
+        <div>
+          <p className="mb-2 text-[0.625rem] font-semibold text-bb-muted uppercase">Demo pads</p>
+          <div className="grid grid-cols-2 gap-2">
+            {DEMO_PADS.map((index) => (
+              <button
+                key={index}
+                type="button"
+                data-testid={`pad-trigger-${index}`}
+                aria-label={`Trigger demo pad ${index + 1}`}
+                onClick={() => void getAudioEngine()?.triggerDemoPad(80 + index * 12)}
+                className="h-11 w-11 rounded-bb-md bg-bb-raised text-xs font-semibold text-bb-text transition-transform duration-75 ease-bb-snap hover:bg-bb-line active:scale-95"
+              >
+                {index + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-end gap-2">
+          <Fader
+            label="Master level"
+            value={masterLevel}
+            range={LEVEL_RANGE}
+            defaultValue={1}
+            formatValue={(level) => formatValueText(faderLevelToDb(level), 'dB')}
+            onTransient={(value) => setMaster(value, false)}
+            onCommit={(value) => setMaster(value, true)}
+            data-testid="master-fader"
+          />
+          <MeterCanvas meterId="master" label="Master" />
+        </div>
+
         <button
           type="button"
-          data-testid="audio-start"
-          onClick={() => void start()}
-          disabled={status === 'starting'}
-          className="mt-3 rounded-bb-md bg-bb-accent px-4 py-2 text-sm font-semibold text-bb-bg transition-colors duration-150 hover:bg-bb-accent-strong disabled:cursor-not-allowed disabled:opacity-60"
+          data-testid="metronome-click"
+          onClick={() => getAudioEngine()?.clickMetronome(true)}
+          className="rounded-bb-sm border border-bb-line px-3 py-2 text-xs font-semibold transition-colors duration-150 hover:bg-bb-raised"
         >
-          {status === 'starting' ? 'Starting…' : 'Start audio engine'}
+          Metronome click
         </button>
-      ) : (
-        <div className="mt-3 flex flex-col gap-4">
-          <div className="flex items-center gap-3">
-            <span
-              data-testid="audio-engine-status"
-              data-status={status}
-              className={running ? 'text-sm font-semibold text-bb-ok' : 'text-sm font-semibold text-bb-warn'}
-            >
-              {running ? 'Running' : 'Suspended'}
-            </span>
-            {status === 'suspended' && (
-              <button
-                type="button"
-                data-testid="audio-resume"
-                onClick={resume}
-                className="rounded-bb-sm border border-bb-line px-3 py-1 text-xs font-semibold hover:bg-bb-raised"
-              >
-                Resume
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-end gap-4">
-            <div>
-              <p className="mb-2 text-xs font-semibold text-bb-muted">Pads</p>
-              <div className="grid grid-cols-2 gap-2">
-                {DEMO_PADS.map((index) => (
-                  <button
-                    key={index}
-                    type="button"
-                    data-testid={`pad-trigger-${index}`}
-                    aria-label={`Trigger demo pad ${index + 1}`}
-                    onClick={() => triggerPad(index)}
-                    className="h-12 w-12 rounded-bb-md bg-bb-raised text-xs font-semibold text-bb-text transition-transform duration-75 active:scale-95 hover:bg-bb-line"
-                  >
-                    {index + 1}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex flex-col items-center gap-2">
-              <p className="text-xs font-semibold text-bb-muted">Master</p>
-              <MeterCanvas meterId="master" label="Master" />
-              <input
-                type="range"
-                data-testid="master-fader"
-                aria-label="Master level"
-                min={LEVEL_RANGE[0]}
-                max={LEVEL_RANGE[1]}
-                step={0.01}
-                value={masterLevel}
-                onChange={(event) => setMaster(Number(event.target.value), false)}
-                onPointerUp={(event) => setMaster(Number(event.currentTarget.value), true)}
-                onBlur={(event) => setMaster(Number(event.currentTarget.value), true)}
-                className="w-32 accent-bb-accent"
-              />
-            </div>
-
-            <button
-              type="button"
-              data-testid="metronome-click"
-              onClick={() => engineRef.current?.clickMetronome(true)}
-              className="rounded-bb-sm border border-bb-line px-3 py-2 text-xs font-semibold hover:bg-bb-raised"
-            >
-              Metronome click
-            </button>
-          </div>
-
-          <SequencerTransport />
-        </div>
-      )}
+      </div>
     </section>
   );
 }

@@ -8,6 +8,7 @@ import { render, screen, waitForElementToBeRemoved, within } from '@testing-libr
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from './App';
+import { AppShell } from './ui/shell/AppShell';
 import { evaluateCapabilities } from './core/platform/capabilities';
 import { CapabilityGate } from './ui/CapabilityGate';
 import { MODE_DEFINITIONS } from './features/modes';
@@ -48,33 +49,42 @@ function renderApp() {
   return { updates, signalNeedRefresh };
 }
 
+/**
+ * The shell sits behind the §5.1 start gate, which needs a real AudioContext to pass.
+ * Shell behaviour is therefore exercised by mounting it directly; the gate has its own
+ * tests below.
+ */
+function renderShell() {
+  render(<AppShell />);
+}
+
 describe('AppShell (spec §8.1)', () => {
   beforeEach(() => {
     useUIStore.getState().setActiveMode('main');
   });
 
   it('renders the persistent transport bar and mode rail', () => {
-    renderApp();
+    renderShell();
     expect(screen.getByRole('toolbar', { name: 'Transport' })).toBeInTheDocument();
     expect(screen.getByRole('tablist', { name: 'Modes' })).toBeInTheDocument();
   });
 
   it('offers exactly the 12 modes the spec requires (§8.5)', () => {
-    renderApp();
+    renderShell();
     const tabs = within(screen.getByRole('tablist', { name: 'Modes' })).getAllByRole('tab');
     expect(tabs).toHaveLength(12);
     expect(MODE_DEFINITIONS).toHaveLength(12);
   });
 
   it('starts on Main with its tab selected and its panel shown', () => {
-    renderApp();
+    renderShell();
     expect(screen.getByTestId('mode-tab-main')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tabpanel', { name: 'Main' })).toBeInTheDocument();
   });
 
   it('switches modes on tap without a router (spec §1.3 #9)', async () => {
     const user = userEvent.setup();
-    renderApp();
+    renderShell();
     await user.click(screen.getByTestId('mode-tab-song'));
     expect(useUIStore.getState().activeMode).toBe('song');
     expect(screen.getByTestId('mode-tab-song')).toHaveAttribute('aria-selected', 'true');
@@ -83,7 +93,7 @@ describe('AppShell (spec §8.1)', () => {
 
   it('moves between modes with the arrow keys (spec §8.2 roving tabindex)', async () => {
     const user = userEvent.setup();
-    renderApp();
+    renderShell();
     const mainTab = screen.getByTestId('mode-tab-main');
     expect(mainTab).toHaveAttribute('tabindex', '0');
     mainTab.focus();
@@ -94,7 +104,7 @@ describe('AppShell (spec §8.1)', () => {
 
   it('mounts every mode without crashing (spec §3.4 no dead modes)', async () => {
     const user = userEvent.setup();
-    renderApp();
+    renderShell();
     for (const mode of MODE_DEFINITIONS) {
       await user.click(screen.getByTestId(`mode-tab-${mode.id}`));
       expect(await screen.findByRole('tabpanel', { name: mode.title })).toBeInTheDocument();
@@ -102,7 +112,7 @@ describe('AppShell (spec §8.1)', () => {
   });
 
   it('exposes the transport controls with accessible names (spec §8.2)', () => {
-    renderApp();
+    renderShell();
     const toolbar = screen.getByRole('toolbar', { name: 'Transport' });
     expect(within(toolbar).getByRole('button', { name: 'Play' })).toBeInTheDocument();
     expect(within(toolbar).getByRole('button', { name: 'Arm recording' })).toBeInTheDocument();
@@ -111,13 +121,13 @@ describe('AppShell (spec §8.1)', () => {
   });
 
   it('disables undo and redo until there is history (spec §4.5)', () => {
-    renderApp();
+    renderShell();
     expect(screen.getByTestId('transport-undo')).toBeDisabled();
     expect(screen.getByTestId('transport-redo')).toBeDisabled();
   });
 
   it('mounts the single polite live region (spec §8.2)', () => {
-    renderApp();
+    renderShell();
     expect(screen.getByTestId('live-region')).toHaveAttribute('aria-live', 'polite');
   });
 });
@@ -151,6 +161,16 @@ describe('PWA update prompt (spec §2.4)', () => {
     await user.click(screen.getByRole('button', { name: 'Not now' }));
     // AnimatePresence keeps the toast mounted until its exit animation completes.
     await waitForElementToBeRemoved(() => screen.queryByRole('status'));
+  });
+});
+
+describe('StartGate (spec §5.1 autoplay gate)', () => {
+  it('presents an explicit start control before any audio code runs', () => {
+    renderApp();
+    expect(screen.getByTestId('audio-start')).toBeInTheDocument();
+    expect(screen.getByTestId('audio-engine-status')).toHaveAttribute('data-status', 'idle');
+    // The shell must not mount behind the gate — nothing may touch the graph yet.
+    expect(screen.queryByRole('tablist', { name: 'Modes' })).not.toBeInTheDocument();
   });
 });
 

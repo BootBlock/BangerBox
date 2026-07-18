@@ -23,7 +23,7 @@ import { readSampleChannels } from './sampleEditService';
 function onsetMagnitude(mono: Float32Array, frame: number, window = 512): number {
   let peak = 0;
   for (let i = frame; i < Math.min(frame + window, mono.length); i++)
-    peak = Math.max(peak, Math.abs(mono[i]!));
+    {peak = Math.max(peak, Math.abs(mono[i]!));}
   return peak;
 }
 
