@@ -9,8 +9,9 @@
  *   ∫ 2^(detune(τ)/1200) dτ  from the voice's start to t  =  the region's length.
  *
  * This module models the same detune contour the voice pool writes onto `source.detune`
- * (piecewise-linear breakpoints) plus the oscillators summed into it (LFO routes), and
- * solves that integral so the declick fade can be laid where the buffer actually ends.
+ * (piecewise-linear breakpoints) plus everything summed into it — the live bend on its own
+ * `ConstantSourceNode` (§10.2/§6) and the LFO pitch routes — and solves that integral so
+ * the declick fade can be laid where the buffer actually ends.
  *
  * Accuracy is bounded by the step resolution rather than by the modulation depth: the
  * varying window is integrated with the midpoint rule at {@link STEPS_PER_CYCLE} steps per
@@ -50,17 +51,29 @@ export interface DetuneOscillation {
 
 /**
  * The detune contour of one live voice: a piecewise-linear base (held flat before the
- * first breakpoint and after the last) plus any oscillations summed onto it. Breakpoints
- * are mutable because a live retune appends to them; oscillations are fixed at voice build.
+ * first breakpoint and after the last), the live bend summed onto it, and any oscillations
+ * summed on top of both. `breakpoints` describes what the pool writes to `source.detune`
+ * and `bend` what it writes to the voice's bend `ConstantSourceNode`; `bend` is mutable
+ * because a live retune appends to it, while the rest is fixed at voice build.
  */
 export interface DetuneSchedule {
-  breakpoints: DetuneBreakpoint[];
+  readonly breakpoints: readonly DetuneBreakpoint[];
+  /** Live retune offsets in cents — pitch bend (§10.2) and pad detune (§6), summed on. */
+  bend: DetuneBreakpoint[];
   readonly oscillations: readonly DetuneOscillation[];
 }
 
-/** The base detune in cents at `time`, interpolating between breakpoints (spec §6). */
+/**
+ * The non-oscillating detune in cents at `time`: the scheduled contour plus the live bend
+ * summed onto it (spec §6). The two are separate tracks because the voice keeps them on
+ * separate params — see {@link applyRetune}.
+ */
 export function baseDetuneAt(schedule: DetuneSchedule, time: number): number {
-  const points = schedule.breakpoints;
+  return contourAt(schedule.breakpoints, time) + bendAt(schedule.bend, time);
+}
+
+/** A piecewise-linear track's value at `time`, held flat before the first point and after the last. */
+function contourAt(points: readonly DetuneBreakpoint[], time: number): number {
   if (points.length === 0) return 0;
   const first = points[0]!;
   if (time <= first.time) {
@@ -84,6 +97,15 @@ export function baseDetuneAt(schedule: DetuneSchedule, time: number): number {
   return points[points.length - 1]!.cents;
 }
 
+/**
+ * The live bend offset at `time`. Unlike the base contour this is *zero* before its first
+ * point rather than held at it: the bend node contributes nothing until a bend arrives.
+ */
+function bendAt(points: readonly DetuneBreakpoint[], time: number): number {
+  if (points.length === 0 || time < points[0]!.time) return 0;
+  return contourAt(points, time);
+}
+
 /** Total detune in cents at `time` — base contour plus every oscillation summed onto it. */
 export function detuneAt(schedule: DetuneSchedule, time: number): number {
   let cents = baseDetuneAt(schedule, time);
@@ -94,24 +116,27 @@ export function detuneAt(schedule: DetuneSchedule, time: number): number {
 }
 
 /**
- * Fold a live retune into the schedule (spec §10.2 pitch bend, §6 pad detune).
+ * Fold a live retune into the schedule as an *additive* offset (spec §10.2 pitch bend,
+ * §6 pad detune).
  *
- * The pool retunes with `setTargetAtTime`, which Web Audio renders only while it is the
- * *last* automation event on the param. A voice whose pitch envelope or glide ramp is
- * still pending already has later events queued, and the pending
- * `linearRampToValueAtTime` interpolates from the value at the preceding event's time —
- * so the retune never renders at all for those voices. Modelling that faithfully (rather
- * than assuming the retune lands) is what keeps the integrated end time honest.
+ * The bend is its own track because the voice keeps it on its own param: the pool writes
+ * it to a `ConstantSourceNode` connected into `source.detune` rather than onto
+ * `source.detune` itself. Node inputs sum with a param's automation instead of competing
+ * with it, so a bend lands whole while a pitch envelope or glide ramp is still running and
+ * survives once that contour's last event has passed — which is exactly what summing the
+ * two tracks here models. (Writing it onto `source.detune` directly could not: a
+ * `setTargetAtTime` renders only while it is the last event on the param, so a bend
+ * arriving mid-contour never rendered at all. See §14 `2026-07-18 (x)`.)
+ *
+ * The `PARAM_RAMP_MS` dezipper on the offset is treated as instantaneous, so each retune
+ * terminates the outgoing segment and steps, as the base contour's own retunes once did.
  */
 export function applyRetune(schedule: DetuneSchedule, time: number, cents: number): void {
-  const points = schedule.breakpoints;
-  const last = points[points.length - 1];
-  if (last && time < last.time) return; // superseded by a pending ramp — never rendered
-  const held = baseDetuneAt(schedule, time);
-  schedule.breakpoints = [
-    ...points.filter((point) => point.time < time),
+  const held = bendAt(schedule.bend, time);
+  schedule.bend = [
+    ...schedule.bend.filter((point) => point.time < time),
     { time, cents: held }, // terminate the outgoing segment…
-    { time, cents }, // …then step to the retuned value
+    { time, cents }, // …then step to the bent value
   ];
 }
 
@@ -172,9 +197,13 @@ function activeOscillations(schedule: DetuneSchedule): readonly DetuneOscillatio
   return schedule.oscillations.filter((osc) => osc.amplitudeCents !== 0 && osc.rateHz > 0);
 }
 
-/** Breakpoint times strictly inside `(from, to)`, so no integrated span crosses a corner. */
+/**
+ * Breakpoint times strictly inside `(from, to)`, so no integrated span crosses a corner.
+ * Both tracks contribute corners; duplicates are harmless, since a zero-length span
+ * integrates to nothing.
+ */
 function segmentBoundaries(schedule: DetuneSchedule, from: number, to: number): number[] {
-  return schedule.breakpoints
+  return [...schedule.breakpoints, ...schedule.bend]
     .map((point) => point.time)
     .filter((time) => time > from && time < to)
     .sort((a, b) => a - b);

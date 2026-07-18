@@ -91,6 +91,11 @@ interface Voice {
   readonly oscillators: OscillatorNode[];
   /** LFO scaling gains feeding modulation targets. */
   readonly modGains: GainNode[];
+  /**
+   * Live bend offset in cents, summed into `source.detune` (spec §10.2, §6). Built on the
+   * first retune rather than at note-on, so a voice that is never bent costs no extra node.
+   */
+  bendSource: ConstantSourceNode | null;
   readonly padKey: string;
   readonly programId: string;
   readonly chokeGroup: number;
@@ -195,8 +200,9 @@ export class VoicePool {
           if (voice.filter) rampParamTarget(voice.filter.Q, value, when);
           break;
         case 'detune':
-          // Layered on the voice's base detune so tune/pitch-mod are not discarded (§6).
-          this.retune(voice, voice.baseDetune + value, when);
+          // An offset summed onto the voice's contour, so tune, pitch-mod and any pitch
+          // envelope or glide still in flight are all preserved (§6).
+          this.retune(voice, value, when);
           break;
         default:
           // Channel-scope targets are the pad channel's business, not the voice's.
@@ -207,13 +213,14 @@ export class VoicePool {
 
   /**
    * Apply a pitch-bend detune, in cents, to every sounding voice of a program (spec §10.2).
-   * Layered on each voice's base detune so pad tune and pitch modulation survive the bend
-   * (spec §6), and ramped like any other live parameter change (spec §4.3 dezipper).
+   * Summed onto each voice's detune contour so pad tune, pitch modulation and any pitch
+   * envelope or mono glide survive the bend (spec §6), and ramped like any other live
+   * parameter change (spec §4.3 dezipper).
    */
   applyProgramDetune(programId: string, cents: number, when: number): void {
     for (const voice of this.voices.values()) {
       if (voice.programId !== programId || voice.stopScheduled) continue;
-      this.retune(voice, voice.baseDetune + cents, when);
+      this.retune(voice, cents, when);
     }
   }
 
@@ -246,13 +253,29 @@ export class VoicePool {
   }
 
   /**
-   * Retune a live voice to an absolute detune and move its declick with it (spec §5.4,
+   * Retune a live voice by an offset in cents and move its declick with it (spec §5.4,
    * §10.2). The rate change alters when the buffer runs out, so a fade laid at trigger
    * time would land in the wrong place for a bend held through the end of a sample.
+   *
+   * The offset goes on the voice's own bend node, not on `source.detune`, so it *sums*
+   * with whatever the pitch envelope or glide is doing there rather than competing with it
+   * (spec §10.2). Writing it onto `source.detune` would be swallowed outright whenever a
+   * contour event was still pending — see §14 `2026-07-18 (x)`.
    */
-  private retune(voice: Voice, detuneCents: number, when: number): void {
-    rampParamTarget(voice.source.detune, detuneCents, when);
-    this.rescheduleDeclick(voice, detuneCents, when);
+  private retune(voice: Voice, offsetCents: number, when: number): void {
+    rampParamTarget(this.bendNode(voice, when).offset, offsetCents, when);
+    this.rescheduleDeclick(voice, offsetCents, when);
+  }
+
+  /** The voice's bend node, wired into `source.detune` on first use (spec §10.2). */
+  private bendNode(voice: Voice, when: number): ConstantSourceNode {
+    if (voice.bendSource) return voice.bendSource;
+    const node = this.context.createConstantSource();
+    node.offset.value = 0; // defaults to 1 — a voice starts unbent
+    node.connect(voice.source.detune);
+    node.start(when);
+    voice.bendSource = node;
+    return node;
   }
 
   /**
@@ -266,11 +289,11 @@ export class VoicePool {
    * has already run out, and a fade that has already begun (the ramp in flight is nearer
    * the truth than anything scheduled behind it, and cutting it short would click).
    */
-  private rescheduleDeclick(voice: Voice, detuneCents: number, when: number): void {
+  private rescheduleDeclick(voice: Voice, offsetCents: number, when: number): void {
     const at = Math.max(when, voice.startTime);
     voice.consumedSeconds += consumedBetween(voice.detune, voice.consumedUntil, at);
     voice.consumedUntil = at;
-    applyRetune(voice.detune, at, detuneCents);
+    applyRetune(voice.detune, at, offsetCents);
     const remaining = voice.regionSeconds - voice.consumedSeconds;
     if (remaining <= 0 || at >= voice.declickFadeStart) return;
     // Erase the stale fade first: holding at its own start leaves the amp on the level the
@@ -331,7 +354,7 @@ export class VoicePool {
     // into `breakpoints`, which is what lets the declick integrate the real rate curve.
     const pitchDepth = (spec.pitchEnvSemitones ?? 0) * 100;
     const glideMs = spec.glideMs ?? 0;
-    let breakpoints: DetuneBreakpoint[];
+    let breakpoints: DetuneBreakpoint[]; // live bends are a separate, additive track
     if (glideMs > 0 && glideFrom !== undefined && glideFrom !== baseDetune) {
       const glideEnd = now + glideMs / 1000;
       source.detune.setValueAtTime(glideFrom, now);
@@ -355,7 +378,7 @@ export class VoicePool {
     // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6). Wired
     // before the declick because pitch-routed LFOs are part of the rate curve it solves.
     const oscillations = this.wireLfos(spec, source, filter, now, oscillators, modGains);
-    const detune: DetuneSchedule = { breakpoints, oscillations };
+    const detune: DetuneSchedule = { breakpoints, bend: [], oscillations };
 
     // Declick the natural end of the region (spec §5.4), integrating the detune contour so
     // a pitch envelope, glide or pitch LFO lands the fade where the buffer truly runs out
@@ -374,6 +397,7 @@ export class VoicePool {
       filter,
       oscillators,
       modGains,
+      bendSource: null,
       padKey: spec.padKey,
       programId: spec.programId,
       chokeGroup: spec.chokeGroup,
@@ -482,6 +506,15 @@ export class VoicePool {
       osc.disconnect();
     }
     for (const gain of voice.modGains) gain.disconnect();
+    if (voice.bendSource) {
+      try {
+        voice.bendSource.stop();
+      } catch {
+        // Already stopped.
+      }
+      voice.bendSource.disconnect();
+      voice.bendSource = null;
+    }
     try {
       voice.source.disconnect();
     } catch {

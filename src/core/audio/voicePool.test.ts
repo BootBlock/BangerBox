@@ -40,6 +40,29 @@ function sourceState(node: unknown): {
   };
 }
 
+/** The voice's bend `ConstantSourceNode` (spec §10.2) — built lazily on first retune. */
+function bendState(fake: FakeAudioContext): {
+  started: boolean;
+  stopped: boolean;
+  offset: { value: number };
+  paramOutputs: unknown[];
+} {
+  const node = fake.nodes.find((n) => n.nodeType === 'constantSource');
+  if (!node) throw new Error('no bend node was built');
+  return node as unknown as {
+    started: boolean;
+    stopped: boolean;
+    offset: { value: number };
+    paramOutputs: unknown[];
+  };
+}
+
+/** The `detune` param of the voice's buffer source — what a bend must be summed into. */
+function sourceDetune(fake: FakeAudioContext): unknown {
+  const node = fake.nodes.find((n) => n.nodeType === 'bufferSource');
+  return (node as unknown as { detune: unknown }).detune;
+}
+
 /** Access a fake AudioParam's recorded schedule calls. */
 function paramCalls(param: unknown): { method: string; args: number[] }[] {
   return (param as { calls: { method: string; args: number[] }[] }).calls;
@@ -281,22 +304,59 @@ describe('voice endings (spec §5.4 declick)', () => {
     pool.destroy();
   });
 
-  it('does not move the declick for a bend a pending pitch ramp will swallow', () => {
+  it('applies a bend that arrives while a pitch envelope ramp is still pending (spec §10.2)', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
     pool.trigger(
       spec(context, {
-        id: 'swallowed',
+        id: 'midEnvelope',
         when: 0,
         pitchEnvSemitones: 12,
         pitchEnv: createDefaultEnvelope({ attack: 0, hold: 0, decay: 500, sustain: 0, curve: 'linear' }),
       }),
     );
-    // `setTargetAtTime` at 0.2 s is overridden by the envelope ramp still running to 0.5 s,
-    // so the voice never actually bends and its end time must not move (see `applyRetune`).
+    // The bend rides its own node into `source.detune`, so the envelope ramp running to
+    // 0.5 s cannot swallow it: the voice slows and its end moves out past the unbent
+    // 0.7787 s, which is where the fade landed while this was broken.
     pool.applyProgramDetune('p1', -1200, 0.2);
+    const bend = bendState(fake);
+    expect(bend.started).toBe(true);
+    expect(bend.paramOutputs).toContain(sourceDetune(fake)); // summed into the voice's pitch
+    expect(paramCalls(bend.offset)).toEqual([
+      { method: 'setTargetAtTime', args: [-1200, 0.2, expect.any(Number)] },
+    ]);
     const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
-    expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(0.7787, 3);
+    expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(1.4293, 3);
+    pool.destroy();
+  });
+
+  it('keeps a bend applied after the pitch envelope has run out of events (spec §10.2)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(
+      spec(context, {
+        id: 'afterEnvelope',
+        when: 0,
+        pitchEnvSemitones: 12,
+        pitchEnv: createDefaultEnvelope({ attack: 0, hold: 0, decay: 500, sustain: 0, curve: 'linear' }),
+      }),
+    );
+    pool.applyProgramDetune('p1', -1200, 0.2);
+    // The offset is on its own param, so the envelope's last event (0.5 s) neither
+    // rewrites nor supersedes it — the bend is still standing afterwards, where the old
+    // failure lost it permanently.
+    const bend = bendState(fake);
+    expect(bend.offset.value).toBe(-1200);
+    pool.destroy();
+    expect(bend.stopped).toBe(true); // and it is torn down with the voice
+    expect(bend.paramOutputs).toHaveLength(0);
+  });
+
+  it('builds no bend node for a voice that is never retuned', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'unbent', when: 0 }));
+    expect(nodeCount(fake, 'constantSource')).toBe(0);
     pool.destroy();
   });
 
