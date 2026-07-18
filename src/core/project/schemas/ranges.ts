@@ -48,6 +48,13 @@ export const LFO_PHASE_RANGE: Range = [0, 1];
 export const LFO_RATE_RANGE: Range = [0.01, 100];
 export const ENVELOPE_LEVEL_RANGE: Range = [0, 1];
 export const ENVELOPE_TIME_MS_MIN = 0;
+/**
+ * Bounded envelope time for *control surfaces* that need a travel span — the Q-Link
+ * amp attack/release encoders (spec §10.3). Stored envelopes are only floored at
+ * {@link ENVELOPE_TIME_MS_MIN}; this bound constrains what a knob can dial, not what a
+ * payload may contain.
+ */
+export const ENVELOPE_TIME_MS_RANGE: Range = [ENVELOPE_TIME_MS_MIN, 10_000];
 /** Default cap 4, configurable to 8 (spec §1.3.1, §6). The schema enforces the hard cap. */
 export const MAX_VELOCITY_LAYERS = 8;
 /** Validated mod-matrix route cap (spec §6). */

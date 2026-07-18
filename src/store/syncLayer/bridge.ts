@@ -24,6 +24,14 @@ export interface SyncBridge {
 
   onActiveProgramChanged: (programId: string | null) => void;
   onQLinkModeChanged: (mode: string) => void;
+
+  /**
+   * Apply a registered §7.8 parameter address to the graph immediately. This is how
+   * program-scope sound-design edits (a Program Edit knob, a pad-mode Q-Link encoder —
+   * spec §10.3) reach the voices already sounding on that pad, since those parameters
+   * live inside the voice rather than on a mixer channel (spec §6, §7.8).
+   */
+  applyParam: (targetPath: string, value: number) => void;
 }
 
 export type Unsubscribe = () => void;
@@ -41,6 +49,7 @@ export const noopBridge: SyncBridge = {
   setBpm: () => {},
   onActiveProgramChanged: () => {},
   onQLinkModeChanged: () => {},
+  applyParam: () => {},
 };
 
 /** Combine several unsubscribers into one (idempotent). */

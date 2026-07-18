@@ -100,7 +100,8 @@ function parseMixerPath(path: string, strip: ChannelStrip | undefined): ParsedPa
         };
       }
       case 'programParam':
-        // Program-scope sound design lives in useProgramStore, not on a mixer strip.
+      case 'transportParam':
+        // Program sound design and transport globals belong to their own stores (§4.2).
         return null;
     }
   }
@@ -125,7 +126,11 @@ function parseMixerPath(path: string, strip: ChannelStrip | undefined): ParsedPa
 /** The channel a path addresses, before the strip is known (insert ranges need the strip). */
 function channelIdOf(path: string): string | null {
   const target = parseParamTarget(path);
-  if (target !== null) return target.kind === 'programParam' ? null : target.channelId;
+  if (target !== null) {
+    // Program and transport addresses are other stores' concerns (spec §4.2 ownership).
+    if (target.kind === 'programParam' || target.kind === 'transportParam') return null;
+    return target.channelId;
+  }
   const send = SEND_PATH.exec(path);
   if (send) return path.slice(0, send.index);
   if (path.endsWith('.level')) return path.slice(0, -6);
