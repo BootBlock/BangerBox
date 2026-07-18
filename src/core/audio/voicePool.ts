@@ -373,9 +373,7 @@ export class VoicePool {
   private fadeAndStop(voice: Voice, when: number, fadeMs: number): void {
     voice.released = true;
     voice.stopScheduled = true;
-    voice.ampGain.gain.cancelAndHoldAtTime(when);
-    voice.ampGain.gain.linearRampToValueAtTime(0, when + fadeMs / 1000);
-    this.safeStop(voice, when + fadeMs / 1000);
+    this.safeStop(voice, scheduleAmpRelease(voice.ampGain.gain, when, fadeMs));
   }
 
   private safeStop(voice: Voice, when?: number): void {
