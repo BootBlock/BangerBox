@@ -149,6 +149,23 @@ describe('timestamp reconstruction (spec §10.1)', () => {
     expect(messages[1]!.timestampMs).toBeGreaterThan(messages[0]!.timestampMs);
     expect(messages[1]!.timestampMs - messages[0]!.timestampMs).toBeCloseTo(4, 6);
   });
+
+  it('carries every low-7-bit wrap in a packet, not just the first (issue #77)', () => {
+    const parser = createMidiParser();
+    // Low bytes 100 → 10 → 120 → 30 wrap twice, spanning more than 256 ms. Carrying only the
+    // latest wrap gave the fourth message 158 ms — 90 ms *behind* the third, i.e. in the past.
+    const data = new Uint8Array([
+      header(0),
+      stamp(100), 0x90, 60, 100,
+      stamp(10), 0x90, 61, 100,
+      stamp(120), 0x90, 62, 100,
+      stamp(30), 0x90, 63, 100,
+    ]);
+    const stamps = parser.parse(data, 5000).map((message) => message.timestampMs);
+    expect(stamps).toHaveLength(4);
+    const deltas = stamps.slice(1).map((value, index) => value - stamps[index]!);
+    expect(deltas).toEqual([38, 110, 38]);
+  });
 });
 
 describe('SysEx and malformed input (spec §10.1 — never crashes)', () => {

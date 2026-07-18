@@ -135,8 +135,11 @@ export class AutosaveQueue {
         this.onError?.(error, error.keys);
         return false;
       }
-      // Re-queue so nothing is lost; a re-armed debounce (or saveNow) retries.
-      for (const key of batch) this.dirty.add(key);
+      // Re-queue so nothing is lost; a re-armed debounce (or saveNow) retries. A queue disposed
+      // while this flush was in flight is skipped: nothing re-arms for a disposed queue, so the
+      // keys would sit dirty forever and `hasPending` would pin the unsaved dot on a closed
+      // project.
+      if (!this.disposed) for (const key of batch) this.dirty.add(key);
       this.onError?.(error, batch);
       return false;
     }

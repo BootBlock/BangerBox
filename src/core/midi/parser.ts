@@ -156,6 +156,13 @@ export function createMidiParser(): MidiParser {
       const timestampHigh = bytes[0]! & 0x3f;
       /** Previous 13-bit stamp *within this packet*, to detect the low 7 bits wrapping. */
       let previous13: number | null = null;
+      /**
+       * Accumulated low-byte wraps within this packet. The header's high bits are fixed for the
+       * whole packet, so each wrap of the low 7 bits adds another 128 ms; a packet spanning more
+       * than 256 ms wraps more than once, and carrying only the latest wrap would fold those
+       * later stamps back into the past.
+       */
+      let carryMs = 0;
       timestampMs = arrivalMs;
 
       let index = 1;
@@ -166,8 +173,11 @@ export function createMidiParser(): MidiParser {
           index++;
           // Timestamp byte: rebuild the 13-bit stamp, carrying a low-byte wrap into the high
           // bits (the header's high value is fixed for the whole packet).
-          let timestamp13 = (timestampHigh << 7) | (byte & 0x7f);
-          if (previous13 !== null && timestamp13 < previous13) timestamp13 += 128;
+          let timestamp13 = ((timestampHigh << 7) | (byte & 0x7f)) + carryMs;
+          if (previous13 !== null && timestamp13 < previous13) {
+            carryMs += 128;
+            timestamp13 += 128;
+          }
           previous13 = timestamp13;
           timestampMs = unwrapTimestamp(timestamp13, arrivalMs);
 
