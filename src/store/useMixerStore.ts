@@ -20,6 +20,7 @@ import {
   type InsertSlotState,
   type Range,
 } from '@/core/project/schemas';
+import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
 import { commit } from './commit';
 import { useProjectStore } from './useProjectStore';
 
@@ -50,7 +51,8 @@ const gestureOrigins = new Map<string, number>();
 type ScalarField =
   | { readonly kind: 'level' }
   | { readonly kind: 'pan' }
-  | { readonly kind: 'send'; readonly index: 0 | 1 | 2 | 3 };
+  | { readonly kind: 'send'; readonly index: 0 | 1 | 2 | 3 }
+  | { readonly kind: 'insertParam'; readonly slotIndex: number; readonly param: string };
 
 interface ParsedPath {
   readonly channelId: string;
@@ -60,8 +62,49 @@ interface ParsedPath {
 
 const SEND_PATH = /\.sendLevels\.([0-3])$/;
 
-/** Parse a mixer parameter address `<channelId>.<field>` (spec §7.8 addressing style). */
-function parseMixerPath(path: string): ParsedPath | null {
+/**
+ * Parse a parameter address into the strip field it addresses.
+ *
+ * The canonical grammar is the §7.8 registry's (`mixer.<channelId>.level`,
+ * `insert:<channelId>:slot<N>.<param>`), and it is parsed by the registry itself so the
+ * grammar has exactly one owner (spec §13.6 naming freeze). The bare `<channelId>.<field>`
+ * form is also accepted: it predates the registry and is still used where the channel is
+ * already in hand. Insert ranges depend on the effect in the slot, so the strip is needed
+ * to resolve them (spec §5.7).
+ */
+function parseMixerPath(path: string, strip: ChannelStrip | undefined): ParsedPath | null {
+  const target = parseParamTarget(path);
+  if (target !== null) {
+    switch (target.kind) {
+      case 'channelLevel':
+        return { channelId: target.channelId, field: { kind: 'level' }, range: LEVEL_RANGE };
+      case 'channelPan':
+        return { channelId: target.channelId, field: { kind: 'pan' }, range: PAN_RANGE };
+      case 'channelSend':
+        return {
+          channelId: target.channelId,
+          field: { kind: 'send', index: target.sendIndex as 0 | 1 | 2 | 3 },
+          range: SEND_LEVEL_RANGE,
+        };
+      case 'insertParam': {
+        // Slots are addressed 1-based in the registry grammar (spec §7.8 `slot2`).
+        const slotIndex = target.slot - 1;
+        const slot = strip?.inserts[slotIndex];
+        if (!slot?.effectType) return null;
+        const range = targetRange(target, slot.effectType);
+        if (range === null) return null;
+        return {
+          channelId: target.channelId,
+          field: { kind: 'insertParam', slotIndex, param: target.param },
+          range,
+        };
+      }
+      case 'programParam':
+        // Program-scope sound design lives in useProgramStore, not on a mixer strip.
+        return null;
+    }
+  }
+
   const send = SEND_PATH.exec(path);
   if (send) {
     return {
@@ -79,22 +122,51 @@ function parseMixerPath(path: string): ParsedPath | null {
   return null;
 }
 
+/** The channel a path addresses, before the strip is known (insert ranges need the strip). */
+function channelIdOf(path: string): string | null {
+  const target = parseParamTarget(path);
+  if (target !== null) return target.kind === 'programParam' ? null : target.channelId;
+  const send = SEND_PATH.exec(path);
+  if (send) return path.slice(0, send.index);
+  if (path.endsWith('.level')) return path.slice(0, -6);
+  if (path.endsWith('.pan')) return path.slice(0, -4);
+  return null;
+}
+
+/** Resolve a path against the live channel map, or null when it addresses nothing. */
+function resolvePath(channels: Record<string, ChannelStrip>, path: string): ParsedPath | null {
+  const channelId = channelIdOf(path);
+  if (channelId === null) return null;
+  return parseMixerPath(path, channels[channelId]);
+}
+
 /** Read the current scalar at a parsed path, or null when the channel is absent. */
 function readScalar(channels: Record<string, ChannelStrip>, parsed: ParsedPath): number | null {
   const strip = channels[parsed.channelId];
   if (strip === undefined) return null;
   if (parsed.field.kind === 'level') return strip.level;
   if (parsed.field.kind === 'pan') return strip.pan;
-  return strip.sendLevels[parsed.field.index] ?? null;
+  if (parsed.field.kind === 'send') return strip.sendLevels[parsed.field.index] ?? null;
+  const slot = strip.inserts[parsed.field.slotIndex];
+  if (slot === undefined) return null;
+  // An unset param reads as the bottom of its range so the first move has an origin.
+  return slot.params[parsed.field.param] ?? parsed.range[0];
 }
 
 /** Return a strip with one scalar replaced (immutably). */
 function writeScalar(strip: ChannelStrip, field: ScalarField, value: number): ChannelStrip {
   if (field.kind === 'level') return { ...strip, level: value };
   if (field.kind === 'pan') return { ...strip, pan: value };
-  const sendLevels = [...strip.sendLevels] as ChannelStrip['sendLevels'];
-  sendLevels[field.index] = value;
-  return { ...strip, sendLevels };
+  if (field.kind === 'send') {
+    const sendLevels = [...strip.sendLevels] as ChannelStrip['sendLevels'];
+    sendLevels[field.index] = value;
+    return { ...strip, sendLevels };
+  }
+  // A new inserts array identity is what the §4.3 sync layer diffs on to push params.
+  const inserts = strip.inserts.map((slot, index) =>
+    index === field.slotIndex ? { ...slot, params: { ...slot.params, [field.param]: value } } : slot,
+  );
+  return { ...strip, inserts };
 }
 
 /** Map a channel id to the entity whose persistence owns its strip (spec §5.2, §9.3). */
@@ -113,9 +185,9 @@ export const useMixerStore = create<MixerState>()(
     upsertChannel: (strip) => set((state) => ({ channels: { ...state.channels, [strip.id]: strip } })),
 
     setTransient: (path, value) => {
-      const parsed = parseMixerPath(path);
-      if (parsed === null) return;
       const channels = get().channels;
+      const parsed = resolvePath(channels, path);
+      if (parsed === null) return;
       const current = readScalar(channels, parsed);
       if (current === null) return;
       // Record the pre-gesture value the first time this path moves (spec §4.1).
@@ -130,9 +202,9 @@ export const useMixerStore = create<MixerState>()(
     },
 
     commit: (path, value) => {
-      const parsed = parseMixerPath(path);
-      if (parsed === null) return;
       const channels = get().channels;
+      const parsed = resolvePath(channels, path);
+      if (parsed === null) return;
       const current = readScalar(channels, parsed);
       if (current === null) return;
       const origin = gestureOrigins.get(path) ?? current;
