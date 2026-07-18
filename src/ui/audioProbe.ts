@@ -12,7 +12,7 @@ import {
   renderProgramNotePitch,
   type EffectRenderResult,
 } from '@/core/audio/offlineTest';
-import { projectService } from '@/core/project';
+import { getActiveRepositories, projectService } from '@/core/project';
 import { importDecodedSample } from '@/core/audio/sampleImport';
 import { chopSampleToNewSamples, stretchSampleToNewSample } from '@/core/audio/sampleEditService';
 import { sampleEditContext } from '@/features/sample-edit';
@@ -26,7 +26,7 @@ import {
   type KeygroupZone,
   type VelocityLayer,
 } from '@/core/project/schemas';
-import { useSequenceStore, useTransportStore } from '@/store';
+import { useProjectStore, useSequenceStore, useTransportStore } from '@/store';
 
 export interface RecordPlaybackResult {
   /** Notes captured into the track by the recording pass (spec §7.7). */
@@ -141,8 +141,40 @@ async function recordThenPlayback(engine: AudioEngine): Promise<RecordPlaybackRe
   const note = 36;
 
   // A one-bar 4/4 sequence (3840 ticks = 2 s at 120 bpm) looping on a single drum track.
-  const sequence = { ...createDefaultSequence(crypto.randomUUID(), 0, 'Smoke', seqId), lengthBars: 1 };
+  // Both rows are inserted through the repositories *before* the store is hydrated, and the
+  // sequence is bound to the live project rather than a throwaway id. `hydrate` is the DB →
+  // store load path and marks nothing dirty (spec §4.4), so injecting a track that exists
+  // only in memory left the recorded take's `events:<trackId>` key unwritable: autosave
+  // retried it and failed on the midi_events → tracks foreign key every time, surfacing as
+  // repeated "Autosave failed — will retry." toasts that had nothing to do with the app.
+  const projectId = useProjectStore.getState().projectId;
+  if (!projectId) throw new Error('recordThenPlayback needs an open project');
+  const sequence = { ...createDefaultSequence(projectId, 0, 'Smoke', seqId), lengthBars: 1 };
   const track = createDefaultTrack(seqId, null, 0, 'Smoke', 'drum', trackId);
+
+  const repos = getActiveRepositories();
+  await repos.sequences.create({
+    id: sequence.id,
+    project_id: sequence.projectId,
+    position: sequence.position,
+    name: sequence.name,
+    length_bars: sequence.lengthBars,
+    time_sig_numerator: sequence.timeSig.numerator,
+    time_sig_denominator: sequence.timeSig.denominator,
+    tempo: sequence.tempo,
+    swing_amount: sequence.swingAmount,
+    swing_division: sequence.swingDivision,
+  });
+  await repos.tracks.create({
+    id: track.id,
+    sequence_id: track.sequenceId,
+    program_id: track.programId,
+    position: track.position,
+    name: track.name,
+    type: track.type,
+    mixer: '{}',
+  });
+
   useSequenceStore.getState().hydrate({
     sequences: { [seqId]: sequence },
     tracks: { [trackId]: track },
