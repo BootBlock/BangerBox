@@ -12,13 +12,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import { DbError } from '@/core/storage/errors';
-import type {
-  IDatabaseDriver,
-  SqlExecuteResult,
-  SqlParams,
-  SqlRow,
-  SqlValue,
-} from '@/core/storage/driver';
+import type { IDatabaseDriver, SqlExecuteResult, SqlParams, SqlRow, SqlValue } from '@/core/storage/driver';
 
 export interface MemoryDriver extends IDatabaseDriver {
   /** The underlying synchronous handle, for white-box assertions in tests. */

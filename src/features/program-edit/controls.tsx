@@ -6,8 +6,7 @@
  */
 import { useId, type ReactNode } from 'react';
 
-const FIELD_CLASS =
-  'w-full rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs text-bb-text';
+const FIELD_CLASS = 'w-full rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs text-bb-text';
 const LABEL_CLASS = 'flex flex-col gap-1 text-xs text-bb-muted';
 
 /** A labelled numeric input clamped to [min, max] with a step (spec §8.2 keyboard). */

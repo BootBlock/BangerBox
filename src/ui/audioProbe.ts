@@ -195,7 +195,8 @@ async function packRoundTrip(): Promise<{ imported: boolean; samples: number }> 
   const existing = await ctx.repos.samples.listByProject(ctx.projectId);
   if (existing.rows.length === 0) {
     const tone = new Float32Array(2_000);
-    for (let i = 0; i < tone.length; i++) tone[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / ctx.projectSampleRate);
+    for (let i = 0; i < tone.length; i++)
+      {tone[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / ctx.projectSampleRate);}
     const { saveChannelsAsSample } = await import('@/core/audio/sampleImport');
     await saveChannelsAsSample([tone], ctx.projectSampleRate, 'probe tone', ['probe'], ctx);
   }
@@ -204,7 +205,10 @@ async function packRoundTrip(): Promise<{ imported: boolean; samples: number }> 
   const file = new File([blob], 'roundtrip.mpcweb', { type: 'application/zip' });
   const importedId = await projectService.importMpcweb(file);
   const importedSamples = await sampleEditContext().repos.samples.listByProject(importedId);
-  return { imported: importedId !== originalId && importedId.length > 0, samples: importedSamples.rows.length };
+  return {
+    imported: importedId !== originalId && importedId.length > 0,
+    samples: importedSamples.rows.length,
+  };
 }
 
 /**
@@ -227,7 +231,10 @@ async function samplePipelineProof(engine: AudioEngine): Promise<{
       data[Math.floor(onset) + i] = 0.9 * Math.exp(-i / 400) * Math.sin((2 * Math.PI * 180 * i) / sr);
     }
   }
-  const imported = await importDecodedSample(buffer, 'probe drum', ['probe'], { ...ctx, context: engine.context });
+  const imported = await importDecodedSample(buffer, 'probe drum', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
   const chops = await chopSampleToNewSamples(imported, { sensitivity: 0.6, minSpacingMs: 40 }, ctx);
   const stretched = await stretchSampleToNewSample(imported, { rate: 0.5, pitchSemitones: 0 }, ctx);
   // The real SQLite worker can return INTEGER columns as BigInt (rpc value union) — coerce

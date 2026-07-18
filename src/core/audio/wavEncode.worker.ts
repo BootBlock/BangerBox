@@ -13,8 +13,7 @@ export interface WavEncodeRequest {
   bitDepth: BitDepth;
 }
 export type WavEncodeResponse =
-  | { id: number; ok: true; bytes: Uint8Array }
-  | { id: number; ok: false; error: string };
+  { id: number; ok: true; bytes: Uint8Array } | { id: number; ok: false; error: string };
 
 self.onmessage = (event: MessageEvent<WavEncodeRequest>) => {
   const { id, channels, sampleRate, bitDepth } = event.data;

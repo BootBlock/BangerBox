@@ -43,10 +43,14 @@ export async function dumpSnapshot(repos: Repositories, projectId: string): Prom
 
   const automation: AutomationPointRow[] = [];
   for (const sequence of sequences) {
-    automation.push(...(await drain((offset) => repos.automation.listByOwner('sequence', sequence.id, { offset }))));
+    automation.push(
+      ...(await drain((offset) => repos.automation.listByOwner('sequence', sequence.id, { offset }))),
+    );
   }
   for (const track of tracks) {
-    automation.push(...(await drain((offset) => repos.automation.listByOwner('track', track.id, { offset }))));
+    automation.push(
+      ...(await drain((offset) => repos.automation.listByOwner('track', track.id, { offset }))),
+    );
   }
 
   return { version: 1, project, sequences, tracks, midiEvents, automation, programs, samples, songEntries };
@@ -141,6 +145,10 @@ export async function restoreSnapshot(repos: Repositories, snapshot: ProjectSnap
 
   await repos.songs.replaceForProject(
     p.id,
-    snapshot.songEntries.map((entry) => ({ id: entry.id, sequence_id: entry.sequence_id, repeats: entry.repeats })),
+    snapshot.songEntries.map((entry) => ({
+      id: entry.id,
+      sequence_id: entry.sequence_id,
+      repeats: entry.repeats,
+    })),
   );
 }

@@ -74,9 +74,7 @@ describe('targetRange (spec §7.8)', () => {
   it('returns the mixer ranges', () => {
     expect(targetRange({ kind: 'channelLevel', channelId: 'master' })).toBe(LEVEL_RANGE);
     expect(targetRange({ kind: 'channelPan', channelId: 'master' })).toBe(PAN_RANGE);
-    expect(targetRange({ kind: 'channelSend', channelId: 'master', sendIndex: 0 })).toBe(
-      SEND_LEVEL_RANGE,
-    );
+    expect(targetRange({ kind: 'channelSend', channelId: 'master', sendIndex: 0 })).toBe(SEND_LEVEL_RANGE);
   });
 
   it('resolves insert-param ranges by effect, and mix for any effect', () => {

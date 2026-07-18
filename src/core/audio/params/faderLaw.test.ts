@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LEVEL_RANGE } from '@/core/project/schemas';
-import {
-  FADER_FLOOR_DB,
-  FADER_MAX_DB,
-  dbToGain,
-  faderLevelToDb,
-  faderLevelToGain,
-} from './faderLaw';
+import { FADER_FLOOR_DB, FADER_MAX_DB, dbToGain, faderLevelToDb, faderLevelToGain } from './faderLaw';
 
 describe('fader law (spec §8.5.6)', () => {
   it('places unity (0 dB) at level 1.0', () => {

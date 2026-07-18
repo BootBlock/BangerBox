@@ -45,8 +45,7 @@ export class PlayheadWriter {
     const generation = Atomics.load(this.header, 0);
     Atomics.store(this.header, 0, generation + 1); // odd → write in progress
     this.data[0] = currentTick;
-    const flags =
-      (isPlaying ? PLAYHEAD_FLAG_PLAYING : 0) | (isRecording ? PLAYHEAD_FLAG_RECORDING : 0);
+    const flags = (isPlaying ? PLAYHEAD_FLAG_PLAYING : 0) | (isRecording ? PLAYHEAD_FLAG_RECORDING : 0);
     Atomics.store(this.header, 1, flags);
     Atomics.store(this.header, 0, generation + 2); // even → write complete
   }

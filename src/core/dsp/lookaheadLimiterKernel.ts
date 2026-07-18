@@ -31,7 +31,11 @@ export class LookaheadLimiterKernel extends StreamingKernel<LimiterExports> {
     this.latencySamples = exports.latencySamples(handle);
   }
 
-  static fromModule(module: WebAssembly.Module, sampleRate: number, maxBlock: number): LookaheadLimiterKernel {
+  static fromModule(
+    module: WebAssembly.Module,
+    sampleRate: number,
+    maxBlock: number,
+  ): LookaheadLimiterKernel {
     const { exports, handle, inPtr, outPtr } = StreamingKernel.allocate<LimiterExports>(
       module,
       sampleRate,

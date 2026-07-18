@@ -116,7 +116,10 @@ export function SampleEditPanel() {
       </div>
 
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[16rem_1fr]">
-        <ul className="max-h-56 overflow-auto rounded-bb-sm border border-bb-line" aria-label="Project samples">
+        <ul
+          className="max-h-56 overflow-auto rounded-bb-sm border border-bb-line"
+          aria-label="Project samples"
+        >
           {samples.map((row) => (
             <li key={row.id}>
               <button
@@ -136,7 +139,10 @@ export function SampleEditPanel() {
         </ul>
 
         <div>
-          <WaveformCanvas samples={waveform} ariaLabel={selected ? `Waveform of ${selected.name}` : 'No sample selected'} />
+          <WaveformCanvas
+            samples={waveform}
+            ariaLabel={selected ? `Waveform of ${selected.name}` : 'No sample selected'}
+          />
           {selected && (
             <div className="mt-2 space-y-2">
               <div className="flex flex-wrap gap-1.5">
@@ -148,7 +154,11 @@ export function SampleEditPanel() {
                 >
                   Audition
                 </button>
-                <ToolButton busy={busy} label="Normalise" onClick={() => edit('Normalise', (c) => normalise(c))} />
+                <ToolButton
+                  busy={busy}
+                  label="Normalise"
+                  onClick={() => edit('Normalise', (c) => normalise(c))}
+                />
                 <ToolButton busy={busy} label="Reverse" onClick={() => edit('Reverse', reverse)} />
                 <ToolButton
                   busy={busy}
@@ -158,7 +168,9 @@ export function SampleEditPanel() {
                 <ToolButton
                   busy={busy}
                   label="Fade out"
-                  onClick={() => edit('Fade out', (c) => fadeOut(c, msToFrames(fadeMs, selected.sample_rate)))}
+                  onClick={() =>
+                    edit('Fade out', (c) => fadeOut(c, msToFrames(fadeMs, selected.sample_rate)))
+                  }
                 />
                 <ToolButton
                   busy={busy}
@@ -198,7 +210,9 @@ export function SampleEditPanel() {
                   label="Chop (transients)"
                   testId="sample-chop"
                   onClick={() =>
-                    void run('Chop', () => chopSampleToNewSamples(selected, { sensitivity }, sampleEditContext()))
+                    void run('Chop', () =>
+                      chopSampleToNewSamples(selected, { sensitivity }, sampleEditContext()),
+                    )
                   }
                 />
                 <ToolButton

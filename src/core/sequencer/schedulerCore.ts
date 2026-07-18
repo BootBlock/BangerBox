@@ -32,7 +32,9 @@ import {
   songWindowSlices,
   type SongSegment,
 } from './songMap';
+import { clamp } from '@/core/math';
 import { swingOffsetTicks } from './swing';
+import { grooveShiftAtTick, type GrooveTemplate } from './groove';
 
 /** Everything the worker posts after one scheduler wake (spec §7.1.3). */
 export interface SchedulerTickResult {
@@ -72,15 +74,25 @@ export class SchedulerCore {
   private activeSequenceId: string | null = null;
 
   private readonly tracks = new Map<string, TrackEvents>();
+  /** Per-track groove templates, applied at schedule time like swing (spec §7.5). */
+  private readonly grooves = new Map<string, GrooveTemplate>();
   private readonly automation = new Map<string, AutomationPoint[]>();
-  private readonly sequenceMeta = new Map<string, TimeSignature & { lengthBars: number; tempo: number | null }>();
+  private readonly sequenceMeta = new Map<
+    string,
+    TimeSignature & { lengthBars: number; tempo: number | null }
+  >();
   private orderedSequenceIds: string[] = [];
   private songMap: SongSegment[] = [];
 
   private noteRepeatEnabled = false;
   private noteRepeatDivision: NoteRepeatDivision = { value: 16, triplet: false };
   private arpEnabled = false;
-  private arpConfig: ArpConfig = { mode: 'up', octaves: 1, gate: 0.5, division: { value: 16, triplet: false } };
+  private arpConfig: ArpConfig = {
+    mode: 'up',
+    octaves: 1,
+    gate: 0.5,
+    division: { value: 16, triplet: false },
+  };
   private readonly heldNotes = new Map<string, HeldNote & { trackId: string }>();
   private readonly eraseNotes = new Map<string, number>(); // `${trackId}:${note}` → note
 
@@ -126,6 +138,15 @@ export class SchedulerCore {
   setLoop(loop: LoopRegion): void {
     this.loop = loop;
   }
+  /**
+   * Assign (or clear, with `null`) a track's groove template — spec §7.5: a groove is a
+   * non-destructive quantisation map "applied at schedule time like swing", so the stored
+   * events are never rewritten.
+   */
+  setGroove(trackId: string, template: GrooveTemplate | null): void {
+    if (template) this.grooves.set(trackId, template);
+    else this.grooves.delete(trackId);
+  }
   setMetronome(enabled: boolean, countInBars: 0 | 1 | 2): void {
     this.metronomeEnabled = enabled;
     this.countInBars = countInBars;
@@ -139,7 +160,12 @@ export class SchedulerCore {
     this.arpConfig = config;
   }
 
-  applyEventsDiff(trackId: string, sequenceId: string, upserts: readonly MidiEvent[], deletes: readonly string[]): void {
+  applyEventsDiff(
+    trackId: string,
+    sequenceId: string,
+    upserts: readonly MidiEvent[],
+    deletes: readonly string[],
+  ): void {
     const track = this.tracks.get(trackId) ?? { sequenceId, events: [] };
     const byId = new Map(track.events.map((e) => [e.id, e]));
     for (const id of deletes) byId.delete(id);
@@ -148,10 +174,19 @@ export class SchedulerCore {
     this.tracks.set(trackId, { sequenceId, events });
   }
 
-  applyAutomationDiff(scope: AutomationPoint['scope'], ownerId: string, targetPath: string, points: readonly AutomationPoint[]): void {
+  applyAutomationDiff(
+    scope: AutomationPoint['scope'],
+    ownerId: string,
+    targetPath: string,
+    points: readonly AutomationPoint[],
+  ): void {
     const key = automationLaneKey(scope, ownerId, targetPath);
     if (points.length === 0) this.automation.delete(key);
-    else this.automation.set(key, [...points].sort((a, b) => a.tick - b.tick));
+    else
+      {this.automation.set(
+        key,
+        [...points].sort((a, b) => a.tick - b.tick),
+      );}
   }
 
   setSongSequence(orderedSequenceIds: readonly string[]): void {
@@ -160,7 +195,17 @@ export class SchedulerCore {
   }
 
   setSequenceMeta(
-    sequences: Readonly<Record<string, { lengthBars: number; timeSigNumerator: number; timeSigDenominator: 2 | 4 | 8 | 16; tempo: number | null }>>,
+    sequences: Readonly<
+      Record<
+        string,
+        {
+          lengthBars: number;
+          timeSigNumerator: number;
+          timeSigDenominator: 2 | 4 | 8 | 16;
+          tempo: number | null;
+        }
+      >
+    >,
     projectBpm: number,
     activeSequenceId: string | null,
     playbackMode: 'sequence' | 'song',
@@ -208,7 +253,13 @@ export class SchedulerCore {
 
   /** Advance the scheduler to context time `now`, returning what to post (spec §7.1.4). */
   tick(now: number): SchedulerTickResult {
-    const result: SchedulerTickResult = { batch: [], recorded: [], erased: [], loopWrapped: [], songAdvanced: [] };
+    const result: SchedulerTickResult = {
+      batch: [],
+      recorded: [],
+      erased: [],
+      loopWrapped: [],
+      songAdvanced: [],
+    };
 
     if (this.stopRequested) {
       this.closeOpenNotes(now, result);
@@ -312,7 +363,8 @@ export class SchedulerCore {
 
     const newPass = loopPassAt(to, this.loop);
     if (loopActive(this.loop) && newPass > this.lastLoopPass) {
-      for (let pass = this.lastLoopPass + 1; pass <= newPass; pass++) result.loopWrapped.push(this.loop.startTick);
+      for (let pass = this.lastLoopPass + 1; pass <= newPass; pass++)
+        {result.loopWrapped.push(this.loop.startTick);}
       this.flushRecording(result); // overdub: merge each pass (spec §7.7)
       this.lastLoopPass = newPass;
     }
@@ -325,8 +377,21 @@ export class SchedulerCore {
     return elapsed <= 0 ? this.originTick : this.originTick + secondsToTicks(elapsed, this.bpm);
   }
 
-  private emitNote(result: SchedulerTickResult, trackId: string, event: MidiEvent, seqTick: number, linearTick: number): void {
-    const swung = linearTick + swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision);
+  private emitNote(
+    result: SchedulerTickResult,
+    trackId: string,
+    event: MidiEvent,
+    seqTick: number,
+    linearTick: number,
+  ): void {
+    // Swing and groove are both non-destructive schedule-time shaping (spec §7.4, §7.5);
+    // they compose, so a grooved track still swings.
+    const groove = this.grooves.get(trackId);
+    const shift = groove ? grooveShiftAtTick(groove, seqTick) : null;
+    const swung =
+      linearTick +
+      swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision) +
+      (shift?.offsetTicks ?? 0);
     const when = this.contentStartContext + ticksToSeconds(swung - this.originTick, this.bpm);
     result.batch.push({
       kind: 'noteOn',
@@ -334,7 +399,7 @@ export class SchedulerCore {
       tick: seqTick,
       trackId,
       note: event.note,
-      velocity: event.velocity,
+      velocity: shift ? clamp(Math.round(event.velocity * shift.velocityScale), 1, 127) : event.velocity,
       durationSec: ticksToSeconds(event.durationTicks, this.bpm),
     });
   }
@@ -348,7 +413,15 @@ export class SchedulerCore {
       const seqTick = sequenceTickAt(hit.tick, this.loop);
       const swung = hit.tick + swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision);
       const when = this.contentStartContext + ticksToSeconds(swung - this.originTick, this.bpm);
-      result.batch.push({ kind: 'noteOn', when, tick: seqTick, trackId: owner.trackId, note: hit.note, velocity: hit.velocity, durationSec: 0 });
+      result.batch.push({
+        kind: 'noteOn',
+        when,
+        tick: seqTick,
+        trackId: owner.trackId,
+        note: hit.note,
+        velocity: hit.velocity,
+        durationSec: 0,
+      });
       if (this.recording) this.captureAt(owner.trackId, hit.note, hit.velocity, seqTick, seqTick + 1);
     }
   }
@@ -377,7 +450,8 @@ export class SchedulerCore {
           velocity: hit.velocity,
           durationSec: ticksToSeconds(hit.durationTicks, this.bpm),
         });
-        if (this.recording) this.captureAt(trackId, hit.note, hit.velocity, seqTick, seqTick + hit.durationTicks);
+        if (this.recording)
+          {this.captureAt(trackId, hit.note, hit.velocity, seqTick, seqTick + hit.durationTicks);}
       }
     }
   }
@@ -425,7 +499,13 @@ export class SchedulerCore {
   }
 
   // --- live erase (spec §7.7) ---
-  private collectErase(result: SchedulerTickResult, trackId: string, track: TrackEvents, from: number, to: number): void {
+  private collectErase(
+    result: SchedulerTickResult,
+    trackId: string,
+    track: TrackEvents,
+    from: number,
+    to: number,
+  ): void {
     if (this.eraseNotes.size === 0) return;
     const seqFrom = sequenceTickAt(from, this.loop);
     const seqTo = sequenceTickAt(to, this.loop);
@@ -462,7 +542,15 @@ export class SchedulerCore {
           if (event.tickStart < slice.seqFrom || event.tickStart >= slice.seqTo) continue;
           const songTick = segment.startTick + event.tickStart;
           const when = this.contentStartContext + (songTickToSeconds(this.songMap, songTick) - base);
-          result.batch.push({ kind: 'noteOn', when, tick: event.tickStart, trackId, note: event.note, velocity: event.velocity, durationSec: ticksToSeconds(event.durationTicks, segment.bpm) });
+          result.batch.push({
+            kind: 'noteOn',
+            when,
+            tick: event.tickStart,
+            trackId,
+            note: event.note,
+            velocity: event.velocity,
+            durationSec: ticksToSeconds(event.durationTicks, segment.bpm),
+          });
         }
       }
     }
@@ -475,7 +563,12 @@ export class SchedulerCore {
       return;
     }
     // Rebuild a synthetic entry list (one entry per ordered id) + a Sequence-like lookup.
-    const entries = this.orderedSequenceIds.map((sequenceId, position) => ({ id: `e${position}`, position, sequenceId, repeats: 1 }));
+    const entries = this.orderedSequenceIds.map((sequenceId, position) => ({
+      id: `e${position}`,
+      position,
+      sequenceId,
+      repeats: 1,
+    }));
     const sequences: Record<string, import('@/core/project/schemas').Sequence> = {};
     for (const [id, meta] of this.sequenceMeta) {
       sequences[id] = {
@@ -498,7 +591,13 @@ export class SchedulerCore {
     this.captureAt(trackId, note, open.velocity, open.startTick, endTick);
   }
 
-  private captureAt(trackId: string, note: number, velocity: number, startTick: number, endTick: number): void {
+  private captureAt(
+    trackId: string,
+    note: number,
+    velocity: number,
+    startTick: number,
+    endTick: number,
+  ): void {
     const list = this.captured.get(trackId) ?? [];
     list.push({
       id: crypto.randomUUID(),

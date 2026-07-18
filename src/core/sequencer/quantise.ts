@@ -60,10 +60,7 @@ export function quantiseTick(tick: number, options: QuantiseOptions): number {
  * (spec §7.4). Durations are preserved (note lengths are not quantised in v1). The input
  * is not mutated.
  */
-export function quantiseEvents(
-  events: readonly MidiEvent[],
-  options: QuantiseOptions,
-): MidiEvent[] {
+export function quantiseEvents(events: readonly MidiEvent[], options: QuantiseOptions): MidiEvent[] {
   return events
     .map((event) => ({ ...event, tickStart: quantiseTick(event.tickStart, options) }))
     .sort((a, b) => a.tickStart - b.tickStart || a.id.localeCompare(b.id));

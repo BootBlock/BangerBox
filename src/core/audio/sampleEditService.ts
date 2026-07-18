@@ -10,8 +10,16 @@ import type { SampleRow } from '@/core/storage/repositories';
 import { readFile } from '@/core/storage/opfs';
 import { slicesFromOnsets, type SliceRegion } from './chop';
 import { loadKernelModule } from '@/core/dsp/kernelLoader';
-import { GranularStretchKernel, granularStretchWasmUrl, type StretchParams } from '@/core/dsp/granularStretchKernel';
-import { TransientDetectKernel, transientDetectWasmUrl, type DetectOptions } from '@/core/dsp/transientDetectKernel';
+import {
+  GranularStretchKernel,
+  granularStretchWasmUrl,
+  type StretchParams,
+} from '@/core/dsp/granularStretchKernel';
+import {
+  TransientDetectKernel,
+  transientDetectWasmUrl,
+  type DetectOptions,
+} from '@/core/dsp/transientDetectKernel';
 import { saveChannelsAsSample, type SampleWriteContext } from './sampleImport';
 import { decodeWav } from './wav';
 
@@ -45,7 +53,13 @@ export async function applyEditToNewSample(
   ctx: EditContext,
 ): Promise<SampleRow> {
   const { channels, sampleRate } = await readSampleChannels(row);
-  return writeNewSample(transform(channels), sampleRate, `${row.name} (${label})`, [label.toLowerCase()], ctx);
+  return writeNewSample(
+    transform(channels),
+    sampleRate,
+    `${row.name} (${label})`,
+    [label.toLowerCase()],
+    ctx,
+  );
 }
 
 /** Time-stretch/pitch-shift a sample to a new sample via the granularStretch kernel (spec §5.7.9). */

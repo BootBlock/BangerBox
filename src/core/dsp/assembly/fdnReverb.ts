@@ -64,7 +64,7 @@ class FdnReverbKernel {
   setSize(seconds: f32): void {
     // Feedback gain for an RT60 of `seconds`: g = 10^(−3·meanDelay/RT60).
     const rt60 = seconds < 0.05 ? 0.05 : seconds;
-    let g = <f32>Math.pow(10.0, <f64>(-3.0 * this.meanDelaySec / rt60));
+    let g = <f32>Math.pow(10.0, <f64>((-3.0 * this.meanDelaySec) / rt60));
     if (g > 0.995) g = 0.995; // keep strictly stable
     this.feedback = g;
   }

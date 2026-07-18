@@ -10,6 +10,7 @@ import { getActiveRepositories, getAudioEngine, projectService } from '@/core/pr
 import { bounceActiveSequence } from '@/core/audio/bounceService';
 import { deleteFile, readFile } from '@/core/storage/opfs';
 import { useBrowserStore, useProjectStore, useUIStore } from '@/store';
+import { Toggle } from '@/ui/primitives';
 import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
 
 /** Trigger a browser download of a Blob (spec §9.6 export → download). */
@@ -26,6 +27,12 @@ function downloadBlob(blob: Blob, filename: string): void {
 
 export function BrowserPanel() {
   const samples = useBrowserStore((state) => state.samples);
+  const textFilter = useBrowserStore((state) => state.textFilter);
+  const tagFilter = useBrowserStore((state) => state.tagFilter);
+  const favourites = useBrowserStore((state) => state.favourites);
+  const [favouritesOnly, setFavouritesOnly] = useState(false);
+  /** sampleId → its tags, loaded alongside the sample list (spec §8.5.7 tag chips). */
+  const [tagsBySample, setTagsBySample] = useState<Record<string, string[]>>({});
   const projectName = useProjectStore((state) => state.projectName);
   const projectId = useProjectStore((state) => state.projectId);
   const pushToast = useUIStore((state) => state.pushToast);
@@ -34,6 +41,49 @@ export function BrowserPanel() {
   useEffect(() => {
     void refreshSamples();
   }, [projectId]);
+
+  // Load each sample's tags so the chips reflect the library rather than a fixed list
+  // (spec §8.5.7). Runs when the sample set changes, not per render.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      // No samples means nothing to tag — and, importantly, no reason to reach for the
+      // repositories, which would spin up the DB worker in environments that have none.
+      // The clear runs inside the async body so no setState happens synchronously in the
+      // effect, which would trigger a cascading render.
+      if (samples.length === 0) {
+        if (!cancelled) setTagsBySample({});
+        return;
+      }
+      try {
+        const repos = getActiveRepositories();
+        const entries = await Promise.all(
+          samples.map(async (row) => [row.id, await repos.samples.tagsFor(row.id)] as const),
+        );
+        if (!cancelled) setTagsBySample(Object.fromEntries(entries));
+      } catch {
+        // Tags are a filter affordance, not data — the list still works without them.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [samples]);
+
+  /** Tags present in the loaded library, sorted for a stable chip order. */
+  const availableTags = [...new Set(Object.values(tagsBySample).flat())].sort();
+
+  /** The sample list after the text, tag, and favourites filters (spec §8.5.7). */
+  const visibleSamples = samples.filter((row) => {
+    if (favouritesOnly && !favourites.includes(row.id)) return false;
+    if (textFilter && !row.name.toLowerCase().includes(textFilter.toLowerCase())) return false;
+    if (tagFilter.length > 0) {
+      const tags = tagsBySample[row.id] ?? [];
+      // A sample must carry every selected tag — chips narrow, they do not widen.
+      if (!tagFilter.every((tag) => tags.includes(tag))) return false;
+    }
+    return true;
+  });
 
   const exportProject = async () => {
     setBusy(true);
@@ -106,16 +156,12 @@ export function BrowserPanel() {
   };
 
   return (
-    <section aria-labelledby="browser-heading" className="mt-6">
-      <h2 id="browser-heading" className="text-lg font-bold">
+    <section aria-labelledby="browser-heading" className="flex min-h-0 flex-col gap-3">
+      <h2 id="browser-heading" className="sr-only">
         Browser
       </h2>
-      <p className="mt-1 text-xs leading-relaxed text-bb-muted">
-        Library and interchange: export or import a project as a portable <code>.mpcweb</code> archive, audition
-        samples, and purge unused ones.
-      </p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           disabled={busy || !projectId}
@@ -155,20 +201,106 @@ export function BrowserPanel() {
         </button>
       </div>
 
-      <ul className="mt-3 max-h-40 overflow-auto rounded-bb-sm border border-bb-line" aria-label="Library samples">
-        {samples.map((row) => (
-          <li key={row.id} className="flex items-center justify-between px-2 py-1 text-xs">
-            <span className="truncate">{row.name}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+          Filter
+          <input
+            type="search"
+            value={textFilter}
+            placeholder="Search samples…"
+            aria-label="Filter samples by name"
+            data-testid="browser-filter"
+            onChange={(event) => useBrowserStore.getState().setTextFilter(event.target.value)}
+            className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs font-normal text-bb-text normal-case"
+          />
+        </label>
+        <Toggle
+          label="Favourites only"
+          pressed={favouritesOnly}
+          size="sm"
+          onChange={setFavouritesOnly}
+          data-testid="browser-favourites-only"
+        />
+      </div>
+
+      {/* Tag chips (spec §8.5.7) — derived from the loaded samples' own tags. */}
+      {availableTags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by tag">
+          {availableTags.map((tag) => (
+            <Toggle
+              key={tag}
+              label={tag}
+              pressed={tagFilter.includes(tag)}
+              size="sm"
+              onChange={(pressed) =>
+                useBrowserStore
+                  .getState()
+                  .setTagFilter(
+                    pressed ? [...tagFilter, tag] : tagFilter.filter((existing) => existing !== tag),
+                  )
+              }
+              data-testid={`browser-tag-${tag}`}
+            />
+          ))}
+        </div>
+      )}
+
+      <ul
+        className="min-h-0 flex-1 overflow-auto rounded-bb-sm border border-bb-line"
+        aria-label="Library samples"
+      >
+        {visibleSamples.map((row) => (
+          <li
+            key={row.id}
+            className="flex items-center justify-between gap-2 border-b border-bb-line px-2 py-1.5 text-xs last:border-b-0"
+          >
             <button
               type="button"
+              aria-pressed={favourites.includes(row.id)}
+              aria-label={`${favourites.includes(row.id) ? 'Remove' : 'Add'} ${row.name} ${
+                favourites.includes(row.id) ? 'from' : 'to'
+              } favourites`}
+              onClick={() => useBrowserStore.getState().toggleFavourite(row.id)}
+              className={`shrink-0 rounded-bb-sm px-1 ${
+                favourites.includes(row.id) ? 'text-bb-accent' : 'text-bb-muted hover:text-bb-text'
+              }`}
+            >
+              ★
+            </button>
+            <span className="flex-1 truncate">{row.name}</span>
+            {/* Drag-to-pad assignment (spec §8.5.7 `dragDropPayload`). */}
+            <span
+              draggable
+              role="button"
+              tabIndex={0}
+              aria-label={`Drag ${row.name} to a pad`}
+              onDragStart={() => useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name })}
+              onDragEnd={() => useUIStore.getState().setDragDropPayload(null)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name });
+                pushToast(`${row.name} ready to assign — open Program Edit and choose a pad.`, 'info');
+              }}
+              className="shrink-0 cursor-grab rounded-bb-sm border border-bb-line px-2 py-0.5 text-bb-muted"
+            >
+              Assign
+            </span>
+            <button
+              type="button"
+              aria-label={`Audition ${row.name}`}
               onClick={() => void getAudioEngine()?.auditionSample(row.opfs_path)}
-              className="ml-2 shrink-0 rounded-bb-sm border border-bb-line px-2 py-0.5"
+              className="shrink-0 rounded-bb-sm border border-bb-line px-2 py-0.5"
             >
               Audition
             </button>
           </li>
         ))}
-        {samples.length === 0 && <li className="px-2 py-2 text-xs text-bb-muted">No samples in this project.</li>}
+        {visibleSamples.length === 0 && (
+          <li className="px-2 py-2 text-xs text-bb-muted">
+            {samples.length === 0 ? 'No samples in this project.' : 'No samples match the filter.'}
+          </li>
+        )}
       </ul>
     </section>
   );

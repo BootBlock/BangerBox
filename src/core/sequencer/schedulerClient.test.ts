@@ -62,7 +62,13 @@ describe('SchedulerClient outbound (spec §7.1.2/3)', () => {
     expect(posted).toContainEqual({ kind: 'transport', isPlaying: true, isRecording: false, startTick: 0 });
     expect(posted).toContainEqual({ kind: 'tempo', bpm: 140 });
     expect(posted).toContainEqual({ kind: 'loop', enabled: true, startTick: 0, endTick: 3840 });
-    expect(posted).toContainEqual({ kind: 'eventsDiff', trackId: 't1', sequenceId: 's1', upserts: [], deletes: ['x'] });
+    expect(posted).toContainEqual({
+      kind: 'eventsDiff',
+      trackId: 't1',
+      sequenceId: 's1',
+      upserts: [],
+      deletes: ['x'],
+    });
     client.dispose();
   });
 

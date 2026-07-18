@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ModRoute } from '@/core/project/schemas';
-import {
-  biquadFilterType,
-  lfoOscillator,
-  staticModulation,
-  staticSourceValues,
-} from './voiceModulation';
+import { biquadFilterType, lfoOscillator, staticModulation, staticSourceValues } from './voiceModulation';
 
 describe('lfoOscillator (spec §6 shapes)', () => {
   it('maps native shapes directly', () => {

@@ -18,7 +18,10 @@ describe('arpSequence (spec §7.3 modes)', () => {
   });
 
   it('played preserves the held order', () => {
-    const held: ArpHeldNote[] = [{ note: 67, velocity: 1 }, { note: 60, velocity: 1 }];
+    const held: ArpHeldNote[] = [
+      { note: 67, velocity: 1 },
+      { note: 60, velocity: 1 },
+    ];
     expect(arpSequence(held, 'played', 1).map((n) => n.note)).toEqual([67, 60]);
   });
 

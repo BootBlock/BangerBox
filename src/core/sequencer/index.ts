@@ -3,14 +3,13 @@
  * SAB, and the main-thread {@link SchedulerClient} the audio engine drives. The worker file
  * (`scheduler.worker.ts`) is loaded via `new Worker(new URL(...))` and is not re-exported.
  */
-export { SchedulerClient, type SchedulerClientOptions, type SchedulerClientCallbacks } from './schedulerClient';
-export { SchedulerCore, type SchedulerTickResult } from './schedulerCore';
 export {
-  createPlayheadSab,
-  PlayheadReader,
-  PlayheadWriter,
-  type PlayheadReading,
-} from './playheadSab';
+  SchedulerClient,
+  type SchedulerClientOptions,
+  type SchedulerClientCallbacks,
+} from './schedulerClient';
+export { SchedulerCore, type SchedulerTickResult } from './schedulerCore';
+export { createPlayheadSab, PlayheadReader, PlayheadWriter, type PlayheadReading } from './playheadSab';
 export {
   SCHEDULER_PROTOCOL_VERSION,
   type ScheduledEvent,

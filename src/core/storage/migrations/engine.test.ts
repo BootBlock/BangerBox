@@ -49,9 +49,9 @@ describe('migration engine', () => {
   it('refuses to run against a database from a newer build (SCHEMA_TOO_NEW)', async () => {
     const driver = createMemoryDriver();
     await driver.execute('PRAGMA user_version = 99;');
-    await expect(
-      runMigrations(driver, [{ version: 1, name: 'one', statements: [] }]),
-    ).rejects.toMatchObject({ code: 'SCHEMA_TOO_NEW' });
+    await expect(runMigrations(driver, [{ version: 1, name: 'one', statements: [] }])).rejects.toMatchObject({
+      code: 'SCHEMA_TOO_NEW',
+    });
     await driver.close();
   });
 
@@ -106,14 +106,18 @@ describe('v1 DDL (spec §9.3)', () => {
     await runMigrations(driver, migrations);
 
     const now = Date.now();
-    await driver.execute(
-      'INSERT INTO projects (id, name, created_at, modified_at) VALUES (?, ?, ?, ?);',
-      ['p1', 'Test', now, now],
-    );
-    await driver.execute(
-      'INSERT INTO sequences (id, project_id, position, name) VALUES (?, ?, ?, ?);',
-      ['s1', 'p1', 0, 'Sequence 1'],
-    );
+    await driver.execute('INSERT INTO projects (id, name, created_at, modified_at) VALUES (?, ?, ?, ?);', [
+      'p1',
+      'Test',
+      now,
+      now,
+    ]);
+    await driver.execute('INSERT INTO sequences (id, project_id, position, name) VALUES (?, ?, ?, ?);', [
+      's1',
+      'p1',
+      0,
+      'Sequence 1',
+    ]);
     await driver.execute(
       "INSERT INTO tracks (id, sequence_id, position, name, type) VALUES ('t1', 's1', 0, 'Kick', 'drum');",
     );

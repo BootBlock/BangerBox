@@ -249,16 +249,12 @@ describe('SampleRepository', () => {
     expect(projectSample.root_note).toBe(60);
     expect(globalSample.project_id).toBeNull();
 
-    expect((await repos.samples.listByProject(project.id)).rows.map((r) => r.id)).toEqual([
-      projectSample.id,
-    ]);
+    expect((await repos.samples.listByProject(project.id)).rows.map((r) => r.id)).toEqual([projectSample.id]);
     expect((await repos.samples.listGlobal()).rows.map((r) => r.id)).toEqual([globalSample.id]);
 
     await repos.samples.setTags(projectSample.id, ['drums', 'imported']);
     expect(await repos.samples.tagsFor(projectSample.id)).toEqual(['drums', 'imported']);
-    expect((await repos.samples.listByTag('drums')).rows.map((r) => r.id)).toEqual([
-      projectSample.id,
-    ]);
+    expect((await repos.samples.listByTag('drums')).rows.map((r) => r.id)).toEqual([projectSample.id]);
 
     await repos.samples.setTags(projectSample.id, ['one-shot']);
     expect(await repos.samples.tagsFor(projectSample.id)).toEqual(['one-shot']);
@@ -304,10 +300,7 @@ describe('SongRepository', () => {
     ]);
 
     // Reorder = replace with the new order.
-    await repos.songs.replaceForProject(project.id, [
-      { sequence_id: s2.id },
-      { sequence_id: s1.id },
-    ]);
+    await repos.songs.replaceForProject(project.id, [{ sequence_id: s2.id }, { sequence_id: s1.id }]);
     playlist = await repos.songs.listByProject(project.id);
     expect(playlist.map((e) => e.sequence_id)).toEqual([s2.id, s1.id]);
 

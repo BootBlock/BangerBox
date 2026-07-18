@@ -224,8 +224,7 @@ export class WorkerDatabaseDriver implements IDatabaseDriver {
   };
 
   #handleWorkerFailure = (event: Event): void => {
-    const detail =
-      event instanceof ErrorEvent && event.message ? event.message : 'unknown worker failure';
+    const detail = event instanceof ErrorEvent && event.message ? event.message : 'unknown worker failure';
     this.#rejectAll(new DbError('INIT_FAILED', `Database worker error: ${detail}`));
   };
 

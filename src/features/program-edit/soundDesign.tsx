@@ -36,9 +36,33 @@ export function EnvelopeEditor({
   const set = (patch: Partial<AhdsrEnvelope>) => onChange({ ...envelope, ...patch });
   return (
     <ControlGroup title="Amp envelope">
-      <NumberField label="Attack" suffix="ms" value={envelope.attack} min={0} max={20_000} step={1} onChange={(attack) => set({ attack })} />
-      <NumberField label="Hold" suffix="ms" value={envelope.hold} min={0} max={20_000} step={1} onChange={(hold) => set({ hold })} />
-      <NumberField label="Decay" suffix="ms" value={envelope.decay} min={0} max={20_000} step={1} onChange={(decay) => set({ decay })} />
+      <NumberField
+        label="Attack"
+        suffix="ms"
+        value={envelope.attack}
+        min={0}
+        max={20_000}
+        step={1}
+        onChange={(attack) => set({ attack })}
+      />
+      <NumberField
+        label="Hold"
+        suffix="ms"
+        value={envelope.hold}
+        min={0}
+        max={20_000}
+        step={1}
+        onChange={(hold) => set({ hold })}
+      />
+      <NumberField
+        label="Decay"
+        suffix="ms"
+        value={envelope.decay}
+        min={0}
+        max={20_000}
+        step={1}
+        onChange={(decay) => set({ decay })}
+      />
       <NumberField
         label="Sustain"
         value={envelope.sustain}
@@ -47,8 +71,21 @@ export function EnvelopeEditor({
         step={0.01}
         onChange={(sustain) => set({ sustain })}
       />
-      <NumberField label="Release" suffix="ms" value={envelope.release} min={0} max={20_000} step={1} onChange={(release) => set({ release })} />
-      <SelectField label="Curve" value={envelope.curve} options={CURVES} onChange={(curve) => set({ curve })} />
+      <NumberField
+        label="Release"
+        suffix="ms"
+        value={envelope.release}
+        min={0}
+        max={20_000}
+        step={1}
+        onChange={(release) => set({ release })}
+      />
+      <SelectField
+        label="Curve"
+        value={envelope.curve}
+        options={CURVES}
+        onChange={(curve) => set({ curve })}
+      />
     </ControlGroup>
   );
 }
@@ -64,7 +101,12 @@ export function FilterEditor({
   const set = (patch: Partial<PadFilter>) => onChange({ ...filter, ...patch });
   return (
     <ControlGroup title="Filter">
-      <SelectField label="Type" value={filter.type} options={FILTER_TYPES} onChange={(type) => set({ type })} />
+      <SelectField
+        label="Type"
+        value={filter.type}
+        options={FILTER_TYPES}
+        onChange={(type) => set({ type })}
+      />
       <NumberField
         label="Cutoff"
         suffix="Hz"

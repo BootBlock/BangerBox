@@ -32,7 +32,13 @@ describe('buildSongMap (spec §7.9)', () => {
     expect(map).toHaveLength(3);
     expect(map[0]).toMatchObject({ entryIndex: 0, sequenceId: 'A', startTick: 0, startSeconds: 0, bpm: 120 });
     expect(map[1]).toMatchObject({ entryIndex: 0, startTick: BAR_4_4, startSeconds: 2 });
-    expect(map[2]).toMatchObject({ entryIndex: 1, sequenceId: 'B', startTick: 2 * BAR_4_4, startSeconds: 4, bpm: 60 });
+    expect(map[2]).toMatchObject({
+      entryIndex: 1,
+      sequenceId: 'B',
+      startTick: 2 * BAR_4_4,
+      startSeconds: 4,
+      bpm: 60,
+    });
   });
 
   it('uses the project default tempo when a sequence tempo is null', () => {

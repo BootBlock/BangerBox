@@ -5,12 +5,7 @@
  * velocity layers) edits through the program store as undoable commits (spec §4.5).
  */
 import { useState } from 'react';
-import {
-  CHOKE_GROUP_RANGE,
-  createDefaultPad,
-  type DrumProgram,
-  type Pad,
-} from '@/core/project/schemas';
+import { CHOKE_GROUP_RANGE, createDefaultPad, type DrumProgram, type Pad } from '@/core/project/schemas';
 import { useProgramStore } from '@/store';
 import { NumberField, SelectField, ToggleField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
@@ -90,7 +85,10 @@ export function PadEditor({ program }: { program: DrumProgram }) {
 
       {activePad ? (
         <div className="flex flex-col gap-3">
-          <section aria-label="Pad settings" className="rounded-bb-sm border border-bb-line bg-bb-surface p-3">
+          <section
+            aria-label="Pad settings"
+            className="rounded-bb-sm border border-bb-line bg-bb-surface p-3"
+          >
             <div className="mb-2 flex items-center justify-between">
               <h4 className="text-xs font-semibold text-bb-text">Pad {activePad.padIndex + 1}</h4>
               <button

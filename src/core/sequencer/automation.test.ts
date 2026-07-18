@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AutomationPoint } from '@/core/project/schemas';
-import {
-  automationRampForWindow,
-  automationValueAt,
-  resolveEffectivePoints,
-} from './automation';
+import { automationRampForWindow, automationValueAt, resolveEffectivePoints } from './automation';
 
 function point(
   tick: number,
@@ -12,7 +8,15 @@ function point(
   curve: AutomationPoint['curve'] = 'linear',
   scope: AutomationPoint['scope'] = 'sequence',
 ): AutomationPoint {
-  return { id: `${scope}-${tick}`, scope, ownerId: 'o', targetPath: 'mixer.master.level', tick, value, curve };
+  return {
+    id: `${scope}-${tick}`,
+    scope,
+    ownerId: 'o',
+    targetPath: 'mixer.master.level',
+    tick,
+    value,
+    curve,
+  };
 }
 
 describe('automationValueAt (spec §7.8)', () => {

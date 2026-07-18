@@ -41,7 +41,10 @@ export function LooperPanel() {
     try {
       const row = await looper.stopRecording(sampleRate, sampleEditContext());
       await refreshSamples();
-      pushToast(row ? 'Looper take saved as a sample.' : 'Nothing was captured.', row ? 'success' : 'warning');
+      pushToast(
+        row ? 'Looper take saved as a sample.' : 'Nothing was captured.',
+        row ? 'success' : 'warning',
+      );
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Looper capture failed.', 'error');
     }

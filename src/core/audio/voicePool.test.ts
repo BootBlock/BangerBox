@@ -125,7 +125,9 @@ describe('enriched voice — §6 sound design', () => {
   it('omits the filter node when the pad filter is off', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    pool.trigger(spec(context, { id: 'nf', filter: { type: 'off', cutoff: 800, resonance: 1, envDepth: 0 } }));
+    pool.trigger(
+      spec(context, { id: 'nf', filter: { type: 'off', cutoff: 800, resonance: 1, envDepth: 0 } }),
+    );
     expect(nodeCount(fake, 'biquad')).toBe(0);
     pool.destroy();
   });
@@ -149,7 +151,9 @@ describe('enriched voice — §6 sound design', () => {
   it('creates no oscillator when no LFO route is present', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    pool.trigger(spec(context, { id: 'no-lfo', lfos: [createDefaultLfo(), createDefaultLfo()], modMatrix: [] }));
+    pool.trigger(
+      spec(context, { id: 'no-lfo', lfos: [createDefaultLfo(), createDefaultLfo()], modMatrix: [] }),
+    );
     expect(nodeCount(fake, 'oscillator')).toBe(0);
     pool.destroy();
   });
@@ -168,7 +172,8 @@ describe('enriched voice — §6 sound design', () => {
   it('caps a keygroup program to its polyphony, stealing the oldest voice (spec §6)', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    const key = (id: string) => spec(context, { id, programId: 'keys', padKey: `keys:${id}`, programPolyphony: 2 });
+    const key = (id: string) =>
+      spec(context, { id, programId: 'keys', padKey: `keys:${id}`, programPolyphony: 2 });
     pool.trigger(key('a'));
     const oldest = fake.nodes.find((n) => n.nodeType === 'bufferSource');
     pool.trigger(key('b'));

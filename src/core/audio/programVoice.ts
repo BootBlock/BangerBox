@@ -113,11 +113,7 @@ export function keygroupDetuneCents(note: number, zone: KeygroupZone): number {
 }
 
 /** Resolve a drum-program hit (note = pad index, spec §6), or null if nothing sounds. */
-export function resolveDrumVoice(
-  program: DrumProgram,
-  note: number,
-  velocity: number,
-): ResolvedVoice | null {
+export function resolveDrumVoice(program: DrumProgram, note: number, velocity: number): ResolvedVoice | null {
   const pad = program.pads.find((candidate) => candidate.padIndex === note);
   if (pad === undefined) return null;
   const layer = selectVelocityLayer(pad.layers, velocity);
@@ -213,7 +209,10 @@ export interface VoiceTriggerParams {
  * envelopes, LFOs, mod matrix, polyphony, glide) is forwarded so the pool builds the voice.
  * Shared by the engine dispatcher and the offline pitch renders so they never diverge.
  */
-export function resolvedVoiceToTrigger(resolved: ResolvedVoice, params: VoiceTriggerParams): VoiceTriggerSpec {
+export function resolvedVoiceToTrigger(
+  resolved: ResolvedVoice,
+  params: VoiceTriggerParams,
+): VoiceTriggerSpec {
   return {
     id: params.id,
     buffer: params.buffer,

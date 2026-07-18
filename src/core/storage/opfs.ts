@@ -9,11 +9,14 @@
  *   /projects/{projectId}/bounces/{name}.wav
  *   /global_library/{sampleId}.wav
  *
- * The Phase 6 sample/looper/import pipelines write via {@link writeFileAtomic} (main-thread
- * `createWritable`, atomic temp-then-rename — spec §9.7), which is correct and sufficient.
- * // STUB(phase-7): a worker sync-access-handle streaming path is a throughput refinement for
- * very large writes (spec §9.1), not a Phase 6 blocker.
+ * Writes are atomic in both available forms (spec §9.7 — temp file, then rename):
+ * {@link writeFileAtomic} uses main-thread `createWritable`, and {@link writeFileStreamed}
+ * hands large buffers to the worker sync-access-handle path (spec §9.1), which is
+ * markedly faster for the multi-megabyte buffers the sampler produces. Callers that have
+ * just produced a large buffer and are finished with it should prefer the streamed form.
  */
+
+import { workerWritesAvailable, writeFileInWorker } from './opfsWriteClient';
 
 /** Canonical OPFS path of a project-scoped sample (spec §9.1). */
 export function samplePath(projectId: string, sampleId: string): string {
@@ -130,6 +133,28 @@ export async function writeFileAtomic(
     }
     throw err;
   }
+}
+
+/**
+ * Buffers at or above this size take the worker sync-access-handle path (spec §9.1). Below
+ * it the worker round-trip costs more than the faster write saves, so small writes stay on
+ * the main thread.
+ */
+export const STREAMED_WRITE_THRESHOLD_BYTES = 512 * 1024;
+
+/**
+ * Write bytes atomically, choosing the faster path for the payload (spec §9.1, §9.7).
+ * Large buffers stream through the worker's sync access handle; small ones (and any
+ * environment without workers, such as the unit suite) use {@link writeFileAtomic}.
+ *
+ * The buffer is transferred when the worker path is taken, so callers must not reuse it.
+ */
+export async function writeFileStreamed(path: string, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+  if (bytes.byteLength < STREAMED_WRITE_THRESHOLD_BYTES || !workerWritesAvailable()) {
+    await writeFileAtomic(path, bytes);
+    return;
+  }
+  await writeFileInWorker(path, bytes);
 }
 
 /** Read a file back as a File (a Blob with metadata). */

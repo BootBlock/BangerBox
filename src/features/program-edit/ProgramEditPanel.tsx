@@ -5,10 +5,7 @@
  * {@link KeygroupEditor} (keygroup), plus the live arpeggiator control (spec §7.3). All state
  * flows through the program store (spec §4.2/§4.5); the polished 12-mode shell is Phase 7.
  */
-import {
-  createDefaultDrumProgram,
-  createDefaultKeygroupProgram,
-} from '@/core/project/schemas';
+import { createDefaultDrumProgram, createDefaultKeygroupProgram } from '@/core/project/schemas';
 import { useProgramStore } from '@/store';
 import { ArpControl } from './ArpControl';
 import { KeygroupEditor } from './KeygroupEditor';
@@ -37,8 +34,8 @@ export function ProgramEditPanel() {
         Program edit
       </h3>
       <p className="mt-1 text-xs leading-relaxed text-bb-muted">
-        The instrument: build drum and keygroup programs — layers, envelopes, filter, LFOs and
-        the mod matrix (spec §6). Edits are undoable and autosaved.
+        The instrument: build drum and keygroup programs — layers, envelopes, filter, LFOs and the mod matrix
+        (spec §6). Edits are undoable and autosaved.
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">

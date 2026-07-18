@@ -1,5 +1,5 @@
 /**
- * Program Edit mode barrel (spec §2.5, §8.5.5). The functional Phase 5 program editor;
- * the polished mode-rail integration is Phase 7.
+ * Program Edit mode barrel (spec §2.5, §8.5.5). The panel is mounted by the mode registry
+ * as `ProgramEditMode`; the shell supplies the heading and layout (spec §8.1).
  */
-export { ProgramEditPanel } from './ProgramEditPanel';
+export { ProgramEditPanel, ProgramEditPanel as ProgramEditMode } from './ProgramEditPanel';

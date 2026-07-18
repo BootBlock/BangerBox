@@ -44,9 +44,7 @@ describe('quantiseTick (spec §7.4)', () => {
 
   it('bakes swing into the grid when requested', () => {
     // On-grid odd 1/16 subdivision (tick 240 = subdivision 1) swings +60 at 75 %.
-    expect(quantiseTick(245, { grid, strength: 1, swingAmount: 75, swingDivision: 16 })).toBe(
-      PPQN / 4 + 60,
-    );
+    expect(quantiseTick(245, { grid, strength: 1, swingAmount: 75, swingDivision: 16 })).toBe(PPQN / 4 + 60);
     // On-beat subdivision is unaffected by swing.
     expect(quantiseTick(5, { grid, strength: 1, swingAmount: 75, swingDivision: 16 })).toBe(0);
   });

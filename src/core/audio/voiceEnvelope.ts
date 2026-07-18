@@ -24,12 +24,7 @@ export function velocityToGain(velocity: number, gainDb: number): number {
  * decay ramps straight to it. Returns the context time the sustain level is reached
  * (the earliest a note-off release can begin).
  */
-export function scheduleAmpAttack(
-  param: AudioParam,
-  peak: number,
-  amp: AhdsrEnvelope,
-  when: number,
-): number {
+export function scheduleAmpAttack(param: AudioParam, peak: number, amp: AhdsrEnvelope, when: number): number {
   const attackEnd = when + amp.attack / 1000;
   const holdEnd = attackEnd + amp.hold / 1000;
   const decayEnd = holdEnd + amp.decay / 1000;

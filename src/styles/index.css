@@ -32,6 +32,17 @@
   /* Shadows */
   --shadow-bb-raised: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 16px 40px -20px rgb(0 0 0 / 0.7);
   --shadow-bb-glow: 0 0 24px -6px var(--color-bb-accent);
+  /* Velocity glow — intensity comes from --bb-pad-glow (0..1), written to the element by
+     the Pad primitive's ref (spec §8.3: glow from hit velocity, decaying via a CSS
+     transition, never React state). */
+  --shadow-bb-pad-glow: 0 0 calc(var(--bb-pad-glow, 0) * 30px) calc(var(--bb-pad-glow, 0) * -4px)
+    var(--color-bb-accent);
+
+  /* Composite transitions used by primitives. Press feedback snaps; the velocity glow
+     decays slowly on release. Transform/opacity/shadow only — never layout properties
+     (spec §8.3 60 fps budget). */
+  --transition-bb-pad: transform 150ms var(--ease-bb-snap), background-color 150ms
+    var(--ease-bb-snap), border-color 150ms var(--ease-bb-snap), box-shadow 420ms var(--ease-bb-glide);
 }
 
 @layer base {

@@ -19,11 +19,7 @@ export function swingDivisionTicks(swingDivision: SwingDivision): number {
  * an event belongs to is the nearest grid line, so recorded off-grid timing still swings
  * with its slot. Rounded to whole ticks to preserve the integer-tick model (spec §7.2).
  */
-export function swingOffsetTicks(
-  tick: number,
-  swingAmount: number,
-  swingDivision: SwingDivision,
-): number {
+export function swingOffsetTicks(tick: number, swingAmount: number, swingDivision: SwingDivision): number {
   if (swingAmount <= 50) return 0;
   const divisionTicks = swingDivisionTicks(swingDivision);
   const subdivision = Math.round(tick / divisionTicks);
@@ -33,10 +29,6 @@ export function swingOffsetTicks(
 }
 
 /** The swung schedule tick for an event (spec §7.4). Never earlier than the input tick. */
-export function applySwing(
-  tick: number,
-  swingAmount: number,
-  swingDivision: SwingDivision,
-): number {
+export function applySwing(tick: number, swingAmount: number, swingDivision: SwingDivision): number {
   return tick + swingOffsetTicks(tick, swingAmount, swingDivision);
 }

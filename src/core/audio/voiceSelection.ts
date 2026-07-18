@@ -52,10 +52,7 @@ export interface ChokeTrigger {
  * voices of *other* pads sharing that group *within the same program* (closed hat chokes
  * open hat). Group 0 chokes nothing.
  */
-export function selectChokeVictims(
-  active: readonly ChokeCandidate[],
-  trigger: ChokeTrigger,
-): string[] {
+export function selectChokeVictims(active: readonly ChokeCandidate[], trigger: ChokeTrigger): string[] {
   if (trigger.chokeGroup <= 0) return [];
   return active
     .filter(

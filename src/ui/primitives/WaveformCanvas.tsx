@@ -67,7 +67,12 @@ export function WaveformCanvas({ samples, height = 96, ariaLabel = 'Sample wavef
       role="img"
       aria-label={ariaLabel}
       className="h-24 w-full rounded-bb-sm border border-bb-line"
-      style={{ height, ['--wave-bg' as string]: '#1b1a20', ['--wave-mid' as string]: '#3a3846', ['--wave-fg' as string]: '#7c5cff' }}
+      style={{
+        height,
+        ['--wave-bg' as string]: '#1b1a20',
+        ['--wave-mid' as string]: '#3a3846',
+        ['--wave-fg' as string]: '#7c5cff',
+      }}
     />
   );
 }

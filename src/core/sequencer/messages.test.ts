@@ -33,7 +33,13 @@ describe('parseSchedulerRequest (spec §7.1.3, §1.3 #11)', () => {
       { kind: 'swing', amount: 58, division: 16 },
       { kind: 'loop', enabled: true, startTick: 0, endTick: 3840 },
       { kind: 'eventsDiff', trackId: 't1', sequenceId: 's1', upserts: [event], deletes: ['x'] },
-      { kind: 'automationDiff', scope: 'track', ownerId: 't1', targetPath: 'mixer.track:t1.level', points: [] },
+      {
+        kind: 'automationDiff',
+        scope: 'track',
+        ownerId: 't1',
+        targetPath: 'mixer.track:t1.level',
+        points: [],
+      },
       { kind: 'songSequence', orderedSequenceIds: ['a', 'a', 'b'] },
       {
         kind: 'sequenceMeta',
@@ -68,7 +74,14 @@ describe('parseSchedulerResponse (spec §7.1.3, §1.3 #11)', () => {
         events: [
           { kind: 'noteOn', when: 1.0, tick: 0, trackId: 't1', note: 36, velocity: 100, durationSec: 0.25 },
           { kind: 'click', when: 1.0, tick: 0, accented: true },
-          { kind: 'automationRamp', when: 1.0, tick: 0, target: 'mixer.master.level', value: 0.8, rampEnd: 1.1 },
+          {
+            kind: 'automationRamp',
+            when: 1.0,
+            tick: 0,
+            target: 'mixer.master.level',
+            value: 0.8,
+            rampEnd: 1.1,
+          },
         ],
       },
       { kind: 'recorded', trackId: 't1', events: [event] },
