@@ -51,8 +51,11 @@ function record(name, ok, detail = '') {
 
 async function step(name, fn) {
   try {
-    await fn();
+    // The step's value is passed through so one step can feed the next (e.g. the factory
+    // cache warm-up hands the offline assertion the pack filename it warmed).
+    const value = await fn();
     record(name, true);
+    return value;
   } catch (error) {
     record(name, false, error instanceof Error ? error.message : String(error));
     throw error;
@@ -355,6 +358,33 @@ async function assertShellAndSelfTest(page, label) {
       if (!result.imported) throw new Error('import did not open a fresh project');
       if (!(result.samples >= 1)) throw new Error(`imported project has ${result.samples} samples — expected ≥ 1`);
     });
+
+    await step(`${label}: factory kit merges and demo opens over the real path (spec §9.8)`, async () => {
+      const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.factoryInstallProof());
+
+      if (!(r.kits >= 3 && r.demos >= 3)) {
+        throw new Error(`catalogue has ${r.kits} kits / ${r.demos} demos — expected ≥ 3 of each (§9.8)`);
+      }
+      // A kit contributes sound...
+      if (!(r.programsAfter > r.programsBefore)) throw new Error('kit merge added no program');
+      if (!(r.samplesAfter > r.samplesBefore)) throw new Error('kit merge added no samples');
+      if (!r.mergedSamplesReadable) throw new Error('a merged sample is missing or empty in OPFS (§9.1)');
+      // ...and never arrangement: the active project's sequences, tracks and song are
+      // exactly as they were (spec §9.8).
+      if (r.sequencesAfter !== r.sequencesBefore) {
+        throw new Error(`kit merge changed sequence count ${r.sequencesBefore} → ${r.sequencesAfter}`);
+      }
+      if (r.tracksAfter !== r.tracksBefore) {
+        throw new Error(`kit merge changed track count ${r.tracksBefore} → ${r.tracksAfter}`);
+      }
+      if (r.songEntriesAfter !== r.songEntriesBefore) {
+        throw new Error(`kit merge changed song entries ${r.songEntriesBefore} → ${r.songEntriesAfter}`);
+      }
+      // A demo opens as a new, populated project.
+      if (!r.demoOpenedNewProject) throw new Error('demo pack did not open a new project');
+      if (!(r.demoSequences >= 1)) throw new Error(`demo project has ${r.demoSequences} sequences — expected ≥ 1`);
+      if (!(r.demoSamples >= 1)) throw new Error(`demo project has ${r.demoSamples} samples — expected ≥ 1`);
+    });
   }
 }
 
@@ -369,6 +399,16 @@ async function main() {
       stdio: 'inherit',
     });
     if (wasm.status !== 0) throw new Error('build:wasm failed');
+  }
+
+  // Factory packs are a gitignored artefact too (spec §9.8) — build them if absent so the
+  // smoke stays self-sufficient on a fresh checkout.
+  if (!existsSync(resolve(root, 'public/factory/index.json'))) {
+    const factory = spawnSync(process.execPath, [resolve(root, 'scripts/build-factory.mjs')], {
+      cwd: root,
+      stdio: 'inherit',
+    });
+    if (factory.status !== 0) throw new Error('build:factory failed');
   }
 
   const browser = await launchBrowser();
@@ -453,8 +493,43 @@ async function main() {
         });
       });
 
+      // Warm the factory runtime cache while still online, so the offline assertion below
+      // tests the CACHE rather than merely re-testing the network (spec §9.8 "Caching").
+      const warmedPack = await step('preview: factory content is runtime-cached (spec §9.8)', async () => {
+        const result = await page.evaluate(async () => {
+          const catalogue = await (await fetch('factory/index.json')).json();
+          const first = catalogue[0];
+          // Drain the body: an unread response stream is aborted by the reload below, which
+          // the smoke's own console-hygiene check would (correctly) flag as an error.
+          await (await fetch(`factory/${first.file}`)).arrayBuffer();
+          const cache = await caches.open('bangerbox-factory-v1');
+          return {
+            file: first.file,
+            catalogueCached: (await cache.match(new URL('factory/index.json', location.href).href)) != null,
+            packCached: (await cache.match(new URL(`factory/${first.file}`, location.href).href)) != null,
+          };
+        });
+        if (!result.catalogueCached) throw new Error('catalogue was not runtime-cached');
+        if (!result.packCached) throw new Error(`${result.file} was not runtime-cached`);
+        return result.file;
+      });
+
       await previewContext.setOffline(true);
       await page.reload({ waitUntil: 'load' });
+
+      await step('offline: factory catalogue and pack are served from cache (spec §9.8)', async () => {
+        const result = await page.evaluate(async (file) => {
+          const catalogue = await fetch('factory/index.json');
+          const pack = await fetch(`factory/${file}`);
+          return { catalogue: catalogue.ok, pack: pack.ok, bytes: (await pack.arrayBuffer()).byteLength };
+        }, warmedPack);
+        // With the network down these can only succeed from the dedicated factory cache —
+        // which is also the proof it survived the §2.4 stale-precache prune on activate.
+        if (!result.catalogue) throw new Error('factory catalogue is unavailable offline');
+        if (!result.pack) throw new Error('factory pack is unavailable offline');
+        if (!(result.bytes > 0)) throw new Error('cached factory pack is empty offline');
+      });
+
       await assertShellAndSelfTest(page, 'offline');
       await previewContext.setOffline(false);
       await previewContext.close();

@@ -14,4 +14,18 @@ export {
   getActiveRepositories,
 } from './projectService';
 export { getProjectService, registerProjectService, type ProjectService } from './service';
+export {
+  fetchFactoryCatalogue,
+  installFactoryPack,
+  isPackCached,
+  describeInstall,
+  reportInstallFailure,
+  FactoryStorageError,
+} from './factoryService';
+export {
+  parseFactoryCatalogue,
+  type FactoryCatalogue,
+  type FactoryPack,
+  type FactoryPackKind,
+} from './factoryCatalogue';
 export { startProjectSession, stopProjectSession, startAudioEngine, getAudioEngine } from './session';
