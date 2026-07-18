@@ -21,12 +21,15 @@ import {
   cellsAlongSegment,
   eventAtCell,
   eventAtPoint,
+  eventsInTickSpan,
+  nearestEventToTick,
   noteToRow,
   resizeHandleAtPoint,
   rowToNote,
   rowToY,
   snapTick,
   tickToX,
+  velocityAtLaneY,
   xToTick,
   yToRow,
   type GridViewport,
@@ -56,7 +59,13 @@ export interface GridCanvasProps {
   onGestureEnd: () => void;
   onMove: (id: string, note: number, tickStart: number, coalesceKey?: string) => void;
   onResize: (id: string, durationTicks: number, coalesceKey?: string) => void;
-  onSetVelocity: (id: string, velocity: number) => void;
+  /**
+   * Set one velocity across a batch of notes. A batch rather than a single id because a
+   * sideways drag crosses several bars between two pointer samples, and they must land in
+   * one write — sequential single-note writes would each read the same pre-drag events and
+   * clobber one another.
+   */
+  onSetVelocity: (ids: readonly string[], velocity: number, coalesceKey?: string) => void;
   onScroll: (deltaTicks: number, deltaRows: number) => void;
   onZoom: (factor: number) => void;
 }
@@ -73,6 +82,8 @@ const ERASE_GESTURE = 'grid-erase';
 /** Move/resize drags coalesce the same way: one drag is one undo step, not one per frame. */
 const MOVE_GESTURE = 'grid-move';
 const RESIZE_GESTURE = 'grid-resize';
+/** A velocity drag likewise: one gesture is one undo entry, not one per pointer sample. */
+const VELOCITY_GESTURE = 'grid-velocity';
 
 /**
  * How far the pointer may wander and still count as a tap rather than a drag. Without
@@ -338,15 +349,47 @@ export function GridCanvas({
 
     // --- Velocity lane: drag a note's velocity (spec §8.5.2 velocity lane) -----------
     if (point.y >= point.gridHeight) {
-      const laneY = point.y - point.gridHeight;
-      const velocity = Math.round(
-        Math.min(1, Math.max(0, 1 - (laneY - 4) / (VELOCITY_LANE_HEIGHT - 8))) * MAX_VELOCITY,
-      );
-      const tick = xToTick(point.x, view);
-      // Nearest note start within a small tick window owns the velocity bar.
+      // Bars are 3 px wide, so the press grabs the nearest bar within a small window.
       const tolerance = 8 * viewport.ticksPerPixel;
-      const hit = events.find((candidate) => Math.abs(candidate.tickStart - tick) <= tolerance);
-      if (hit) onSetVelocity(hit.id, Math.max(1, velocity));
+      const pressTick = xToTick(point.x, view);
+      const anchor = nearestEventToTick(events, pressTick, tolerance);
+      if (!anchor) return;
+
+      const apply = (ids: readonly string[], laneY: number) => {
+        if (ids.length > 0) onSetVelocity(ids, velocityAtLaneY(laneY, VELOCITY_LANE_HEIGHT), VELOCITY_GESTURE);
+      };
+      apply([anchor.id], point.y - point.gridHeight);
+
+      // Hold the element, not the React event: React nulls `currentTarget` once the
+      // handler returns, so reading it from a later listener throws — and from a window
+      // listener the throw never reaches the console, it just looks inert.
+      const canvas = pointerEvent.currentTarget;
+      canvas.setPointerCapture(pointerEvent.pointerId);
+      let previousTick = pressTick;
+      const move = (moveEvent: globalThis.PointerEvent) => {
+        const rect = canvas.getBoundingClientRect();
+        const moveTick = xToTick(moveEvent.clientX - rect.left - LABEL_GUTTER_PX, view);
+        const laneY = moveEvent.clientY - rect.top - (rect.height - VELOCITY_LANE_HEIGHT);
+        // Every bar the segment swept takes the pointer's current height, so dragging
+        // sideways shapes a run of notes in one gesture. Reading live events keeps notes
+        // drawn mid-gesture visible; the anchor covers a purely vertical drag, where the
+        // swept span is a point and catches nothing.
+        const swept = eventsInTickSpan(latest.current.events, previousTick, moveTick);
+        const ids = new Set(swept.map((event) => event.id));
+        ids.add(anchor.id);
+        apply([...ids], laneY);
+        previousTick = moveTick;
+      };
+      const end = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        // One drag is one undo step, however many frames it spanned (spec §3.3).
+        onGestureEnd();
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
       return;
     }
 
