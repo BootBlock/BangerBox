@@ -111,6 +111,7 @@ export function decodeWav(bytes: Uint8Array): DecodedWav {
   let numChannels = 1;
   let sampleRate = 48_000;
   let bitsPerSample = 16;
+  let sawFmt = false;
   let dataOffset = -1;
   let dataSize = 0;
 
@@ -120,10 +121,13 @@ export function decodeWav(bytes: Uint8Array): DecodedWav {
     const chunkSize = view.getUint32(cursor + 4, true);
     const body = cursor + 8;
     if (chunkId === 'fmt ') {
+      // A `fmt ` chunk truncated at end-of-buffer would otherwise raise a bare RangeError.
+      if (body + 16 > bytes.byteLength) throw new Error('decodeWav: truncated fmt chunk');
       audioFormat = view.getUint16(body, true);
       numChannels = view.getUint16(body + 2, true);
       sampleRate = view.getUint32(body + 4, true);
       bitsPerSample = view.getUint16(body + 14, true);
+      sawFmt = true;
     } else if (chunkId === 'data') {
       dataOffset = body;
       dataSize = Math.min(chunkSize, bytes.byteLength - body);
@@ -131,7 +135,23 @@ export function decodeWav(bytes: Uint8Array): DecodedWav {
     // Chunks are word-aligned: an odd size is followed by a pad byte.
     cursor = body + chunkSize + (chunkSize & 1);
   }
+  if (!sawFmt) throw new Error('decodeWav: no fmt chunk found');
   if (dataOffset < 0) throw new Error('decodeWav: no data chunk found');
+
+  // Validate before allocating: a zero channel count or bit depth makes `blockAlign` zero, and
+  // `dataSize / 0` is Infinity — an unbounded loop that wedges the thread rather than throwing.
+  // §9.3 constrains stored samples to 1 or 2 channels, so anything else is not ours to decode.
+  if (numChannels !== 1 && numChannels !== 2) {
+    throw new Error(`decodeWav: unsupported channel count ${numChannels}`);
+  }
+  if (![8, 16, 24, 32].includes(bitsPerSample)) {
+    throw new Error(`decodeWav: unsupported bit depth ${bitsPerSample}`);
+  }
+  // IEEE float is only defined at 32 bits; any other width would read past each frame's stride.
+  if (audioFormat === 3 && bitsPerSample !== 32) {
+    throw new Error(`decodeWav: IEEE float requires 32 bits, got ${bitsPerSample}`);
+  }
+  if (sampleRate <= 0) throw new Error(`decodeWav: invalid sample rate ${sampleRate}`);
 
   const bytesPerSample = bitsPerSample / 8;
   const blockAlign = numChannels * bytesPerSample;
