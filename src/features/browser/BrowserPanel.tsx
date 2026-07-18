@@ -16,6 +16,7 @@ import { Toggle } from '@/ui/primitives';
 import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
 import { FactorySection } from './FactorySection';
 import { FolderTree } from './FolderTree';
+import { findUnusedSamples } from './purge';
 import { isGlobalLibraryPath, scopeOfPath } from './libraryLocation';
 
 /** Trigger a browser download of a Blob (spec §9.6 export → download). */
@@ -184,20 +185,24 @@ export function BrowserPanel() {
   };
 
   /**
-   * Delete samples not referenced by any program payload (spec §8.5.7 purge unused).
-   * Project-scoped only: "unused" is decided against this project's programs, which says
-   * nothing about a global-library sample that other projects may reference.
+   * Delete samples no program payload references (spec §8.5.7 purge unused).
+   *
+   * The reference set depends on WHERE the sample lives (spec §9.1). A project-scoped sample is
+   * judged against its own project's programs. A global-library sample is shared — factory
+   * content de-duplicates into it (§9.8), so a kit's audio may be the very sample another
+   * project's demo plays — and is judged against EVERY program in the database. Asking the
+   * narrower question about a shared sample would delete audio still in use elsewhere.
    */
   const purgeUnused = async () => {
     setBusy(true);
     try {
       const repos = getActiveRepositories();
-      const programs = await repos.programs.listByProject(projectId);
-      const referenced = new Set<string>();
-      for (const program of programs.rows) {
-        for (const sample of samples) if (program.payload.includes(sample.id)) referenced.add(sample.id);
-      }
-      const unused = samples.filter((sample) => !referenced.has(sample.id));
+      const unused = await findUnusedSamples(
+        samples,
+        repos,
+        browsingGlobal ? 'global' : 'project',
+        projectId,
+      );
       for (const sample of unused) {
         await deleteFile(sample.opfs_path);
         await repos.samples.remove(sample.id);
@@ -258,8 +263,12 @@ export function BrowserPanel() {
         </label>
         <button
           type="button"
-          disabled={busy || browsingGlobal || samples.length === 0}
-          title={browsingGlobal ? 'Purge applies to the project library only.' : undefined}
+          disabled={busy || samples.length === 0}
+          title={
+            browsingGlobal
+              ? 'Deletes global samples no project uses.'
+              : 'Deletes samples this project does not use.'
+          }
           data-testid="purge-unused"
           onClick={() => void purgeUnused()}
           className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs disabled:opacity-50"

@@ -38,13 +38,16 @@ const programCreate = vi.fn();
 const programRemove = vi.fn();
 const sampleCreate = vi.fn();
 const sampleRemove = vi.fn();
+/** Global-library lookup (spec §9.8 de-duplication) — `undefined` means "not installed yet". */
+const getGlobalByPath = vi.fn();
 const installUnpackedAsNewProject = vi.fn();
 vi.mock('./projectService', () => ({
   getActiveRepositories: () => ({
     programs: { create: programCreate, remove: programRemove },
-    samples: { create: sampleCreate, remove: sampleRemove },
+    samples: { create: sampleCreate, remove: sampleRemove, getGlobalByPath },
   }),
-  installUnpackedAsNewProject: (unpacked: unknown) => installUnpackedAsNewProject(unpacked),
+  installUnpackedAsNewProject: (unpacked: unknown, options: unknown) =>
+    installUnpackedAsNewProject(unpacked, options),
 }));
 
 // The pack worker is a real Worker; unpack synchronously with the same pure function it runs.
@@ -93,6 +96,8 @@ beforeEach(() => {
   programRemove.mockResolvedValue(undefined);
   sampleCreate.mockResolvedValue(undefined);
   sampleRemove.mockResolvedValue(undefined);
+  // Default: nothing is in the global library, so every sample is a fresh write.
+  getGlobalByPath.mockResolvedValue(undefined);
   installUnpackedAsNewProject.mockResolvedValue('new-project-id');
   useProgramStore.getState().setPrograms({});
 });
@@ -145,16 +150,49 @@ describe('kit merge (spec §9.8)', () => {
     expect(installUnpackedAsNewProject).not.toHaveBeenCalled();
   });
 
-  it('re-parents every written sample under the active project (spec §9.1)', async () => {
+  it('installs every sample into the content-addressed global library (spec §9.1, §9.8)', async () => {
     stubFetch(archiveFor('kit-909.mpcweb'));
     await installFactoryPack(pack({ file: 'kit-909.mpcweb' }), ACTIVE_PROJECT);
 
+    // Shared, not project-scoped: the same audio arrives again inside the demo that plays this
+    // kit, and addressing it by content is what lets the second install reuse this copy.
     for (const [path] of writeFileAtomic.mock.calls) {
-      expect(path.startsWith(`/projects/${ACTIVE_PROJECT}/samples/`)).toBe(true);
+      expect(path).toMatch(/^\/global_library\/[0-9a-f]{64}\.wav$/);
     }
     for (const [row] of sampleCreate.mock.calls) {
-      expect((row as { project_id: string }).project_id).toBe(ACTIVE_PROJECT);
+      // NULL project id IS the global-library encoding (spec §9.3).
+      expect((row as { project_id: string | null }).project_id).toBeNull();
     }
+  });
+
+  it('reuses an already-installed sample instead of storing it twice (spec §9.8)', async () => {
+    stubFetch(archiveFor('kit-909.mpcweb'));
+    const total = unpackMpcweb(archiveFor('kit-909.mpcweb')).snapshot.samples.length;
+    // Every sample already present — the state after installing the demo that plays this kit.
+    getGlobalByPath.mockImplementation((path: string) =>
+      Promise.resolve({ id: `existing-${path}`, project_id: null, opfs_path: path }),
+    );
+
+    await installFactoryPack(pack({ file: 'kit-909.mpcweb' }), ACTIVE_PROJECT);
+
+    expect(total).toBeGreaterThan(0);
+    expect(writeFileAtomic).not.toHaveBeenCalled();
+    expect(sampleCreate).not.toHaveBeenCalled();
+    // The programs still land — they are what points the user's project at the shared audio.
+    expect(programCreate).toHaveBeenCalled();
+  });
+
+  it('sizes the storage gate on the de-duplicated write set, not the whole pack (spec §9.7)', async () => {
+    stubFetch(archiveFor('kit-909.mpcweb'));
+    getGlobalByPath.mockImplementation((path: string) =>
+      Promise.resolve({ id: `existing-${path}`, project_id: null, opfs_path: path }),
+    );
+
+    await installFactoryPack(pack({ file: 'kit-909.mpcweb' }), ACTIVE_PROJECT);
+
+    // Nothing new to write, so the §9.7 hard stop must not be asked for room the install does
+    // not need — gating on the full payload would refuse an install that costs nothing.
+    expect(checkWriteHeadroom).toHaveBeenCalledWith(0);
   });
 
   it('remaps ids so a kit installed twice never collides (spec §9.6)', async () => {
@@ -237,7 +275,7 @@ describe('kit merge transactionality (spec §9.8, §9.6)', () => {
   it('unwinds every written file and inserted row when a row insert fails', async () => {
     stubFetch(archiveFor('kit-808.mpcweb'));
     const total = unpackMpcweb(archiveFor('kit-808.mpcweb')).snapshot.samples.length;
-    // Fail partway through the sample rows, after files and programs have landed.
+    // Fail partway through the sample rows, after every file has landed.
     sampleCreate
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(undefined)
@@ -249,10 +287,26 @@ describe('kit merge transactionality (spec §9.8, §9.6)', () => {
     expect(deleteFile).toHaveBeenCalledTimes(total);
     const written = writeFileAtomic.mock.calls.map(([path]) => path);
     expect(deleteFile.mock.calls.map(([path]) => path).sort()).toEqual(written.sort());
-    // No partial project: both successfully inserted sample rows are removed again...
+    // No partial project: both successfully inserted sample rows are removed again.
     expect(sampleRemove).toHaveBeenCalledTimes(2);
-    // ...and so is the program row.
-    expect(programRemove).toHaveBeenCalledTimes(1);
+    // Programs are inserted after the samples they reference, so none had landed to unwind.
+    expect(programRemove).not.toHaveBeenCalled();
+  });
+
+  it('never deletes a reused global sample when unwinding (spec §9.8)', async () => {
+    stubFetch(archiveFor('kit-808.mpcweb'));
+    // The kit's audio is already installed; only the program insert is left to fail.
+    getGlobalByPath.mockImplementation((path: string) =>
+      Promise.resolve({ id: `existing-${path}`, project_id: null, opfs_path: path }),
+    );
+    programCreate.mockRejectedValueOnce(new Error('constraint failed'));
+
+    await expect(installFactoryPack(pack(), ACTIVE_PROJECT)).rejects.toThrow('constraint failed');
+
+    // Those samples predate this install — very possibly installed by a demo the user still
+    // has — so unwinding must leave them alone. Deleting them would be data loss, not cleanup.
+    expect(deleteFile).not.toHaveBeenCalled();
+    expect(sampleRemove).not.toHaveBeenCalled();
   });
 
   it('unwinds when an OPFS write fails midway', async () => {

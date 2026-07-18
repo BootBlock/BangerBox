@@ -96,9 +96,13 @@ storage gate → (`installUnpackedAsNewProject` | `installKitPack`) → stores.
 - **`factoryCatalogue.ts`** (pure) — the catalogue Zod schema. `file` is constrained to a bare
   `*.mpcweb` filename: the catalogue is network input concatenated into a fetch URL, so the
   path-traversal guard lives at the schema.
-- **`factoryMerge.ts`** (pure) — `buildKitMerge` (re-parent programs/samples, discard
-  arrangement) and `uncompressedSampleBytes`. Pure so the discard rules are testable without
-  a database.
+- **`factoryMerge.ts`** (pure) — `buildKitMerge` (re-parent programs, discard arrangement).
+  Pure so the discard rules are testable without a database. It contributes no sample rows:
+  factory audio installs globally, see `sampleSharing.ts`.
+- **`sampleSharing.ts`** (pure apart from a repository read) — content-addressed
+  de-duplication (§9.1, §9.8). Hashes each sample, reuses an identical one already in
+  `/global_library/`, and rewrites the snapshot so programs point at whichever copy is stored.
+  Factory installs only; a user import stays project-scoped.
 - **`factoryService.ts`** — the only module here that touches OPFS, repositories or stores.
   `installKitPack` records every written path and inserted row and unwinds them in reverse on
   failure, best-effort per item so one failed cleanup cannot abort the rest.

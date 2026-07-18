@@ -15,6 +15,7 @@ import { remapSnapshot } from './mpcweb';
 import { packMpcwebInWorker, unpackMpcwebInWorker } from './packClient';
 import type { UnpackedProject } from './mpcwebZip';
 import { flushDirtyKeys } from './persist';
+import { planSharedSamples } from './sampleSharing';
 import { registerProjectService, type ProjectService } from './service';
 import { dumpSnapshot, restoreSnapshot } from './snapshotService';
 import { createDefaultChannelStrip, createDefaultDrumProgram, createDefaultSequence } from './schemas';
@@ -129,26 +130,78 @@ async function importMpcweb(file: File): Promise<string> {
   return installUnpackedAsNewProject(await unpackMpcwebInWorker(bytes));
 }
 
+export interface InstallOptions {
+  /**
+   * Install samples into the content-addressed global library instead of under the new
+   * project (spec §9.1, §9.8). Set by factory `demo` installs, whose audio is shipped content
+   * the app can re-fetch and legitimately share with the kit pack that also carries it.
+   *
+   * A USER import must leave this unset: their project has to stay self-contained, and
+   * promoting imported audio into a shared library would let one project's purge reach into
+   * another's (spec §9.6).
+   */
+  readonly shareSamples?: boolean;
+  /**
+   * Gate the §9.7 hard stop against the bytes this install will actually add, once sharing
+   * has removed what is already stored. Injected rather than imported so the factory layer
+   * keeps ownership of its own refusal type without this module depending on it.
+   */
+  readonly assertHeadroom?: (requiredBytes: number) => Promise<void>;
+}
+
 /**
  * Install an already-unpacked `.mpcweb` payload as a NEW project and open it (spec §9.6).
  *
  * Shared by the user import above and the factory `demo` install (spec §9.8), which is why
  * it takes an unpacked payload rather than a File: §9.8 installs factory content "through
  * the same unpack → Zod-validate → UUID-remap → OPFS-write → row-insert path as a user
- * import", so there is one path here, not two.
+ * import", so there is one path here, not two. `options` varies that one path where factory
+ * content legitimately differs from a user's, rather than forking it.
  */
-export async function installUnpackedAsNewProject(unpacked: UnpackedProject): Promise<string> {
+export async function installUnpackedAsNewProject(
+  unpacked: UnpackedProject,
+  options: InstallOptions = {},
+): Promise<string> {
   const { snapshot, projectId, sampleIdMap } = remapSnapshot(unpacked.snapshot);
+  const repos = getRepositories();
 
-  // Relocate each sample's bytes to its new OPFS path before inserting rows.
+  // Re-key the packed bytes onto the remapped ids the rows now carry.
+  const bytesById = new Map<string, Uint8Array>();
   for (const [oldId, data] of unpacked.samples) {
     const newId = sampleIdMap.get(oldId);
-    if (!newId) continue;
+    if (newId) bytesById.set(newId, data);
+  }
+
+  if (options.shareSamples) {
+    const plan = await planSharedSamples(snapshot, bytesById, repos);
+    await options.assertHeadroom?.(plan.writes.reduce((sum, write) => sum + write.bytes.byteLength, 0));
+    for (const sample of plan.writes) {
+      await writeFileAtomic(sample.opfs_path, new Uint8Array(sample.bytes));
+      await repos.samples.create({
+        id: sample.id,
+        // NULL project id IS the global-library encoding (spec §9.3).
+        project_id: null,
+        name: sample.name,
+        opfs_path: sample.opfs_path,
+        frames: sample.frames,
+        sample_rate: sample.sample_rate,
+        channels: sample.channels,
+        root_note: sample.root_note,
+      });
+    }
+    // `plan.snapshot` carries no sample rows — they are global now, and its programs already
+    // point at whichever stored copy won.
+    await restoreSnapshot(repos, plan.snapshot);
+    await loadProject(projectId);
+    return projectId;
+  }
+
+  // Relocate each sample's bytes to its new OPFS path before inserting rows.
+  for (const [newId, data] of bytesById) {
     // Copy into a fresh ArrayBuffer-backed view (the OPFS stream API rejects shared buffers).
     await writeFileAtomic(samplePath(projectId, newId), new Uint8Array(data));
   }
 
-  const repos = getRepositories();
   await restoreSnapshot(repos, snapshot);
   await loadProject(projectId);
   return projectId;

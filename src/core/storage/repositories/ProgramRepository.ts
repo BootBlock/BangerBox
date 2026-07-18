@@ -37,6 +37,20 @@ export class ProgramRepository extends BaseRepository {
     return this.driver.queryOne<ProgramRow>('SELECT * FROM programs WHERE id = ?;', [id]);
   }
 
+  /**
+   * Every program payload in the database, across all projects — the reference set "Purge
+   * unused samples" tests a global-library sample against (spec §8.5.7, §9.8).
+   *
+   * Deliberately UNPAGED, unlike every other list here. Purge deletes what this does not
+   * mention, so a payload missed because it fell past a page boundary is a sample deleted out
+   * from under a project that still uses it. Only the payload text is selected, since that is
+   * all the reference test reads.
+   */
+  async allPayloads(): Promise<string[]> {
+    const rows = await this.driver.query<{ payload: string }>('SELECT payload FROM programs;');
+    return rows.map((row) => row.payload);
+  }
+
   async listByProject(projectId: string, page: PageParams = {}): Promise<Page<ProgramRow>> {
     const { limit, offset } = this.resolvePage(page);
     const rows = await this.driver.query<ProgramRow>(

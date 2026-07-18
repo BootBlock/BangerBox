@@ -42,6 +42,19 @@ export function globalLibraryPath(sampleId: string): string {
 }
 
 /**
+ * Global-library path of a sample addressed by the hash of its CONTENT rather than by its id
+ * (spec §9.1, §9.8 de-duplication).
+ *
+ * Two packs that ship the same audio — a kit and a demo that plays it — carry different row
+ * ids for it, so id-addressing would store the bytes twice. Hashing the bytes gives one
+ * stable name for one sound, which is what makes "is this already installed?" answerable
+ * without a content column: the question becomes whether this path already exists.
+ */
+export function globalContentPath(contentHash: string): string {
+  return `${GLOBAL_LIBRARY_ROOT}/${contentHash}.wav`;
+}
+
+/**
  * Split a canonical path into validated segments. Rejects traversal and empty
  * segments so a malformed path can never escape or corrupt the layout.
  */

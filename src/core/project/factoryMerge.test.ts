@@ -1,6 +1,6 @@
 /** Kit-merge transform (spec §9.8 "Install modes") — pure discard/re-parent rules. */
 import { describe, expect, it } from 'vitest';
-import { buildKitMerge, uncompressedSampleBytes } from './factoryMerge';
+import { buildKitMerge } from './factoryMerge';
 import { samplePath } from '@/core/storage/opfs';
 import type { ProjectSnapshot } from './mpcweb';
 
@@ -97,19 +97,18 @@ describe('buildKitMerge (spec §9.8)', () => {
     expect(merge.programs[0]!.payload).toBe('{"id":"prog-1"}');
   });
 
-  it('re-parents samples and rebuilds their OPFS path under the active project (spec §9.1)', () => {
+  it('contributes no sample rows — they install globally instead (spec §9.1, §9.8)', () => {
     const merge = buildKitMerge(packSnapshot(), ACTIVE_PROJECT);
-    expect(merge.samples[0]!.project_id).toBe(ACTIVE_PROJECT);
-    expect(merge.samples[0]!.opfs_path).toBe(samplePath(ACTIVE_PROJECT, 'sample-1'));
-    // Crucially it must NOT still point at the pack's own project directory.
-    expect(merge.samples[0]!.opfs_path).not.toContain(PACK_PROJECT);
+    // A kit's audio is content-addressed into the global library so a demo shipping the same
+    // sounds shares one copy, so the merge must not also insert it under the active project.
+    expect(merge).not.toHaveProperty('samples');
   });
 
   it('discards sequences, tracks, events, automation and song entries', () => {
     const merge = buildKitMerge(packSnapshot(), ACTIVE_PROJECT);
     // A kit contributes sound, never arrangement — the active project's own sequences,
     // tracks and song must be left entirely alone (spec §9.8).
-    expect(Object.keys(merge)).toEqual(['programs', 'samples']);
+    expect(Object.keys(merge)).toEqual(['programs']);
   });
 
   it('does not mutate the input snapshot', () => {
@@ -117,19 +116,5 @@ describe('buildKitMerge (spec §9.8)', () => {
     buildKitMerge(snapshot, ACTIVE_PROJECT);
     expect(snapshot.programs[0]!.project_id).toBe(PACK_PROJECT);
     expect(snapshot.samples[0]!.opfs_path).toBe(samplePath(PACK_PROJECT, 'sample-1'));
-  });
-});
-
-describe('uncompressedSampleBytes (spec §9.8 storage gate)', () => {
-  it('sums the unpacked sample payload', () => {
-    const samples = new Map([
-      ['a', new Uint8Array(1_000)],
-      ['b', new Uint8Array(2_500)],
-    ]);
-    expect(uncompressedSampleBytes(samples)).toBe(3_500);
-  });
-
-  it('is zero for a pack with no samples', () => {
-    expect(uncompressedSampleBytes(new Map())).toBe(0);
   });
 });
