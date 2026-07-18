@@ -54,8 +54,12 @@ interface SequenceState extends Required<SequenceHydration> {
   updateTrack: (id: string, patch: Partial<Omit<Track, 'id' | 'sequenceId'>>) => void;
   removeTrack: (id: string) => void;
 
-  /** Atomically replace a track's events (recording pass / quantise — spec §7.4, §7.7). */
-  setTrackEvents: (trackId: string, events: readonly MidiEvent[]) => void;
+  /**
+   * Atomically replace a track's events (recording pass / quantise — spec §7.4, §7.7).
+   * `coalesceKey` folds a continuous drag — moving or resizing a note — into one undo
+   * entry (spec §3.3); the caller seals it with `endUndoGesture` on pointer release.
+   */
+  setTrackEvents: (trackId: string, events: readonly MidiEvent[], coalesceKey?: string) => void;
   /**
    * Commit a recording capture flush as one undo entry ("Recorded take" — spec §7.7).
    * `overdub` merges into the track; `replace` swaps the track's events for the take.
@@ -231,7 +235,7 @@ export const useSequenceStore = create<SequenceState>()(
     },
 
     // --- Events (note edits are undoable — spec §4.5) -----------------------------
-    setTrackEvents: (trackId, events) => {
+    setTrackEvents: (trackId, events, coalesceKey) => {
       const prev = get().events[trackId] ?? [];
       const next = sortEvents(events);
       const setEvents = (value: MidiEvent[]) =>
@@ -241,6 +245,7 @@ export const useSequenceStore = create<SequenceState>()(
         apply: () => setEvents(next),
         revert: () => setEvents(prev),
         dirtyKeys: [dirtyKey.events(trackId)],
+        ...(coalesceKey !== undefined ? { coalesceKey } : {}),
       });
     },
     commitRecordedTake: (trackId, events, mode) => {

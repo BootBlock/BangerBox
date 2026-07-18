@@ -176,6 +176,39 @@ describe('useSequenceStore (spec §4.2, §4.5)', () => {
     useUndoStore.getState().undo();
     expect(useSequenceStore.getState().events['track:1']!.map((e) => e.id)).toEqual(['a', 'b']);
   });
+
+  it('collapses a coalesced drag into one undo step (spec §3.3)', () => {
+    const note = (tickStart: number) => [
+      { id: 'a', tickStart, durationTicks: 24, note: 60, velocity: 100, extra: null },
+    ];
+    useSequenceStore.getState().setTrackEvents('track:1', note(0));
+    const depthBefore = useUndoStore.getState().undoDepth;
+
+    // A drag reports many intermediate positions before the pointer is released.
+    for (const tick of [120, 240, 360, 480]) {
+      useSequenceStore.getState().setTrackEvents('track:1', note(tick), 'grid-move');
+    }
+    expect(useSequenceStore.getState().events['track:1']![0]!.tickStart).toBe(480);
+    expect(useUndoStore.getState().undoDepth).toBe(depthBefore + 1);
+
+    // One undo returns to where the note sat before the drag began, not mid-drag.
+    useUndoStore.getState().undo();
+    expect(useSequenceStore.getState().events['track:1']![0]!.tickStart).toBe(0);
+  });
+
+  it('starts a fresh undo entry once a gesture is sealed (spec §3.3)', () => {
+    const note = (tickStart: number) => [
+      { id: 'a', tickStart, durationTicks: 24, note: 60, velocity: 100, extra: null },
+    ];
+    useSequenceStore.getState().setTrackEvents('track:1', note(0));
+    useSequenceStore.getState().setTrackEvents('track:1', note(120), 'grid-move');
+    useUndoStore.getState().endGesture();
+    // A second drag under the same key must not merge into the first.
+    useSequenceStore.getState().setTrackEvents('track:1', note(240), 'grid-move');
+
+    useUndoStore.getState().undo();
+    expect(useSequenceStore.getState().events['track:1']![0]!.tickStart).toBe(120);
+  });
 });
 
 describe('useProgramStore (spec §4.2, §6)', () => {
