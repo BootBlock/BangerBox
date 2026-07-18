@@ -168,3 +168,28 @@ describe('gridGeometry — paint strokes (issue #91: drag to draw)', () => {
     expect(eventAtCell(events, 71, 240)).toBeNull();
   });
 });
+
+describe('gridGeometry — toggling (issue #92: tap a note to clear it)', () => {
+  const SNAP_16 = 120;
+
+  /**
+   * Why GridCanvas hit-tests by point *and* by cell. Drawing snaps the new note to the
+   * cell boundary, which can start it to the right of the tap that made it — leaving the
+   * pointer outside the note's own rect. The rect test alone then misses a note that is
+   * plainly under the cursor, so the tap paints instead of toggling it back off.
+   */
+  it('a note drawn by a tap can start right of that tap', () => {
+    // A tap at x = 26 is tick 104, which snaps up to 120 — right of where it was tapped.
+    const tapX = 26;
+    const drawnTick = snapTick(xToTick(tapX, viewport), SNAP_16);
+    expect(drawnTick).toBe(120);
+    expect(drawnTick).toBeGreaterThan(xToTick(tapX, viewport));
+
+    const drawn = [
+      { id: 'a', tickStart: drawnTick, durationTicks: 120, note: 72, velocity: 100, extra: null },
+    ];
+    // The rect test misses it; the cell test — the fallback — finds it.
+    expect(eventAtPoint(drawn, tapX, 10, viewport)).toBeNull();
+    expect(eventAtCell(drawn, rowToNote(0, viewport), drawnTick)?.id).toBe('a');
+  });
+});

@@ -71,6 +71,13 @@ const LABEL_GUTTER_PX = 56;
 const DRAW_GESTURE = 'grid-draw';
 const ERASE_GESTURE = 'grid-erase';
 
+/**
+ * How far the pointer may wander and still count as a tap rather than a drag. Without
+ * it the hand-jitter of a tap on a note reads as a zero-distance move, and the toggle
+ * in issue #92 never fires.
+ */
+const TAP_SLOP_PX = 4;
+
 export function GridCanvas({
   events,
   viewport,
@@ -370,14 +377,32 @@ export function GridCanvas({
       return;
     }
 
-    const hit = eventAtPoint(events, point.x, point.y, view);
+    // The rect test is pixel-exact, but snapping can start a note just right of where it
+    // was tapped, leaving the pointer outside its own note. Fall back to the snapped cell
+    // so the same tap that drew a note also grabs it — the test the paint stroke uses.
+    const hit =
+      eventAtPoint(events, point.x, point.y, view) ??
+      eventAtCell(events, rowToNote(yToRow(point.y, view), view), snapTick(tick, snapTicks));
     if (hit) {
       onSelect([hit.id]);
       // Drag to move: the grab offset keeps the note under the pointer.
       const grabOffsetTicks = tick - hit.tickStart;
-      pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId);
+      const canvas = pointerEvent.currentTarget;
+      canvas.setPointerCapture(pointerEvent.pointerId);
+      const originX = pointerEvent.clientX;
+      const originY = pointerEvent.clientY;
+      let dragged = false;
       const move = (moveEvent: globalThis.PointerEvent) => {
-        const rect = pointerEvent.currentTarget.getBoundingClientRect();
+        // Inside the slop radius the gesture is still a tap, so no move is committed.
+        if (
+          !dragged &&
+          Math.abs(moveEvent.clientX - originX) <= TAP_SLOP_PX &&
+          Math.abs(moveEvent.clientY - originY) <= TAP_SLOP_PX
+        ) {
+          return;
+        }
+        dragged = true;
+        const rect = canvas.getBoundingClientRect();
         const moveX = moveEvent.clientX - rect.left - LABEL_GUTTER_PX;
         const moveY = moveEvent.clientY - rect.top;
         const nextTick = Math.max(0, snapTick(xToTick(moveX, view) - grabOffsetTicks, snapTicks));
@@ -386,6 +411,9 @@ export function GridCanvas({
       const end = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', end);
+        // Tapping a note with the draw tool toggles it off (issue #92); the select tool
+        // keeps the tap as a plain selection, and a drag is a move either way.
+        if (!dragged && tool === 'draw') onErase(hit.id);
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', end);
@@ -395,9 +423,12 @@ export function GridCanvas({
     if (tool === 'draw') {
       // Drag to paint a run of notes rather than tapping each cell (issue #91).
       paintStroke(pointerEvent, view, (strokeNote, strokeTick) => {
-        // Never stack a second note on a cell that already holds one.
-        if (eventAtCell(latest.current.events, strokeNote, strokeTick)) return;
-        onDraw(strokeNote, strokeTick, defaultDurationTicks, DRAW_GESTURE);
+        // Drawing toggles: a cell that already holds a note is cleared rather than
+        // stacked on (issue #92). Both halves share DRAW_GESTURE, so a stroke that
+        // mixes adds and erases still undoes as a single entry (spec §3.3).
+        const occupant = eventAtCell(latest.current.events, strokeNote, strokeTick);
+        if (occupant) onErase(occupant.id, DRAW_GESTURE);
+        else onDraw(strokeNote, strokeTick, defaultDurationTicks, DRAW_GESTURE);
       });
     } else {
       onSelect([]);
