@@ -8,6 +8,7 @@
  * level (spec §6). Times are milliseconds (schema units); the AudioParam clock is seconds.
  */
 import type { AhdsrEnvelope } from '@/core/project/schemas';
+import type { DetuneBreakpoint } from './detuneSchedule';
 
 /** Smallest non-zero value an exponential ramp may target (they cannot reach 0). */
 const EXP_FLOOR = 1e-4;
@@ -41,10 +42,38 @@ export function scheduleAmpAttack(param: AudioParam, peak: number, amp: AhdsrEnv
 }
 
 /**
- * Schedule a modulation param over the AHDSR contour from `base`, excursing by `depth`
- * (positive or negative) and settling at `base + depth × sustain` (spec §6 pitch/filter
- * envelopes). Segments are linear — a modulation param may legitimately cross or reach
- * zero, so the exponential-floor restriction does not apply. Returns the decay-end time.
+ * The AHDSR modulation contour as breakpoints: `base` at note-on, excursing by `depth`
+ * (positive or negative) across the attack, held over the hold, and settling at
+ * `base + depth × sustain` by the end of the decay (spec §6 pitch/filter envelopes).
+ *
+ * This is the single description of the contour: {@link scheduleModEnvelope} writes it to
+ * an AudioParam, and the declick integrator (spec §5.4, issue #87) reads the same points
+ * to work out how a pitch envelope moves a voice's playback rate — so the two can never
+ * disagree about the shape.
+ */
+export function modEnvelopeBreakpoints(
+  base: number,
+  depth: number,
+  env: AhdsrEnvelope,
+  when: number,
+): DetuneBreakpoint[] {
+  const attackEnd = when + env.attack / 1000;
+  const holdEnd = attackEnd + env.hold / 1000;
+  const decayEnd = holdEnd + env.decay / 1000;
+  return [
+    { time: when, cents: base },
+    { time: attackEnd, cents: base + depth },
+    { time: holdEnd, cents: base + depth },
+    { time: decayEnd, cents: base + depth * env.sustain },
+  ];
+}
+
+/**
+ * Schedule a modulation param over the AHDSR contour (see {@link modEnvelopeBreakpoints}).
+ * Segments are linear — a modulation param may legitimately cross or reach zero, so the
+ * exponential-floor restriction does not apply. A breakpoint that repeats the previous
+ * value is written as a hold rather than a ramp, which is what makes the hold stage flat.
+ * Returns the decay-end time.
  */
 export function scheduleModEnvelope(
   param: AudioParam,
@@ -53,14 +82,14 @@ export function scheduleModEnvelope(
   env: AhdsrEnvelope,
   when: number,
 ): number {
-  const attackEnd = when + env.attack / 1000;
-  const holdEnd = attackEnd + env.hold / 1000;
-  const decayEnd = holdEnd + env.decay / 1000;
-  param.setValueAtTime(base, when);
-  param.linearRampToValueAtTime(base + depth, attackEnd);
-  param.setValueAtTime(base + depth, holdEnd);
-  param.linearRampToValueAtTime(base + depth * env.sustain, decayEnd);
-  return decayEnd;
+  const points = modEnvelopeBreakpoints(base, depth, env, when);
+  param.setValueAtTime(points[0]!.cents, points[0]!.time);
+  for (let i = 1; i < points.length; i++) {
+    const point = points[i]!;
+    if (point.cents === points[i - 1]!.cents) param.setValueAtTime(point.cents, point.time);
+    else param.linearRampToValueAtTime(point.cents, point.time);
+  }
+  return points[points.length - 1]!.time;
 }
 
 /**

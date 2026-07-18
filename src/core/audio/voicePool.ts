@@ -20,12 +20,21 @@ import {
   type PlaybackMode,
 } from '@/core/project/schemas';
 import {
+  modEnvelopeBreakpoints,
   scheduleAmpAttack,
   scheduleAmpDeclick,
   scheduleAmpRelease,
   scheduleModEnvelope,
   velocityToGain,
 } from './voiceEnvelope';
+import {
+  applyRetune,
+  consumedBetween,
+  regionEndTime,
+  type DetuneBreakpoint,
+  type DetuneOscillation,
+  type DetuneSchedule,
+} from './detuneSchedule';
 import {
   biquadFilterType,
   lfoOscillator,
@@ -91,12 +100,12 @@ interface Voice {
   readonly baseDetune: number;
   /** Buffer seconds this voice sounds — its trimmed region at unity rate (spec §6). */
   readonly regionSeconds: number;
-  /** Buffer seconds already consumed as of `rateSince`, for end-time bookkeeping. */
+  /** The voice's detune contour, from which its true end time is integrated (issue #87). */
+  readonly detune: DetuneSchedule;
+  /** Buffer seconds already consumed as of `consumedUntil`, banked on each retune. */
   consumedSeconds: number;
-  /** Context time `rate` took effect — the origin the next retune integrates from. */
-  rateSince: number;
-  /** Playback rate implied by the voice's current detune (1 = unity). */
-  rate: number;
+  /** Context time `consumedSeconds` was banked to — the origin the next retune integrates from. */
+  consumedUntil: number;
   /** Context time the scheduled declick fade begins (spec §5.4). */
   declickFadeStart: number;
   startTime: number;
@@ -247,30 +256,27 @@ export class VoicePool {
   }
 
   /**
-   * Re-lay the end-of-region declick after a rate change. The voice's consumption is
-   * integrated as piecewise-constant rate segments: whatever it played at the old rate is
-   * banked, and the remainder is divided by the new one. The `PARAM_RAMP_MS` dezipper on
-   * `detune` is treated as instantaneous — it is far shorter than the error it corrects.
+   * Re-lay the end-of-region declick after a detune change. Whatever the voice consumed
+   * up to `when` is banked by integrating its detune contour, the retune is folded into
+   * that contour, and the remainder is integrated forward to the true end (issue #87).
+   * The `PARAM_RAMP_MS` dezipper on `detune` is treated as instantaneous — it is far
+   * shorter than the error it corrects.
    *
    * Two cases are left alone, because re-laying could only make them worse: a region that
    * has already run out, and a fade that has already begun (the ramp in flight is nearer
    * the truth than anything scheduled behind it, and cutting it short would click).
-   *
-   * This does not model the §6 modulators — pitch envelope, mono glide and a pitch-routed
-   * LFO all vary `detune` inside the AudioParam, where the pool cannot see it — so for
-   * those voices the end time stays an estimate (issue #87).
    */
   private rescheduleDeclick(voice: Voice, detuneCents: number, when: number): void {
     const at = Math.max(when, voice.startTime);
-    voice.consumedSeconds += Math.max(0, at - voice.rateSince) * voice.rate;
-    voice.rateSince = at;
-    voice.rate = playbackRate(detuneCents);
+    voice.consumedSeconds += consumedBetween(voice.detune, voice.consumedUntil, at);
+    voice.consumedUntil = at;
+    applyRetune(voice.detune, at, detuneCents);
     const remaining = voice.regionSeconds - voice.consumedSeconds;
     if (remaining <= 0 || at >= voice.declickFadeStart) return;
     // Erase the stale fade first: holding at its own start leaves the amp on the level the
     // AHDSR had reached there, which is exactly what the new fade wants to depart from.
     voice.ampGain.gain.cancelAndHoldAtTime(voice.declickFadeStart);
-    const endTime = at + remaining / voice.rate;
+    const endTime = regionEndTime(voice.detune, at, remaining);
     voice.declickFadeStart = scheduleAmpDeclick(voice.ampGain.gain, endTime, at, DECLICK_FADE_MS);
   }
 
@@ -321,33 +327,42 @@ export class VoicePool {
 
     // Pitch: base detune, then either mono glide (portamento) or the pitch envelope on top
     // (spec §6). Keygroups glide and carry no pitch env; drums use the pitch env — they do
-    // not co-occur, so a single detune schedule owns the param.
+    // not co-occur, so a single detune schedule owns the param. Every write is mirrored
+    // into `breakpoints`, which is what lets the declick integrate the real rate curve.
     const pitchDepth = (spec.pitchEnvSemitones ?? 0) * 100;
     const glideMs = spec.glideMs ?? 0;
+    let breakpoints: DetuneBreakpoint[];
     if (glideMs > 0 && glideFrom !== undefined && glideFrom !== baseDetune) {
+      const glideEnd = now + glideMs / 1000;
       source.detune.setValueAtTime(glideFrom, now);
-      source.detune.linearRampToValueAtTime(baseDetune, now + glideMs / 1000);
+      source.detune.linearRampToValueAtTime(baseDetune, glideEnd);
+      breakpoints = [
+        { time: now, cents: glideFrom },
+        { time: glideEnd, cents: baseDetune },
+      ];
     } else if (spec.pitchEnv && pitchDepth !== 0) {
       scheduleModEnvelope(source.detune, baseDetune, pitchDepth, spec.pitchEnv, now);
+      breakpoints = modEnvelopeBreakpoints(baseDetune, pitchDepth, spec.pitchEnv, now);
     } else {
       source.detune.value = baseDetune;
+      breakpoints = [{ time: now, cents: baseDetune }];
     }
 
     // Amp AHDSR (velocity × gain trim × static amp mod) — spec §5.4/§6.
     const peak = velocityToGain(spec.velocity, spec.gainDb) * stat.ampFactor;
     scheduleAmpAttack(ampGain.gain, peak, spec.amp, now);
 
-    // Declick the natural end of the region (spec §5.4). The end time is derived from the
-    // base detune only: a pitch envelope, glide or pitch LFO varies the real playback rate,
-    // so for those voices the fade is an approximation rather than frame-exact. A later
-    // retune (pad detune, pitch bend) moves the fade with it — see `rescheduleDeclick`.
-    const region = playRegion(spec.buffer, spec.startFrame, spec.endFrame);
-    const rate = playbackRate(baseDetune);
-    const endTime = now + region.durationSeconds / rate;
-    const declickFadeStart = scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS);
+    // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6). Wired
+    // before the declick because pitch-routed LFOs are part of the rate curve it solves.
+    const oscillations = this.wireLfos(spec, source, filter, now, oscillators, modGains);
+    const detune: DetuneSchedule = { breakpoints, oscillations };
 
-    // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6).
-    this.wireLfos(spec, source, filter, oscillators, modGains);
+    // Declick the natural end of the region (spec §5.4), integrating the detune contour so
+    // a pitch envelope, glide or pitch LFO lands the fade where the buffer truly runs out
+    // (issue #87). A later retune (pad detune, pitch bend) moves it — `rescheduleDeclick`.
+    const region = playRegion(spec.buffer, spec.startFrame, spec.endFrame);
+    const endTime = regionEndTime(detune, now, region.durationSeconds);
+    const declickFadeStart = scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS);
 
     source.start(now, region.offsetSeconds, region.durationSeconds);
     for (const osc of oscillators) osc.start(now);
@@ -366,9 +381,9 @@ export class VoicePool {
       releaseMs: spec.amp.release,
       baseDetune,
       regionSeconds: region.durationSeconds,
+      detune,
       consumedSeconds: 0,
-      rateSince: now,
-      rate,
+      consumedUntil: now,
       declickFadeStart,
       startTime: now,
       released: false,
@@ -387,17 +402,24 @@ export class VoicePool {
     scheduleModEnvelope(filter.detune, 0, depthCents, spec.filterEnv, now);
   }
 
-  /** Wire each LFO to its pitch/filter-cutoff routes as an oscillator → gain → param (spec §6). */
+  /**
+   * Wire each LFO to its pitch/filter-cutoff routes as an oscillator → gain → param
+   * (spec §6). Returns a description of the pitch-routed oscillators, which the declick
+   * integrator needs because they modulate the voice's playback rate (issue #87).
+   * `phaseOffset` is not applied to the oscillators, so the model does not model it either.
+   */
   private wireLfos(
     spec: VoiceTriggerSpec,
     source: AudioBufferSourceNode,
     filter: BiquadFilterNode | null,
+    now: number,
     oscillators: OscillatorNode[],
     modGains: GainNode[],
-  ): void {
+  ): DetuneOscillation[] {
+    const pitchOscillations: DetuneOscillation[] = [];
     const lfos = spec.lfos;
     const routes = spec.modMatrix;
-    if (!lfos || !routes) return;
+    if (!lfos || !routes) return pitchOscillations;
     lfos.forEach((config, index) => {
       const sourceName = index === 0 ? 'lfo1' : 'lfo2';
       const targets = routesForSource(routes, sourceName).filter(
@@ -415,6 +437,12 @@ export class VoicePool {
           gain.gain.value = sign * route.amount * PITCH_MOD_CENTS;
           osc.connect(gain);
           gain.connect(source.detune);
+          pitchOscillations.push({
+            wave: type,
+            rateHz: config.rate,
+            amplitudeCents: gain.gain.value,
+            since: now,
+          });
         } else if (filter) {
           gain.gain.value = sign * route.amount * FILTER_MOD_OCTAVES * 1200;
           osc.connect(gain);
@@ -423,6 +451,7 @@ export class VoicePool {
         modGains.push(gain);
       }
     });
+    return pitchOscillations;
   }
 
   private fadeAndStop(voice: Voice, when: number, fadeMs: number): void {
@@ -500,11 +529,6 @@ export function playRegion(buffer: AudioBuffer, startFrame = 0, endFrame = 0): P
     offsetSeconds: start / buffer.sampleRate,
     durationSeconds: (end - start) / buffer.sampleRate,
   };
-}
-
-/** Buffer-consumption rate for a detune in cents — 1200 cents doubles the rate (spec §6). */
-function playbackRate(detuneCents: number): number {
-  return 2 ** (detuneCents / 1200);
 }
 
 /** Extract the pad index from a `${programId}:${padIndex}` key for the noteNumber source. */
