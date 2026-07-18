@@ -1,22 +1,23 @@
-# BangerBox — Phase Handover (after Phase 7 — Full UI Assembly & Polish)
+# BangerBox — Phase Handover (after Phase 8 — Hardware & Q-Link Ecosystem)
 
-Generated at the close of Phase 7 per Protocol Alpha (spec §13.1). A new session MUST
+Generated at the close of Phase 8 per Protocol Alpha (spec §13.1). A new session MUST
 read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** Phase 7 merged to `main` (`--no-ff`). All §12 Phase 7 exit criteria green inside the
-phase worktree before landing: **562 unit tests** (the Phase 0–6 suites plus the Phase 7
-additions — control maths, primitive ARIA/keyboard contracts, wake-lock lifecycle, scale/chord
-tables, grid geometry, schedule-time groove, pad-strip derivation, program-param mapping, and a
-**mechanical 12-mode accessibility sweep**), `test:e2e` **33/33** real-browser smoke — dev AND
-offline — now including the Phase 7 proof **all 12 modes mount from the rail** alongside every
-prior Phase 0–6 proof, plus `lint`, `type-check`, `verify` (**no open stubs**), and `build`.
+**State:** Phase 8 merged to `main` (`--no-ff`). All §12 Phase 8 exit criteria green inside the
+phase worktree before landing **except the live-hardware sign-off, which is outstanding and
+requires the human developer** (see §11 below). Suite: **733 unit tests** (the Phase 0–7 suites
+plus the Phase 8 additions — BLE-MIDI parser framing / running status / timestamp unwrap /
+malformed input, CC throttle, Q-Link scaling and per-mode defaults, the Q-Link runtime driven
+through the real stores, simulated-stream jitter and reconnect, binding persistence,
+hardware-service wiring, the program-parameter store channel and its sync diff, the mixer
+canonical-address fix, and the Q-Link Edit surface), `test:e2e` real-browser smoke — dev AND
+offline — plus `lint`, `type-check`, `verify` (**no open stubs**), and `build`.
 
-**Bundle size and load time are deliberately unconstrained** (§11.5, §14 2026-07-18 (j)): the
-main-JS-chunk size budget and the cold-load target were both removed at the human developer's
-direction. Do NOT reintroduce a size limit, a cold-load target, a size/timing gate in
-`npm run verify`, or code-splitting/deferred loading undertaken to hit either. The remaining §11.5
-runtime budgets (touch-to-sound, underruns, 60 fps) are unchanged and still binding.
+**Bundle size and load time remain deliberately unconstrained** (§11.5, §14 2026-07-18 (j)). Do
+NOT reintroduce a size limit, a cold-load target, a size/timing gate in `npm run verify`, or
+code-splitting undertaken to hit either. The remaining §11.5 runtime budgets (touch-to-sound,
+underruns, 60 fps) are unchanged and still binding.
 
 ---
 
@@ -25,17 +26,16 @@ runtime budgets (touch-to-sound, underruns, 60 fps) are unchanged and still bind
 1. Project name **BangerBox**; package `bangerbox`; "WEB-MPC" retired.
 2. **npm** only; committed `package-lock.json`; Node ≥ 24 (`engines`).
 3. **git** at project root; repo is public — no secrets, personal data, or real device identifiers.
-4. **No Tone.js.** Bespoke 960 PPQN lookahead scheduler in a **standard Web Worker** (`scheduler.worker.ts`).
-5. **AssemblyScript** for WASM DSP (`asc`, `--runtime stub -O3 --use abort=`), behind the §5.6 kernel seam.
+   (Phase 8 note: no device IDs, MAC addresses, or pairing data are logged or committed.)
+4. **No Tone.js.** Bespoke 960 PPQN lookahead scheduler in a **standard Web Worker**.
+5. **AssemblyScript** for WASM DSP (`asc`, `--runtime stub -O3 --use abort=`), behind the §5.6 seam.
 6. **`@sqlite.org/sqlite-wasm`**, worker-hosted, OPFS VFS.
-7. **Hand-rolled typed promise-based `postMessage` RPC** (no Comlink); reused by the scheduler, pack,
-   wavEncode, and the NEW `opfsWrite` worker clients.
-8. **`motion`** (`'motion/react'`) for animation — now live in the mode rail (shared `layoutId`),
-   mode cross-fade, `Modal`, and the PWA toast.
-9. **No router** — 12 modes via `useUIStore.activeMode`, mounted from the `MODE_DEFINITIONS` registry.
-10. **No component library**; bespoke primitives in `src/ui/primitives/`; icons `lucide-react` via
-    `src/ui/icons.ts` **only** (the registry now exists and is the sole import site).
-11. **Zod** for all runtime validation.
+7. **Hand-rolled typed promise-based `postMessage` RPC** (no Comlink).
+8. **`motion`** (`'motion/react'`) for animation.
+9. **No router** — 12 modes via `useUIStore.activeMode`, from the `MODE_DEFINITIONS` registry.
+10. **No component library**; bespoke primitives; icons `lucide-react` via `src/ui/icons.ts` only.
+11. **Zod** for all runtime validation — now including stored Q-Link bindings read back from
+    `app_settings` (§10.3).
 12. **fflate** (worker-side) for `.mpcweb`.
 13. **Vitest** (unit, `happy-dom`) + **Playwright smoke on system Edge** (`channel: 'msedge'`).
 14. **Local-first hosting**: `npm run dev`/`preview` with COOP/COEP from the Vite server.
@@ -43,7 +43,8 @@ runtime budgets (touch-to-sound, underruns, 60 fps) are unchanged and still bind
 16. **Zustand = runtime truth; SQLite = durable truth**; hydrate on load, debounced autosave.
 17. **960 PPQN.**
 18. Audio defaults: 48 000 Hz / 24-bit / Float32 / `latencyHint: 'interactive'`.
-19. **BLE-MIDI only** for MIDI input in v1 (**Phase 8 — next**).
+19. **BLE-MIDI only** for MIDI input in v1 — **implemented this phase**. Web MIDI (USB) stays a
+    §10.5 roadmap item and MUST NOT be built.
 
 ## 2. Spec deviations / corrections in effect
 
@@ -51,171 +52,167 @@ runtime budgets (touch-to-sound, underruns, 60 fps) are unchanged and still bind
 - **§14 2026-07-17 (f) (Phase 4):** clock-sync absolute-epoch domain. Unchanged.
 - **§14 2026-07-17 (g) (Phase 5):** `arp` scheduler kind; program-scope automation grammar. Unchanged.
 - **§14 2026-07-18 (h) (Phase 6):** `transientDetect` energy-flux detector (flagged for ratification);
-  `reverb` uses the `fdnReverb` worklet when kernels are loaded; `granularStretch` = WSOLA; DSP-effect
-  worklet params apply in-kernel. Unchanged.
-- **§14 2026-07-18 (i) (Phase 7) — NEW (read the changelog for full detail):**
-  - **Additive store fields** (§4.2 permits adding with a changelog entry): `useHardwareStore.inputLatencyMs`
-    (§10.2 offset, default 15 ms, 0–50); `useSequenceStore.grooveTemplates` + `trackGrooveIds` (§7.5).
-    Both hydration fields are **optional**, so pre-Phase-7 snapshots still load.
-  - **Additive scheduler kind `groove { trackId, template }`** — `SCHEDULER_PROTOCOL_VERSION` stays **1**
-    (extend-by-adding precedent; no existing kind changed).
-  - **§5.1 start gate promoted** to a full-screen `StartGate`; `AudioEnginePanel` became Main-mode
-    diagnostics; the Phase 4 `SequencerTransport` stub was **deleted** (superseded by `TransportBar`).
-  - **§9.1 worker sync-access-handle write path implemented**; atomicity unchanged.
-  - **§9.5 bounce variants completed** (song / track / resample-to-pad) sharing one render core.
-  - **§7.8 per-voice program automation implemented** — the last `STUB(phase-7)` is closed.
-  - **§8 open choices:** `ValueReadout` is a `<span>` not `<output>` (implicit `role="status"`);
-    the rail is `<div role="tablist">` inside a `<nav>`; tab panels are named by full mode title;
-    `Modal` focuses the dialog container; pad velocity from vertical strike position; groove per track.
+  `reverb` uses `fdnReverb` when kernels are loaded; `granularStretch` = WSOLA. Unchanged.
+- **§14 2026-07-18 (i) (Phase 7):** additive store fields; additive `groove` scheduler kind;
+  `StartGate`; §9.1 worker write path; §9.5 bounce variants; §7.8 per-voice automation. Unchanged.
+- **§14 2026-07-18 (k) (Phase 8) — NEW (read the changelog for full detail):**
+  - **Registry extensions (additive, §7.8; no address form changed):** `amp.attack` /
+    `amp.release` in `PROGRAM_PARAM_RANGES` (§10.3 names them as pad-mode defaults, and §7.8
+    gates binding on registration); a new **`transportParam`** target kind carrying
+    `transport.swing` / `transport.bpm` (§10.3 names "global swing", and
+    `QLinkBinding.targetStore` already admitted `'transport'`). New `ENVELOPE_TIME_MS_RANGE`
+    bounds what an *encoder* can dial, not what a payload may hold.
+  - **Additive store actions:** `useProgramStore.setPadParamTransient` / `commitPadParam` — the
+    §4.1 transient/commit channel for program-scope leaves, mirroring the mixer store.
+  - **`SyncBridge.applyParam`** + the new `programParams` sync subscriber (§4.3), pushing
+    sound-design edits to voices already sounding. Amp-envelope *times* are deliberately excluded
+    from that push: an AHDSR is applied at note-on (§6), so they take effect on the next hit.
+  - **`AudioEngine.triggerLiveNote(..., timestampMs?)`** (optional, defaulted — every existing
+    caller is unchanged) and **`applyPitchBend`**.
+  - **Pre-existing defect fixed:** `useMixerStore` parsed only a bare `<channelId>.<field>` form,
+    so the canonical registry addresses the Mixer, XYFX and insert panels pass silently no-opped
+    and those controls were dead (§3.4). Parsing now delegates to the registry that owns the
+    grammar. The control taper moved from `ui/primitives/controlMaths.ts` into `core/math.ts`
+    (re-exported, so no primitive's import changed).
+  - **Web Bluetooth types declared locally** (`core/midi/bleTypes.ts`) — no new dependency.
 
 ## 3. Toolchain facts
 
 - Installed majors unchanged (Vite 8.1.5, React 19, TS 6, Tailwind 4, Zustand 5, Zod 4,
-  AssemblyScript 0.28, Vitest 4, Playwright 1.x, ESLint 9). **No new dependencies** — the §2.2 closed
-  matrix is intact.
-- `package.json` `config.phase` = **"7"**.
+  AssemblyScript 0.28, Vitest 4, Playwright 1.x, ESLint 9). **No new dependencies** — the §2.2
+  closed matrix is intact. TypeScript ships no Web Bluetooth types; the used surface is declared
+  in `src/core/midi/bleTypes.ts` (following the `worklet-globals.d.ts` precedent) rather than
+  installing `@types/web-bluetooth`.
+- `package.json` `config.phase` = **"8"**.
 - `npm run build:wasm` builds six kernels; artefacts under `src/core/dsp/dist/` (gitignored).
 - **`npm run test:e2e:quick`** (`--dev-only`, ~3–6 min) for iteration; the full `test:e2e`
   (dev + offline, ~15–20 min) stays the binding phase-exit proof.
-- **BigInt lesson (still important):** `@sqlite.org/sqlite-wasm` returns INTEGER columns as **BigInt**.
-  Coerce with `Number(...)`; never `JSON.stringify` a raw row.
-- **Lint traps hit this phase (worth knowing):** `react-hooks/refs` rejects mutating a ref during render
-  (use `useLayoutEffect`); `react-hooks/set-state-in-effect` rejects a synchronous `setState` in an
-  effect (seed state lazily, or move the write into an async body); `jsx-a11y` rejects a `<label>`
-  wrapping a non-form control (SegmentControl is a radiogroup with its own `aria-label`) and a `<nav>`
-  carrying `role="tablist"`.
+- **BigInt lesson (still important):** `@sqlite.org/sqlite-wasm` returns INTEGER columns as
+  **BigInt**. Coerce with `Number(...)`; never `JSON.stringify` a raw row.
+- **Lint traps:** `react-hooks/exhaustive-deps` rejects a `??`-defaulted array feeding a `useMemo`
+  (memoise the fallback so its identity is stable). The Phase 7 traps still stand
+  (`react-hooks/refs`, `set-state-in-effect`, `jsx-a11y` on `<label>` / `<nav>`).
 - Windows worktree-removal trap unchanged: kill stray `node`/`msedge`, `git worktree prune`, then
   `Remove-Item -Recurse -Force`.
 
 ## 4. Established patterns (reuse, do not reinvent)
 
-Everything from Phases 0–6 still stands. New this phase:
+Everything from Phases 0–7 still stands. New this phase, all under `src/core/midi/`:
 
-**Primitives — the bespoke control set (spec §8, §3.6 ZERO DRY):**
-- **`ui/primitives/controlMaths.ts`** — pure value↔travel mapping: `valueToNormalised` /
-  `normalisedToValue` (linear + log taper, degrading to linear when a range touches zero),
-  `stepValue`, `quantiseToStep`, **`formatValueText`** (the single `aria-valuetext` wording —
-  "−6.0 dB", "1.2 kHz", "−∞ dB", en-GB minus sign).
-- **`ui/primitives/useContinuousControl.ts`** — THE drag/keyboard gesture engine for every continuous
-  control. Pointer moves paint via a `render` callback + the transient channel (no React state,
-  §3.3); one `onCommit` per gesture (§4.5); arrows/Shift-fine/PageUp/Home/End; double-click resets
-  to `defaultValue`. Options mirrored into a ref via `useLayoutEffect`.
-- **`Knob`**, **`Fader`** (caller supplies `formatValue` — the fader *law* stays in `faderLaw.ts`),
-  **`Pad`** (velocity from strike height; glow via the `--bb-pad-glow` custom property + the
-  `--transition-bb-pad` token, never React state), **`XYSurface`** (canvas crosshair + trail, rAF,
-  IntersectionObserver idle, paired ARIA sliders per axis), **`Toggle`**, **`SegmentControl`**
-  (radiogroup + roving tabindex; key handler on the options, not the group), **`ValueReadout`**,
-  **`Modal`** (focus trap + restore, Escape, reduced-motion), **`LiveRegion`** + **`announce()`**
-  (the single polite announcer — `aria-live` WITHOUT `role="status"`).
-- **`ui/icons.ts`** — the lucide re-export registry; features never import `lucide-react` directly.
+**The hardware chain (spec §10) — one direction, no shortcuts:**
+`BleMidiTransport` → `createMidiParser` → `createMidiRouter` → (voice pool | `createQLinkRuntime`
+→ store action) → sync layer → graph. `createHardwareService` is the *only* module that reaches
+for the live engine and stores; everything below it is pure or injectable, which is what makes the
+whole chain testable without hardware.
 
-**Shell (spec §8.1):**
-- **`ui/shell/AppShell.tsx`** — transport bar + rail + active mode; only the active mode is mounted.
-- **`ui/shell/TransportBar.tsx`**, **`ModeRail.tsx`** (motion `layoutId` indicator, roving tabindex),
-  **`Panel.tsx`** (the shared section container every mode composes from),
-  **`StartGate.tsx`** (§5.1), **`PerfHud.tsx`** (§11.5, `import.meta.env.DEV`, Ctrl+Shift+P),
-  **`useWakeLock.ts`** (§2.4, store subscription — not a React selector).
-- **`ui/usePadTrigger.ts`** — the ONE way a surface sounds a pad (§7.6 dual path); Phase 8's BLE
-  input joins these same two legs rather than adding a third.
+- **`parser.ts`** — pure BLE-MIDI framing (§10.1): running status across packets, the 13-bit
+  timestamp unwrapped against arrival time, an in-packet low-byte wrap carried into the high bits,
+  SysEx skipped safely across packets, malformed input dropped rather than thrown. `reset()` runs
+  on every (re)connect so a pre-drop running status never applies to a new link.
+- **`ccThrottle.ts`** — per-CC coalescing at `CC_THROTTLE_MS`, rAF-aligned, ±1 hysteresis with the
+  raw extremes always admitted so a pot's travel ends stay reachable. `hysteresisSteps` /
+  `endpoints` are configurable, which is how pitch bend reuses it for 14-bit values.
+- **`qlink.ts`** (pure) — `bindingForCc`, `scaleCcToValue`, `relativeIncrement` (two's complement),
+  `nextValueForCc`, `defaultBindingsForMode`. Encoder travel maps through the **same taper**
+  (`core/math`) the on-screen primitives draw, so a hardware turn and a knob drag agree.
+- **`bleTransport.ts`** — `navigator.bluetooth` is **injected**, which is what makes the §12
+  jitter/reconnect tests possible with no hardware. Three retries with doubling backoff, then idle
+  for a user prompt; a deliberate disconnect suppresses auto-reconnect. `settled()` is the test seam.
+- **`router.ts`** — notes on the §7.6 dual path (never throttled — every hit must sound) carrying
+  the §10.2 latency offset; pitch bend to keygroup voices only, scaled by `pitchBendRange`; CC
+  through the throttle into the runtime.
+- **`qlinkRuntime.ts`** — the §10.3 execution flow. Dispatch keys off the **parsed registry
+  address**, not the binding's `targetStore` field, because the address is authoritative and cannot
+  disagree with itself. Transient during the turn, one commit after `QLINK_COMMIT_IDLE_MS` (250 ms).
+- **`qlinkBindings.ts`** — `loadBindingsForMode` (Zod-validated read from `app_settings`); the
+  write half is the existing autosave `settings:qlink:<mode>` dirty key. A mode with nothing
+  stored clears the store, which is what lets `defaultBindingsForMode` apply.
+- **`hardwareService.ts`** — the app-wide singleton. Mirrors connection state into
+  `useHardwareStore` (so the UI reads hardware status like any other state), toasts a drop, and
+  exposes `onNextControlChange` for the learn flow's CC half.
+- **`ui/useQLinkFocus.ts`** — the Screen-mode focus registry hook (§10.3). A panel publishes its
+  parameters while mounted and withdraws them on unmount, but only if its own list is still the one
+  in force, so a panel mounting as another unmounts is not clobbered. `InsertPanel` uses it — the
+  spec's own Delay example.
 
-**Mode registry:** **`features/modes.ts`** — `MODE_DEFINITIONS` (id, label, title, icon, Component).
-The rail, the content area, and the accessibility sweep all read it.
+**Store additions:** `useProgramStore.setPadParamTransient` / `commitPadParam` (the §4.1 channel
+for §6 sound-design leaves; `pitch` is the pad tune and moves every layer together, §5.5).
+**Sync additions:** `store/syncLayer/programParams.ts` — the pure `changedPadLeaves` diff plus
+`SyncBridge.applyParam`.
+**Engine additions:** `triggerLiveNote(..., timestampMs?)`, `applyPitchBend`,
+`VoicePool.applyProgramDetune`.
 
-**Pure logic (dependency-free, unit-tested — spec §2.5):**
-- **`features/grid/gridGeometry.ts`** — tick↔x, note↔row, `eventAtPoint`, `resizeHandleAtPoint`.
-- **`features/pad-perform/scales.ts`** — all 13 §8.5.9 scales, triad/7th chord sets, `noteName`.
-- **`core/audio/voiceParams.ts`** — `programParamChange` (which §7.8 leaf goes per-voice vs to the
-  pad channel) + `padKeyFor`.
-- **`store/syncLayer/padStrips.ts`** — `padStripsForProgram` (§6 pad mixers → channel strips).
-
-**Engine additions:**
-- **`AudioEngine.triggerLiveNote(trackId, note, velocity, on)`** — the §7.6 dual path.
-- **`VoicePool.applyPadParam(padKey, target, value, when)`** — per-voice §7.8 automation, ramped.
-- **`SchedulerCore.setGroove(trackId, template)`** — schedule-time groove beside swing (§7.5).
-- **`core/platform/wakeLock.ts`** — injectable-API controller, serialised, reacquires on visibility.
-- **`core/storage/opfsWrite.worker.ts`** + **`opfsWriteClient.ts`** + **`writeFileStreamed`** (§9.1).
-- **`core/audio/bounceService.ts`** — `renderSegments` core + `bounceActiveSequence` / `bounceTrack` /
-  `bounceSong` / `resampleSequenceToSample` (§9.5).
-
-## 5. Repository catalogue — unchanged from Phase 1/2. No repository or DDL change in Phase 7.
+## 5. Repository catalogue — unchanged. No repository or DDL change in Phase 8.
+Q-Link bindings use the existing `app_settings` table through `SettingsRepository`.
 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1** = the §9.3 DDL verbatim
-(`src/core/storage/migrations/001-initial-schema.ts`). **No migration added in Phase 7.** Groove
-templates live in runtime state and belong in `projects.payload` when persisted (§9.3 names them
-there) — see Open items below.
+(`src/core/storage/migrations/001-initial-schema.ts`). **No migration added in Phase 8.**
 
 ## 7. Worker / worklet / message protocol versions
 
-- **DB worker RPC:** unchanged.
-- **Worklets:** `meter-tap`, `gain-proof`, `dsp-effect`, `looper-recorder` — unchanged.
-- **Scheduler worker:** `SCHEDULER_PROTOCOL_VERSION = 1`; **NEW additive `groove` request kind**.
-- **Workers:** `pack.worker`, `wavEncode.worker`, **NEW `opfsWrite.worker`** (sync access handles).
-- **Sync-layer bridge (`audioBridge.ts`):** `applyAutomation` is **fully implemented** — no stubs.
+- **DB worker RPC:** unchanged. **Worklets:** unchanged.
+- **Scheduler worker:** `SCHEDULER_PROTOCOL_VERSION = 1`, kinds unchanged — Phase 8 added none.
+  BLE notes reuse the existing `liveNote`, now carrying the reconstructed, latency-compensated
+  timestamp instead of "on receipt" (§10.4).
+- **Sync-layer bridge (`audioBridge.ts`):** gains `applyParam`; `applyAutomation` now also
+  recognises — and deliberately ignores — `transportParam` addresses, which belong to the
+  scheduler rather than the graph.
 
 ## 8. Stores — all eight implemented (§4.2).
-Added this phase (additive only): `useHardwareStore.inputLatencyMs`; `useSequenceStore.grooveTemplates`
-+ `trackGrooveIds`. `programSync` now publishes the active drum program's pad strips into
-`useMixerStore` (never clobbering existing strips), which is what makes the Mixer's pads tab live.
+Phase 8 added **actions only**; no field was added or removed, so hydration is unchanged and
+pre-Phase-8 snapshots load untouched.
 
 ## 9. Component tree topography (as implemented)
 
-```
-App → StartGate (§5.1) → AppShell
-                          ├── TransportBar (play/rec/loop/click, position, tempo, swing,
-                          │                 count-in, rec-mode, save-dot, save, undo/redo)
-                          ├── ModeRail (12 tabs, motion layoutId, roving tabindex)
-                          └── <main role="tabpanel"> active mode
-                              ├── Main       → Now playing · Quick pads · Engine diagnostics
-                              │                (AudioEnginePanel) · Sequences · Storage
-                              │                (StoragePanel: DB boot, persist, self-test)
-                              ├── Grid       → tool/snap/quantise/groove · GridCanvas
-                              │                (notes, velocity lane, SAB playhead) · note list
-                              ├── Mute       → latch/momentary · track cells · pad cells
-                              ├── Sample     → (Phase 6 panel) import · waveform · tools
-                              ├── Program    → (Phase 5 panel) pads/layers/env/LFO/mod matrix
-                              ├── Mixer      → tabs · Fader+Meter · pan · mute/solo · sends ·
-                              │                InsertPanel (add/reorder/bypass/params) · PDC
-                              ├── Browser    → export/import/bounce/purge · filter · tag chips ·
-                              │                favourites · drag-to-pad · audition
-                              ├── Looper     → (Phase 6 panel) record / stop & save
-                              ├── Perform    → scale|chords · root/octave · 16 pads
-                              ├── XYFX       → axis pickers · latch · XYSurface
-                              ├── Q-Link     → mode · encoders · input latency · binding table
-                              └── Song       → playback mode · bounce song · playlist · add
-App also mounts: PwaUpdatePrompt · ToastViewport;  AppShell mounts PerfHud · LiveRegion.
-AppErrorFallback → Safe Mode: Export .mpcweb · Download .sqlite · Hard reset.
-```
+Unchanged from Phase 7 except:
+- **Q-Link Edit** → connection panel (state readout, Connect/Disconnect, device name, the
+  **Windows pairing helper**, and a Web-Bluetooth-unavailable note) · mode · encoders · input
+  latency · binding table, now with a **CC** column and a registry-driven picker offering the
+  transport macros, the selected pad's sound-design leaves, and every mixer channel address ·
+  learn flow taking a parameter tap **or** a real CC from the controller.
+- **Mixer → InsertPanel** publishes its effect parameters to the Screen-mode Q-Link focus registry.
 
 ## 10. Kernel inventory — unchanged (the §5.6.4 set is complete):
 `gainProof`, `lookaheadLimiter`, `multibandComp`, `fdnReverb`, `transientDetect`, `granularStretch`.
 
-## 11. Open items / deliberate technical debt
+## 11. Outstanding / deliberate technical debt
 
-**`check:stubs` reports ZERO open stubs** — §13.6 requires none from Phase 7 onward, and that gate
-is met. The items below are *not* stubs; they are honest scope notes for the next sessions.
+**`check:stubs` reports ZERO open stubs** (§13.6 requires none from Phase 7 onward).
 
-- **Groove template persistence:** templates and assignments live in runtime state and are wired
-  end-to-end (extract → assign → schedule-time application). §9.3 names `projects.payload` as their
-  durable home; adding them to `projectPayloadSchema` + the autosave path is a small, clearly-shaped
-  follow-up.
-- **Phase 6 panels retained as-is:** Sample Edit, Program Edit and Looper still use the functional
-  `controls.tsx` inputs rather than the new Knob/Fader primitives. They are accessible, wired, and
-  pass the 12-mode sweep — this is a visual-polish gap, not a functional one.
-- **Looper:** mic source + bar-locked/tempo-synced length + overdub + live meter ring (master-resample
-  mono capture is live).
-- **Sample Edit:** draggable trim/marker handles and the §8.5.4 worker-computed peak-pyramid cache
-  (peaks are drawn directly).
-- **Browser:** folder tree (project/global navigation); filter/tags/favourites/drag-to-pad are live.
-- **Grid:** the automation *lane editor* (the selector and the §7.8 lane data exist; drawing
-  automation curves on the canvas is not implemented). Marquee multi-select (single-select is live).
-- **XYFX/Q-Link:** XY movements are transient store updates but are not yet *recorded* as automation
-  while the transport records (§8.5.10); the Q-Link learn flow accepts a parameter tap — the CC half
-  arrives with the Phase 8 BLE transport, which is the natural place for it.
-- **`transientDetect`:** FFT spectral-flux upgrade behind the seam (flagged in §14 (h)).
-- **Bounce:** the full insert/mixer graph in the offline render (resolved-voice bounce is live).
+**OUTSTANDING PHASE-8 EXIT CRITERION — READ THIS FIRST:**
+- **The live hardware session sign-off (§12) is NOT done, and cannot be self-certified.** It
+  requires the human developer, a physical ESP32 BLE-MIDI controller, and a Windows pairing.
+  Everything that sign-off would exercise is covered by simulated-stream tests against an injected
+  fake GATT stack — which is *not* the same proof. **Ask the human developer to run a live session
+  before treating Phase 8 as closed.** Things to watch for: real-device timestamp drift against the
+  13-bit unwrap; the actual CC numbers a given ESP32 build emits (the learn flow exists for exactly
+  this, and `DEFAULT_QLINK_CC_BASE = 70` is only a convention); whether 15 ms is a sensible default
+  input-latency offset on real hardware; and reconnect behaviour on a genuine range drop.
+
+- **No Phase 8-specific step was added to the browser smoke**, deliberately. §12's Phase 8 exit
+  criteria name unit-level proofs (the parser suite and the simulated-stream jitter/reconnect
+  tests, both green) plus the live sign-off; a Web Bluetooth connection cannot be driven from
+  Playwright without hardware and a pairing, so a "BLE smoke" would have to mock the same seam the
+  unit tests already inject — proving nothing new for a 20-minute run. The existing "all 12 modes
+  mount from the rail" step does mount Q-Link Edit in a real browser and fails on any console
+  error, so the Phase 8 UI is covered there.
+
+**Not stubs — honest scope notes:**
+- **Q-Link `program` mode** addresses registered §7.8 leaves of the selected pad rather than a
+  macro layer, because §6 defines no macro system and inventing one would breach §3.1 Strategic
+  YAGNI and the §13.6 naming freeze. True program macros are a §6 schema addition, therefore a
+  Halt & Query.
+- **"Master filter"** (§10.3's third project-mode macro) has no default binding: it is an insert
+  whose presence is not guaranteed. The manual picker reaches it once a filter insert exists.
+- **Recording Q-Link movements as automation** (§7.8: "Q-Link/knob movements while recording write
+  points") is not implemented. The same gap exists for XYFX from Phase 7 — they should be closed
+  together, since both want one "record this parameter gesture" path.
+- Phase 7's remaining notes still stand: groove-template persistence; the Phase 6 panels using
+  `controls.tsx` rather than the new primitives; Looper mic source / overdub; Sample Edit drag
+  handles and the peak-pyramid cache; Browser folder tree; Grid automation-lane drawing and marquee
+  select; the `transientDetect` FFT upgrade; the full insert/mixer graph in the bounce.
 
 ## 12. Verification commands (all green at handover, inside the phase worktree)
-`npm run dev` · `build` · `preview` · `test` (**562**) · `test:e2e` (**33/33**, dev + offline,
-including "all 12 modes mount from the rail") · `test:e2e:quick` · `lint` · `type-check` ·
-`verify` (**no open stubs**).
+`npm run dev` · `build` · `preview` · `test` (**733**) · `test:e2e` (dev + offline) ·
+`test:e2e:quick` · `lint` · `type-check` · `verify` (**no open stubs**).
 (The main checkout has no `node_modules`; `npm install` before re-running.)

@@ -5,36 +5,18 @@
  * stepping, and `aria-valuetext` wording are identical across all controls, which is the
  * ZERO-DRY-violations rule for `src/ui/primitives/` (spec §3.6).
  */
-import { clamp, clamp01 } from '@/core/math';
+import { clamp } from '@/core/math';
 
-export type ControlCurve = 'linear' | 'log';
-export type ControlRange = readonly [number, number];
-
-/** True when a logarithmic taper is representable — both ends must be strictly positive. */
-function logTaperUsable(range: ControlRange, curve: ControlCurve): boolean {
-  return curve === 'log' && range[0] > 0 && range[1] > 0;
-}
-
-/** Value → normalised travel (0..1). Out-of-range values clamp rather than extrapolate. */
-export function valueToNormalised(value: number, range: ControlRange, curve: ControlCurve): number {
-  const [min, max] = range;
-  if (max === min) return 0;
-  const bounded = clamp(value, Math.min(min, max), Math.max(min, max));
-  if (logTaperUsable(range, curve)) {
-    return clamp01((Math.log(bounded / min) / Math.log(max / min)) as number);
-  }
-  return clamp01((bounded - min) / (max - min));
-}
-
-/** Normalised travel (0..1) → value. The exact inverse of {@link valueToNormalised}. */
-export function normalisedToValue(normalised: number, range: ControlRange, curve: ControlCurve): number {
-  const [min, max] = range;
-  const t = clamp01(normalised);
-  if (logTaperUsable(range, curve)) {
-    return min * (max / min) ** t;
-  }
-  return min + (max - min) * t;
-}
+// The taper itself lives in `@/core/math` so the Q-Link encoder scaling (spec §10.3) maps
+// values through exactly the same curve the primitives draw (spec §3.6 ZERO DRY). It is
+// re-exported here so every primitive keeps importing its maths from one module.
+export {
+  normalisedToValue,
+  valueToNormalised,
+  type ControlCurve,
+  type ControlRange,
+} from '@/core/math';
+import type { ControlRange } from '@/core/math';
 
 export interface StepOptions {
   readonly range: ControlRange;

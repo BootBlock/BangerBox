@@ -10,6 +10,7 @@ import { combineUnsubscribers } from './bridge';
 import { subscribeMixerSync } from './mixerSync';
 import { subscribeTransportSync } from './transportSync';
 import { subscribeProgramSync } from './programSync';
+import { subscribeProgramParamSync } from './programParams';
 import { subscribeHardwareSync } from './hardwareSync';
 
 export type { SyncBridge, Unsubscribe } from './bridge';
@@ -21,6 +22,7 @@ export function registerSyncSubscribers(bridge: SyncBridge = noopBridge): Unsubs
     subscribeMixerSync(bridge),
     subscribeTransportSync(bridge),
     subscribeProgramSync(bridge),
+    subscribeProgramParamSync(bridge),
     subscribeHardwareSync(bridge),
   ]);
 }

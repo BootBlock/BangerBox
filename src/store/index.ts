@@ -16,4 +16,4 @@ export {
 } from './useHardwareStore';
 export { useBrowserStore } from './useBrowserStore';
 export { useUndoStore, pushUndo, endUndoGesture, clearUndoHistory } from './undo';
-export type { Mode } from './useUIStore';
+export type { Mode, QLinkFocusParam } from './useUIStore';

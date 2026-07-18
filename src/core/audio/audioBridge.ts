@@ -59,7 +59,7 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
     for (const [id, muted] of Object.entries(mutes)) graph.getChannel(id)?.setMuted(muted, now);
   };
 
-  return {
+  const bridge: AudioBridge = {
     setChannelLevel: (id, level) => graph.getChannel(id)?.setLevel(level, context.currentTime),
     setChannelPan: (id, pan) => graph.getChannel(id)?.setPan(pan, context.currentTime),
     // Any mute/solo change re-derives every channel's effective mute (spec §5.2).
@@ -80,6 +80,12 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
 
     // Automation dispatch (spec §7.8): resolve the registered target and ramp its param.
     // `when` starts the dezipper ramp; native/insert params ramp identically to live edits.
+    // The sync layer's immediate form of the same application (spec §4.3).
+    applyParam: (targetPath, value) => {
+      const now = context.currentTime;
+      bridge.applyAutomation(targetPath, value, now, now);
+    },
+
     applyAutomation: (targetPath, value, when) => {
       const target = parseParamTarget(targetPath);
       if (!target) return;
@@ -103,6 +109,11 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
         if (!padChannel) return;
         if (change.target === 'channelLevel') padChannel.setLevel(change.value, when);
         else padChannel.setPan(change.value, when);
+        return;
+      }
+      if (target.kind === 'transportParam') {
+        // Transport parameters (tempo, swing) are the scheduler's, not the graph's — they
+        // reach it through the transport store's own sync subscriber (spec §7.1.3).
         return;
       }
       const channel = graph.getChannel(target.channelId);
@@ -137,4 +148,6 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
       applyEffectiveMutes();
     },
   };
+
+  return bridge;
 }

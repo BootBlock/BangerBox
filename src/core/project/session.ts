@@ -6,6 +6,7 @@
  * white screen (spec §8.1) — the storage panel independently reports the boot fault.
  */
 import { bootDatabase } from '@/core/storage/client';
+import { disposeHardwareService } from '@/core/midi/hardwareService';
 import { AudioEngine } from '@/core/audio/engine';
 import { createAudioContext, resumeAudioContext } from '@/core/audio/context';
 import { useProjectStore, useUIStore } from '@/store';
@@ -66,6 +67,8 @@ export function getAudioEngine(): AudioEngine | null {
 
 /** Tear the session down (test teardown / hot reload). */
 export function stopProjectSession(): void {
+  // Release the BLE link and its timers before the graph goes (spec §3.5 lens 5).
+  disposeHardwareService();
   sequencerSyncDispose?.();
   sequencerSyncDispose = null;
   syncDispose?.();

@@ -140,9 +140,17 @@ export class AudioEngine {
    *     is the sole sanctioned bypass of the store (latency), and it mutates nothing.
    *  2. `liveNote` to the scheduler worker for note-repeat processing and record capture.
    *
-   * BLE hardware input (Phase 8) joins the same two legs rather than adding a third path.
+   * BLE hardware input joins the same two legs rather than adding a third path: it passes
+   * the reconstructed, latency-compensated BLE timestamp as `timestampMs` so recording
+   * captures when the pad was *struck*, not when the packet arrived (spec §10.2, §10.4).
    */
-  triggerLiveNote(trackId: string, note: number, velocity: number, on = true): void {
+  triggerLiveNote(
+    trackId: string,
+    note: number,
+    velocity: number,
+    on = true,
+    timestampMs: number = performance.now(),
+  ): void {
     if (on) {
       const resolved = this.resolveNote(trackId, note, velocity);
       if (resolved) {
@@ -166,7 +174,16 @@ export class AudioEngine {
       }
     }
     // Leg 2 — note repeat + record capture (spec §7.3, §7.7).
-    this.scheduler.sendLiveNote(note, velocity, on, performance.now(), trackId);
+    this.scheduler.sendLiveNote(note, velocity, on, timestampMs, trackId);
+  }
+
+  /**
+   * Apply a pitch bend, in cents, to every sounding voice of a program (spec §10.2). This
+   * is a voice-pool path like note audition — not a store mutation — because a bend is a
+   * performance gesture, not project state.
+   */
+  applyPitchBend(programId: string, cents: number): void {
+    this.voicePool.applyProgramDetune(programId, cents, this.context.currentTime);
   }
 
   /** Create + attach a Looper capturing the master bus (spec §8.5.8). Caller owns disposal. */
