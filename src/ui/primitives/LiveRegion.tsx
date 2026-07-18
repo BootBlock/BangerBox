@@ -41,7 +41,9 @@ export function LiveRegion() {
 
   return (
     <div
-      role="status"
+      // `aria-live` without `role="status"`: the implicit role would make every transient
+      // toast and this announcer indistinguishable to assistive tech (and to queries).
+      // Announcement behaviour is identical; the ambiguity is not.
       aria-live="polite"
       aria-atomic="true"
       data-testid="live-region"

@@ -46,12 +46,54 @@ export function LayersEditor({
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <NumberField label="Vel start" value={layer.velocityStart} min={0} max={127} step={1} onChange={(velocityStart) => setLayer(index, { velocityStart })} />
-                <NumberField label="Vel end" value={layer.velocityEnd} min={0} max={127} step={1} onChange={(velocityEnd) => setLayer(index, { velocityEnd })} />
-                <NumberField label="Tune" suffix="st" value={layer.tuneSemitones} min={TUNE_SEMITONES_RANGE[0]} max={TUNE_SEMITONES_RANGE[1]} step={1} onChange={(tuneSemitones) => setLayer(index, { tuneSemitones })} />
-                <NumberField label="Fine" suffix="cents" value={layer.tuneCents} min={TUNE_CENTS_RANGE[0]} max={TUNE_CENTS_RANGE[1]} step={1} onChange={(tuneCents) => setLayer(index, { tuneCents })} />
-                <NumberField label="Gain" suffix="dB" value={layer.gainDb} min={GAIN_DB_RANGE[0]} max={GAIN_DB_RANGE[1]} step={0.5} onChange={(gainDb) => setLayer(index, { gainDb })} />
-                <ToggleField label="Reverse" checked={layer.reverse} onChange={(reverse) => setLayer(index, { reverse })} />
+                <NumberField
+                  label="Vel start"
+                  value={layer.velocityStart}
+                  min={0}
+                  max={127}
+                  step={1}
+                  onChange={(velocityStart) => setLayer(index, { velocityStart })}
+                />
+                <NumberField
+                  label="Vel end"
+                  value={layer.velocityEnd}
+                  min={0}
+                  max={127}
+                  step={1}
+                  onChange={(velocityEnd) => setLayer(index, { velocityEnd })}
+                />
+                <NumberField
+                  label="Tune"
+                  suffix="st"
+                  value={layer.tuneSemitones}
+                  min={TUNE_SEMITONES_RANGE[0]}
+                  max={TUNE_SEMITONES_RANGE[1]}
+                  step={1}
+                  onChange={(tuneSemitones) => setLayer(index, { tuneSemitones })}
+                />
+                <NumberField
+                  label="Fine"
+                  suffix="cents"
+                  value={layer.tuneCents}
+                  min={TUNE_CENTS_RANGE[0]}
+                  max={TUNE_CENTS_RANGE[1]}
+                  step={1}
+                  onChange={(tuneCents) => setLayer(index, { tuneCents })}
+                />
+                <NumberField
+                  label="Gain"
+                  suffix="dB"
+                  value={layer.gainDb}
+                  min={GAIN_DB_RANGE[0]}
+                  max={GAIN_DB_RANGE[1]}
+                  step={0.5}
+                  onChange={(gainDb) => setLayer(index, { gainDb })}
+                />
+                <ToggleField
+                  label="Reverse"
+                  checked={layer.reverse}
+                  onChange={(reverse) => setLayer(index, { reverse })}
+                />
               </div>
             </li>
           ))}

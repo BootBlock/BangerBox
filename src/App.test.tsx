@@ -1,10 +1,17 @@
-import { render, screen, waitForElementToBeRemoved } from '@testing-library/react';
+/**
+ * Application shell tests (spec §8.1) — the persistent transport bar, the 12-mode rail,
+ * and mode switching through `useUIStore.activeMode` (spec §1.3 #9, no router). These
+ * assert the shell's accessibility contract (spec §8.2/§3.5 lens 1) rather than its
+ * pixels: roles, names, keyboard operation, and that every mode actually mounts.
+ */
+import { render, screen, waitForElementToBeRemoved, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from './App';
 import { evaluateCapabilities } from './core/platform/capabilities';
 import { CapabilityGate } from './ui/CapabilityGate';
-import { fakeStorageApi } from './test/fakes/storagePanelApi';
+import { MODE_DEFINITIONS } from './features/modes';
+import { useUIStore } from './store';
 import type { PwaUpdateApi, PwaUpdateHandlers } from './ui/usePwaUpdate';
 
 const fullCapabilities = evaluateCapabilities(
@@ -35,28 +42,97 @@ function fakePwaApi() {
   return { api, updates, signalNeedRefresh: () => handlers?.onNeedRefresh() };
 }
 
-describe('App shell (Phase 1)', () => {
-  it('renders the wordmark, version, soft capability summary, and storage panel', async () => {
-    const { api } = fakePwaApi();
-    render(
-      <App capabilities={fullCapabilities} pwaApiOverride={api} storageApiOverride={fakeStorageApi()} />,
-    );
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('BangerBox');
-    expect(screen.getByText(`v0.1.0`)).toBeInTheDocument();
-    expect(screen.getByText('Web Bluetooth (BLE-MIDI hardware)')).toBeInTheDocument();
-    // Missing soft capabilities show as unavailable but never block the app (§2.1).
-    expect(screen.getAllByText('Unavailable')).toHaveLength(2);
-    expect(screen.getByTestId('audio-start')).toBeEnabled();
-    // The storage panel boots through its seam and reports ready.
-    expect(await screen.findByTestId('storage-panel-status')).toHaveAttribute('data-status', 'ready');
+function renderApp() {
+  const { api, updates, signalNeedRefresh } = fakePwaApi();
+  render(<App capabilities={fullCapabilities} pwaApiOverride={api} />);
+  return { updates, signalNeedRefresh };
+}
+
+describe('AppShell (spec §8.1)', () => {
+  beforeEach(() => {
+    useUIStore.getState().setActiveMode('main');
   });
 
-  it('surfaces the reload prompt when a new service worker is waiting and applies it on accept', async () => {
+  it('renders the persistent transport bar and mode rail', () => {
+    renderApp();
+    expect(screen.getByRole('toolbar', { name: 'Transport' })).toBeInTheDocument();
+    expect(screen.getByRole('tablist', { name: 'Modes' })).toBeInTheDocument();
+  });
+
+  it('offers exactly the 12 modes the spec requires (§8.5)', () => {
+    renderApp();
+    const tabs = within(screen.getByRole('tablist', { name: 'Modes' })).getAllByRole('tab');
+    expect(tabs).toHaveLength(12);
+    expect(MODE_DEFINITIONS).toHaveLength(12);
+  });
+
+  it('starts on Main with its tab selected and its panel shown', () => {
+    renderApp();
+    expect(screen.getByTestId('mode-tab-main')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel', { name: 'Main' })).toBeInTheDocument();
+  });
+
+  it('switches modes on tap without a router (spec §1.3 #9)', async () => {
     const user = userEvent.setup();
-    const { api, updates, signalNeedRefresh } = fakePwaApi();
-    render(
-      <App capabilities={fullCapabilities} pwaApiOverride={api} storageApiOverride={fakeStorageApi()} />,
-    );
+    renderApp();
+    await user.click(screen.getByTestId('mode-tab-song'));
+    expect(useUIStore.getState().activeMode).toBe('song');
+    expect(screen.getByTestId('mode-tab-song')).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tabpanel', { name: 'Song' })).toBeInTheDocument();
+  });
+
+  it('moves between modes with the arrow keys (spec §8.2 roving tabindex)', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const mainTab = screen.getByTestId('mode-tab-main');
+    expect(mainTab).toHaveAttribute('tabindex', '0');
+    mainTab.focus();
+    await user.keyboard('{ArrowDown}');
+    // Grid follows Main in the §8.5 order.
+    expect(useUIStore.getState().activeMode).toBe('grid');
+  });
+
+  it('mounts every mode without crashing (spec §3.4 no dead modes)', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    for (const mode of MODE_DEFINITIONS) {
+      await user.click(screen.getByTestId(`mode-tab-${mode.id}`));
+      expect(await screen.findByRole('tabpanel', { name: mode.title })).toBeInTheDocument();
+    }
+  });
+
+  it('exposes the transport controls with accessible names (spec §8.2)', () => {
+    renderApp();
+    const toolbar = screen.getByRole('toolbar', { name: 'Transport' });
+    expect(within(toolbar).getByRole('button', { name: 'Play' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Arm recording' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('slider', { name: 'Tempo' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Save project now' })).toBeInTheDocument();
+  });
+
+  it('disables undo and redo until there is history (spec §4.5)', () => {
+    renderApp();
+    expect(screen.getByTestId('transport-undo')).toBeDisabled();
+    expect(screen.getByTestId('transport-redo')).toBeDisabled();
+  });
+
+  it('mounts the single polite live region (spec §8.2)', () => {
+    renderApp();
+    expect(screen.getByTestId('live-region')).toHaveAttribute('aria-live', 'polite');
+  });
+});
+
+describe('PWA update prompt (spec §2.4)', () => {
+  beforeEach(() => {
+    // The stores are module singletons, so a toast pushed by an earlier test's mode would
+    // otherwise still be mounted and compete with the prompt for `role="status"`.
+    const { toasts, dismissToast } = useUIStore.getState();
+    for (const toast of toasts) dismissToast(toast.id);
+  });
+
+  it('surfaces the reload prompt when a new worker is waiting and applies it on accept', async () => {
+    const user = userEvent.setup();
+    const { updates, signalNeedRefresh } = renderApp();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
 
     signalNeedRefresh();
@@ -69,10 +145,7 @@ describe('App shell (Phase 1)', () => {
 
   it('"Not now" snoozes the reload prompt', async () => {
     const user = userEvent.setup();
-    const { api, signalNeedRefresh } = fakePwaApi();
-    render(
-      <App capabilities={fullCapabilities} pwaApiOverride={api} storageApiOverride={fakeStorageApi()} />,
-    );
+    const { signalNeedRefresh } = renderApp();
     signalNeedRefresh();
     await screen.findByRole('status');
     await user.click(screen.getByRole('button', { name: 'Not now' }));

@@ -111,8 +111,8 @@ export function BrowserPanel() {
         Browser
       </h2>
       <p className="mt-1 text-xs leading-relaxed text-bb-muted">
-        Library and interchange: export or import a project as a portable <code>.mpcweb</code> archive, audition
-        samples, and purge unused ones.
+        Library and interchange: export or import a project as a portable <code>.mpcweb</code> archive,
+        audition samples, and purge unused ones.
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -155,7 +155,10 @@ export function BrowserPanel() {
         </button>
       </div>
 
-      <ul className="mt-3 max-h-40 overflow-auto rounded-bb-sm border border-bb-line" aria-label="Library samples">
+      <ul
+        className="mt-3 max-h-40 overflow-auto rounded-bb-sm border border-bb-line"
+        aria-label="Library samples"
+      >
         {samples.map((row) => (
           <li key={row.id} className="flex items-center justify-between px-2 py-1 text-xs">
             <span className="truncate">{row.name}</span>
@@ -168,7 +171,9 @@ export function BrowserPanel() {
             </button>
           </li>
         ))}
-        {samples.length === 0 && <li className="px-2 py-2 text-xs text-bb-muted">No samples in this project.</li>}
+        {samples.length === 0 && (
+          <li className="px-2 py-2 text-xs text-bb-muted">No samples in this project.</li>
+        )}
       </ul>
     </section>
   );

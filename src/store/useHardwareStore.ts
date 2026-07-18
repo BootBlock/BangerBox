@@ -7,11 +7,16 @@
  */
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
+import { clamp } from '@/core/math';
 import { dirtyKey } from '@/core/project/dirty';
 import { type QLinkBinding, type QLinkMode } from '@/core/project/schemas';
 import { commit } from './commit';
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting';
+
+/** Input latency offset bounds and default — spec §10.2 (default 15 ms, range 0–50 ms). */
+export const INPUT_LATENCY_RANGE = [0, 50] as const;
+export const INPUT_LATENCY_DEFAULT_MS = 15;
 
 interface HardwareState {
   bleDeviceConnected: boolean;
@@ -21,10 +26,17 @@ interface HardwareState {
   qLinkBindings: QLinkBinding[];
   /** Raw incoming CC number → logical encoder index (spec §4.2, §10.4). */
   ccMappings: Record<number, number>;
+  /**
+   * Input latency offset in ms, subtracted from BLE timestamps when recording to
+   * compensate transmission delay (spec §10.2: default 15, settable 0–50 in Q-Link
+   * Edit's settings pane). Added in Phase 7 — see §14 2026-07-18 (i).
+   */
+  inputLatencyMs: number;
 
   setConnectionState: (state: ConnectionState) => void;
   setDevice: (name: string | null, connected: boolean) => void;
   setQLinkMode: (mode: QLinkMode) => void;
+  setInputLatencyMs: (ms: number) => void;
 
   /** Replace the binding set for the current mode (hydration — spec §10.3). */
   setBindings: (bindings: readonly QLinkBinding[]) => void;
@@ -43,10 +55,13 @@ export const useHardwareStore = create<HardwareState>()(
     qLinkMode: 'screen',
     qLinkBindings: [],
     ccMappings: {},
+    inputLatencyMs: INPUT_LATENCY_DEFAULT_MS,
 
     setConnectionState: (connectionState) => set({ connectionState }),
     setDevice: (bleDeviceName, bleDeviceConnected) => set({ bleDeviceName, bleDeviceConnected }),
     setQLinkMode: (qLinkMode) => set({ qLinkMode }),
+    setInputLatencyMs: (ms) =>
+      set({ inputLatencyMs: clamp(ms, INPUT_LATENCY_RANGE[0], INPUT_LATENCY_RANGE[1]) }),
 
     setBindings: (bindings) => set({ qLinkBindings: [...bindings] }),
 

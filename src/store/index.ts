@@ -8,7 +8,12 @@ export { useSequenceStore } from './useSequenceStore';
 export { useProgramStore } from './useProgramStore';
 export { useMixerStore, mixerChannelDirtyKey } from './useMixerStore';
 export { useUIStore, MODES } from './useUIStore';
-export { useHardwareStore } from './useHardwareStore';
+export {
+  useHardwareStore,
+  INPUT_LATENCY_DEFAULT_MS,
+  INPUT_LATENCY_RANGE,
+  type ConnectionState,
+} from './useHardwareStore';
 export { useBrowserStore } from './useBrowserStore';
 export { useUndoStore, pushUndo, endUndoGesture, clearUndoHistory } from './undo';
 export type { Mode } from './useUIStore';

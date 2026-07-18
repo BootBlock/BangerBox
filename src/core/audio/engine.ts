@@ -127,6 +127,43 @@ export class AudioEngine {
     });
   }
 
+  /**
+   * Live note input from the UI pads/keyboard — spec §7.6's dual path, taken by *both*
+   * legs simultaneously:
+   *
+   *  1. Immediate audition: the voice pool is triggered directly with `when = now`. This
+   *     is the sole sanctioned bypass of the store (latency), and it mutates nothing.
+   *  2. `liveNote` to the scheduler worker for note-repeat processing and record capture.
+   *
+   * BLE hardware input (Phase 8) joins the same two legs rather than adding a third path.
+   */
+  triggerLiveNote(trackId: string, note: number, velocity: number, on = true): void {
+    if (on) {
+      const resolved = this.resolveNote(trackId, note, velocity);
+      if (resolved) {
+        this.soundResolvedVoice(trackId, resolved, {
+          kind: 'noteOn',
+          trackId,
+          note,
+          velocity,
+          when: this.context.currentTime,
+          tick: 0,
+        });
+      } else {
+        this.triggerFallbackDemo({
+          kind: 'noteOn',
+          trackId,
+          note,
+          velocity,
+          when: this.context.currentTime,
+          tick: 0,
+        });
+      }
+    }
+    // Leg 2 — note repeat + record capture (spec §7.3, §7.7).
+    this.scheduler.sendLiveNote(note, velocity, on, performance.now(), trackId);
+  }
+
   /** Create + attach a Looper capturing the master bus (spec §8.5.8). Caller owns disposal. */
   createLooper(): Looper {
     const looper = new Looper(this.context, this.graph.master.meterPoint, this.context.sampleRate);

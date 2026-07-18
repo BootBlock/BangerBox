@@ -46,14 +46,17 @@ export function ValueReadout({
       {showLabel && (
         <span className="text-[0.625rem] font-semibold tracking-wide text-bb-muted uppercase">{label}</span>
       )}
-      <output
+      {/* A <span>, deliberately not <output>: `output` carries an implicit `role="status"`,
+          which would turn every readout in the app into a live region competing with the
+          real announcer and the toasts (spec §8.2 — one polite LiveRegion). */}
+      <span
         aria-label={showLabel ? undefined : label}
         aria-live={live ? 'polite' : undefined}
         data-testid={testId}
-        className={`rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 font-mono tabular-nums ${SIZE[size]} ${TONE[tone]}`}
+        className={`block rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 font-mono tabular-nums ${SIZE[size]} ${TONE[tone]}`}
       >
         {value}
-      </output>
+      </span>
     </div>
   );
 }
