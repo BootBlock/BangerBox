@@ -16,6 +16,7 @@ import { Toggle } from '@/ui/primitives';
 import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
 import { FactorySection } from './FactorySection';
 import { FolderTree } from './FolderTree';
+import { SampleWaveformThumb } from './SampleWaveformThumb';
 import { findUnusedSamples } from './purge';
 import { isGlobalLibraryPath, scopeOfPath } from './libraryLocation';
 
@@ -349,6 +350,8 @@ export function BrowserPanel() {
               >
                 ★
               </button>
+              {/* Waveform micro-preview (spec §8.5.7), drawn from the cached §8.5.4 pyramid. */}
+              <SampleWaveformThumb opfsPath={row.opfs_path} />
               <span className="flex-1 truncate">{row.name}</span>
               {/* Drag-to-pad assignment (spec §8.5.7 `dragDropPayload`). */}
               <span

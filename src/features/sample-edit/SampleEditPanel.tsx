@@ -12,32 +12,22 @@ import { fadeIn, fadeOut, normalise, reverse, trim } from '@/core/audio/sampleEd
 import {
   applyEditToNewSample,
   chopSampleToNewSamples,
-  readSampleChannels,
   stretchSampleToNewSample,
 } from '@/core/audio/sampleEditService';
+import type { PeakPyramid } from '@/core/audio/peakPyramid';
+import { getPeakPyramid } from '@/core/audio/peakPyramidCache';
 import { importAudioFile } from '@/core/audio/sampleImport';
 import { extractAndBakeGroove } from '@/core/audio/grooveService';
 import { useBrowserStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
 import { WaveformCanvas } from '@/ui/primitives/WaveformCanvas';
 import { refreshSamples, sampleEditContext } from './sampleContext';
 
-/** Mono down-mix for the waveform preview. */
-function monoOf(channels: readonly Float32Array[]): Float32Array {
-  if (channels.length === 1) return channels[0]!;
-  const frames = channels[0]!.length;
-  const out = new Float32Array(frames);
-  for (const channel of channels) {
-    for (let i = 0; i < frames; i++) out[i] = (out[i] ?? 0) + channel[i]! / channels.length;
-  }
-  return out;
-}
-
 export function SampleEditPanel() {
   const samples = useBrowserStore((state) => state.samples);
   const projectId = useProjectStore((state) => state.projectId);
   const pushToast = useUIStore((state) => state.pushToast);
   const [selected, setSelected] = useState<SampleRow | null>(null);
-  const [waveform, setWaveform] = useState<Float32Array | null>(null);
+  const [pyramid, setPyramid] = useState<PeakPyramid | null>(null);
   const [busy, setBusy] = useState(false);
   const [fadeMs, setFadeMs] = useState(50);
   const [stretchRate, setStretchRate] = useState(1);
@@ -50,11 +40,11 @@ export function SampleEditPanel() {
 
   const select = async (row: SampleRow) => {
     setSelected(row);
+    setPyramid(null);
     try {
-      const { channels } = await readSampleChannels(row);
-      setWaveform(monoOf(channels));
+      setPyramid(await getPeakPyramid(row.opfs_path));
     } catch {
-      setWaveform(null);
+      setPyramid(null);
     }
   };
 
@@ -88,7 +78,7 @@ export function SampleEditPanel() {
     void run(label, () => applyEditToNewSample(selected, transform, label, sampleEditContext()));
   };
 
-  const frames = waveform?.length ?? 0;
+  const frames = pyramid?.frames ?? 0;
 
   return (
     <section aria-labelledby="sample-edit-heading" className="mt-6">
@@ -140,7 +130,7 @@ export function SampleEditPanel() {
 
         <div>
           <WaveformCanvas
-            samples={waveform}
+            pyramid={pyramid}
             ariaLabel={selected ? `Waveform of ${selected.name}` : 'No sample selected'}
           />
           {selected && (
