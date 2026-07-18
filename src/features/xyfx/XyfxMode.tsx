@@ -158,13 +158,17 @@ export function XyfxMode() {
         </div>
       </Panel>
 
-      <Panel title="XY surface" className="flex-1">
+      <Panel title="XY surface" fill>
         {choices.length === 0 ? (
           <p className="text-xs text-bb-muted">
             No automatable parameters yet — start the audio engine to build the mixer graph.
           </p>
         ) : (
-          <div onPointerDown={beginGesture} data-testid="xyfx-surface-wrapper">
+          <div
+            onPointerDown={beginGesture}
+            data-testid="xyfx-surface-wrapper"
+            className="flex min-h-0 flex-1 flex-col"
+          >
             <XYSurface
               x={{
                 label: choices.find((c) => c.path === effectiveX)?.label ?? 'X',
@@ -178,6 +182,7 @@ export function XyfxMode() {
               }}
               onTransient={applyTransient}
               onCommit={applyCommit}
+              fill
               data-testid="xyfx-surface"
             />
           </div>

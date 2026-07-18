@@ -280,7 +280,7 @@ export function GridMode() {
       </Panel>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[3fr_1fr]">
-        <Panel title="Note editor" className="min-h-96">
+        <Panel title="Note editor" fill>
           {trackId === null ? (
             <p className="text-xs text-bb-muted">Add a track to the active sequence to edit notes.</p>
           ) : (

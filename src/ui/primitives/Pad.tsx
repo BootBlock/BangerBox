@@ -26,6 +26,12 @@ export interface PadProps {
   active?: boolean;
   selected?: boolean;
   disabled?: boolean;
+  /**
+   * Fill the grid cell instead of holding a square — for pad grids that scale to the
+   * space left in a fit-to-viewport mode (spec §8.4). Velocity still reads off the
+   * strike position, which is measured from the rendered box either way.
+   */
+  fill?: boolean;
   onTrigger: (padIndex: number, velocity: number) => void;
   onRelease?: (padIndex: number) => void;
   /** Secondary action — Program Edit selects the pad without sounding it. */
@@ -40,6 +46,7 @@ export function Pad({
   active = false,
   selected = false,
   disabled = false,
+  fill = false,
   onTrigger,
   onRelease,
   onSelect,
@@ -111,7 +118,8 @@ export function Pad({
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
       className={[
-        'relative aspect-square touch-none select-none rounded-bb-md border text-[0.625rem] font-semibold',
+        'relative touch-none select-none rounded-bb-md border text-[0.625rem] font-semibold',
+        fill ? 'h-full min-h-0 w-full' : 'aspect-square',
         // Press feedback is a GPU-composited transform only (spec §8.3 60 fps budget).
         'active:scale-95',
         assigned ? 'bg-bb-raised text-bb-text' : 'bg-bb-surface text-bb-muted',

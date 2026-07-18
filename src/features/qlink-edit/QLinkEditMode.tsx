@@ -40,6 +40,7 @@ import {
 import { qLinkModeSchema, type QLinkBinding, type QLinkMode } from '@/core/project/schemas';
 import { Knob, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
+import { StoragePanel } from '@/ui/StoragePanel';
 import { IconRemove } from '@/ui/icons';
 
 /** Physical encoders by default; the model supports up to 16 (spec §1.3.1, §10.3). */
@@ -154,9 +155,7 @@ export function QLinkEditMode() {
     try {
       await hardwareService().connect();
     } catch (error) {
-      setConnectError(
-        error instanceof Error ? error.message : 'The controller could not be connected.',
-      );
+      setConnectError(error instanceof Error ? error.message : 'The controller could not be connected.');
     }
   };
 
@@ -233,9 +232,7 @@ export function QLinkEditMode() {
               else void connect();
             }}
             title={
-              bluetoothAvailable
-                ? undefined
-                : 'Web Bluetooth is unavailable in this browser (spec §2.1).'
+              bluetoothAvailable ? undefined : 'Web Bluetooth is unavailable in this browser (spec §2.1).'
             }
             data-testid="qlink-connect"
             className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs font-semibold text-bb-text transition-colors duration-150 hover:border-bb-accent disabled:opacity-40"
@@ -286,13 +283,21 @@ export function QLinkEditMode() {
         )}
         <p className="mt-3 text-xs text-bb-muted" data-testid="qlink-pairing-help">
           <strong className="font-semibold text-bb-text">Windows pairing:</strong> pair your ESP32 controller
-          in Windows Settings → Bluetooth &amp; devices <em>before</em> using Connect here — the browser&rsquo;s
-          chooser only lists devices Windows has already paired.
+          in Windows Settings → Bluetooth &amp; devices <em>before</em> using Connect here — the
+          browser&rsquo;s chooser only lists devices Windows has already paired.
         </p>
         <p className="mt-2 text-xs text-bb-muted">
           Bindings are stored per Q-Link mode. The input latency offset is subtracted from incoming hardware
           timestamps when recording (spec §10.2).
         </p>
+      </Panel>
+
+      {/* Durable-layer diagnostics live with the other device settings rather than on the
+          Main dashboard (changelog 2026-07-18 (o)); the everyday storage read is the
+          transport bar's gauge. Above the bindings table so it is not in the toast landing
+          zone at the foot of the mode. */}
+      <Panel title="Storage">
+        <StoragePanel />
       </Panel>
 
       <Panel title="Bindings" scroll className="flex-1">

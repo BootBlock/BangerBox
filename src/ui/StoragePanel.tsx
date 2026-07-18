@@ -130,60 +130,13 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
   };
 
   return (
-    <section aria-labelledby="storage-panel-heading" className="mt-6">
-      <h3 id="storage-panel-heading" className="text-sm font-semibold">
-        Storage foundation
-      </h3>
-      <p className="mt-1 text-xs leading-relaxed text-bb-muted">
-        Project data lives in an on-device SQLite database; audio lives in the Origin Private File System.
-        Nothing leaves this device.
-      </p>
-
-      <div className="mt-3 flex items-center gap-3">
-        <span
-          data-testid="storage-panel-status"
-          data-status={status}
-          className={
-            status === 'ready'
-              ? 'text-sm font-semibold text-bb-ok'
-              : status === 'failed'
-                ? 'text-sm font-semibold text-bb-danger'
-                : 'text-sm text-bb-muted'
-          }
-        >
-          {status === 'booting' ? 'Starting…' : status === 'ready' ? 'Ready' : 'Failed'}
-        </span>
-        <span data-testid="storage-panel-detail" className="text-xs text-bb-muted">
-          {bootDetail}
-        </span>
-      </div>
-
-      {status === 'ready' && (
-        <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <div className="flex items-center justify-between gap-2 rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-2 text-xs">
-            <dt className="text-bb-text">Protected from eviction</dt>
-            <dd
-              data-testid="storage-persisted"
-              className={persisted ? 'font-semibold text-bb-ok' : 'font-semibold text-bb-warn'}
-            >
-              {persisted ? 'Yes' : 'Not granted'}
-            </dd>
-          </div>
-          <div className="flex items-center justify-between gap-2 rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-2 text-xs">
-            <dt className="text-bb-text">Storage used</dt>
-            <dd className="font-semibold text-bb-text">
-              {estimate?.supported
-                ? `${formatMebibytes(estimate.usage)} of ${formatMebibytes(estimate.quota)}`
-                : 'Unknown'}
-            </dd>
-          </div>
-        </dl>
-      )}
-
+    <section aria-labelledby="storage-panel-heading">
+      {/* The §9.7 eviction warning sits outside the disclosure: it is a condition the user
+          has to act on, not a diagnostic to go looking for. */}
       {status === 'ready' && persisted === false && !evictionWarningDismissed && (
         <div
           role="note"
-          className="mt-3 flex items-start justify-between gap-3 rounded-bb-sm border border-bb-warn/40 bg-bb-raised px-3 py-2 text-xs text-bb-warn"
+          className="mb-3 flex items-start justify-between gap-3 rounded-bb-sm border border-bb-warn/40 bg-bb-raised px-3 py-2 text-xs text-bb-warn"
         >
           <p className="leading-relaxed">
             The browser declined persistent storage, so it may evict project data under storage pressure.
@@ -199,33 +152,90 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
         </div>
       )}
 
-      <div className="mt-3 flex items-center gap-3">
-        <button
-          type="button"
-          data-testid="storage-self-test-run"
-          onClick={() => void runSelfTest()}
-          disabled={status !== 'ready' || testStatus === 'running'}
-          className="rounded-bb-md bg-bb-accent px-4 py-2 text-sm font-semibold text-bb-bg transition-colors duration-150 hover:bg-bb-accent-strong disabled:cursor-not-allowed disabled:opacity-60"
+      {/* Everything below is diagnostics — collapsed by default so Main stays a dashboard
+          (spec §8.5.1 asks for storage *usage* here, which the panel above already shows). */}
+      <details data-testid="storage-diagnostics">
+        <summary
+          id="storage-panel-heading"
+          className="cursor-pointer text-xs font-semibold text-bb-muted hover:text-bb-text"
         >
-          {testStatus === 'running' ? 'Running…' : 'Run storage self-test'}
-        </button>
-        <span
-          data-testid="storage-self-test-status"
-          data-status={testStatus}
-          className={
-            testStatus === 'passed'
-              ? 'text-sm font-semibold text-bb-ok'
-              : testStatus === 'failed'
-                ? 'text-sm font-semibold text-bb-danger'
-                : 'text-sm text-bb-muted'
-          }
-        >
-          {testStatus === 'idle' ? 'Idle' : testStatus.charAt(0).toUpperCase() + testStatus.slice(1)}
-        </span>
-      </div>
-      <p aria-live="polite" data-testid="storage-self-test-detail" className="mt-2 text-xs text-bb-muted">
-        {testDetail}
-      </p>
+          Diagnostics
+        </summary>
+
+        <p className="mt-2 text-xs leading-relaxed text-bb-muted">
+          Project data lives in an on-device SQLite database; audio lives in the Origin Private File System.
+          Nothing leaves this device.
+        </p>
+
+        <div className="mt-3 flex items-center gap-3">
+          <span
+            data-testid="storage-panel-status"
+            data-status={status}
+            className={
+              status === 'ready'
+                ? 'text-sm font-semibold text-bb-ok'
+                : status === 'failed'
+                  ? 'text-sm font-semibold text-bb-danger'
+                  : 'text-sm text-bb-muted'
+            }
+          >
+            {status === 'booting' ? 'Starting…' : status === 'ready' ? 'Ready' : 'Failed'}
+          </span>
+          <span data-testid="storage-panel-detail" className="text-xs text-bb-muted">
+            {bootDetail}
+          </span>
+        </div>
+
+        {status === 'ready' && (
+          <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="flex items-center justify-between gap-2 rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-2 text-xs">
+              <dt className="text-bb-text">Protected from eviction</dt>
+              <dd
+                data-testid="storage-persisted"
+                className={persisted ? 'font-semibold text-bb-ok' : 'font-semibold text-bb-warn'}
+              >
+                {persisted ? 'Yes' : 'Not granted'}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-2 rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-2 text-xs">
+              <dt className="text-bb-text">Storage used</dt>
+              <dd className="font-semibold text-bb-text">
+                {estimate?.supported
+                  ? `${formatMebibytes(estimate.usage)} of ${formatMebibytes(estimate.quota)}`
+                  : 'Unknown'}
+              </dd>
+            </div>
+          </dl>
+        )}
+
+        <div className="mt-3 flex items-center gap-3">
+          <button
+            type="button"
+            data-testid="storage-self-test-run"
+            onClick={() => void runSelfTest()}
+            disabled={status !== 'ready' || testStatus === 'running'}
+            className="rounded-bb-md bg-bb-accent px-4 py-2 text-sm font-semibold text-bb-bg transition-colors duration-150 hover:bg-bb-accent-strong disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {testStatus === 'running' ? 'Running…' : 'Run storage self-test'}
+          </button>
+          <span
+            data-testid="storage-self-test-status"
+            data-status={testStatus}
+            className={
+              testStatus === 'passed'
+                ? 'text-sm font-semibold text-bb-ok'
+                : testStatus === 'failed'
+                  ? 'text-sm font-semibold text-bb-danger'
+                  : 'text-sm text-bb-muted'
+            }
+          >
+            {testStatus === 'idle' ? 'Idle' : testStatus.charAt(0).toUpperCase() + testStatus.slice(1)}
+          </span>
+        </div>
+        <p aria-live="polite" data-testid="storage-self-test-detail" className="mt-2 text-xs text-bb-muted">
+          {testDetail}
+        </p>
+      </details>
     </section>
   );
 }

@@ -196,8 +196,8 @@ export function PadPerformMode() {
         )}
       </Panel>
 
-      <Panel title="Pads">
-        <div className="grid grid-cols-4 gap-2">
+      <Panel title="Pads" fill>
+        <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-4 gap-2">
           {Array.from({ length: PAD_COUNT }, (_, padIndex) => (
             <Pad
               key={padIndex}
@@ -207,12 +207,13 @@ export function PadPerformMode() {
               disabled={trackId === null}
               onTrigger={handleTrigger}
               onRelease={handleRelease}
+              fill
               data-testid={`perform-pad-${padIndex}`}
             />
           ))}
         </div>
         {trackId === null && (
-          <p className="mt-3 text-xs text-bb-muted">Add a track to the active sequence to play.</p>
+          <p className="mt-3 shrink-0 text-xs text-bb-muted">Add a track to the active sequence to play.</p>
         )}
       </Panel>
     </div>

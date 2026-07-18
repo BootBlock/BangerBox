@@ -31,6 +31,11 @@ export interface XYSurfaceProps {
   /** Gesture end. With latch off, the caller returns the axes to their resting values. */
   onCommit: (xValue: number, yValue: number) => void;
   disabled?: boolean;
+  /**
+   * Fill the height available instead of holding a 16:10 box — for the full-screen XYFX
+   * surface (spec §8.5.10), which sizes to the mode rather than the other way round.
+   */
+  fill?: boolean;
   'data-testid'?: string;
 }
 
@@ -40,6 +45,7 @@ export function XYSurface({
   onTransient,
   onCommit,
   disabled = false,
+  fill = false,
   'data-testid': testId,
 }: XYSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -209,14 +215,14 @@ export function XYSurface({
   });
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className={`flex flex-col gap-2 ${fill ? 'h-full min-h-0' : ''}`}>
       <div
         ref={surfaceRef}
         data-testid={testId}
         onPointerDown={handlePointerDown}
-        className={`relative aspect-[16/10] w-full touch-none overflow-hidden rounded-bb-md border border-bb-line bg-bb-bg ${
-          disabled ? 'opacity-40' : 'cursor-crosshair'
-        }`}
+        className={`relative w-full touch-none overflow-hidden rounded-bb-md border border-bb-line bg-bb-bg ${
+          fill ? 'min-h-0 flex-1' : 'aspect-[16/10]'
+        } ${disabled ? 'opacity-40' : 'cursor-crosshair'}`}
       >
         <canvas ref={canvasRef} aria-hidden="true" className="block h-full w-full" />
       </div>

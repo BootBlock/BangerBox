@@ -21,6 +21,7 @@ import {
   IconStop,
   IconUndo,
 } from '@/ui/icons';
+import { StorageGauge } from './StorageGauge';
 
 const COUNT_IN_OPTIONS = [
   { value: 0, label: 'Off' },
@@ -162,6 +163,10 @@ export function TransportBar() {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        {/* Room left before the §9.7 hard stop — persistent, because that limit bites
+            mid-session while importing, not while looking at a dashboard. */}
+        <StorageGauge />
+
         {/* Unobtrusive unsaved-dot until the autosave queue flushes (spec §4.4). */}
         <span
           data-testid="transport-unsaved-dot"

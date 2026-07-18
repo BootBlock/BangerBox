@@ -29,7 +29,9 @@ export function ProgramEditPanel() {
   };
 
   return (
-    <section aria-labelledby="program-edit-heading" className="mt-6">
+    // The deep editor is taller than any viewport by nature (layers, envelopes, mod
+    // matrix), so it owns its scrolling rather than making the shell scroll (spec §8.4).
+    <section aria-labelledby="program-edit-heading" className="min-h-0 flex-1 overflow-y-auto">
       <h3 id="program-edit-heading" className="text-sm font-semibold">
         Program edit
       </h3>

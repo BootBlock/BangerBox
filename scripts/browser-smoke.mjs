@@ -131,9 +131,13 @@ async function assertShellAndSelfTest(page, label) {
   });
 
   // Phase 1 exit criterion (spec §12): the real-OPFS path — SQLite worker boot +
-  // migrations, then a project row AND an OPFS file round-trip on this device. From
-  // Phase 7 these diagnostics live in Main mode (spec §8.5.1), behind the start gate.
+  // migrations, then a project row AND an OPFS file round-trip on this device. These
+  // diagnostics live in Q-Link Edit's Storage panel with the other device settings
+  // (changelog 2026-07-18 (o)); Main carries no storage panel any more.
   await step(`${label}: database worker boots on the OPFS VFS with schema v1`, async () => {
+    await page.getByTestId('mode-tab-qlink-edit').click();
+    // Collapsed disclosure — open it so the controls below are visible to click.
+    await page.getByTestId('storage-diagnostics').locator('summary').click();
     const status = page.getByTestId('storage-panel-status');
     await status.and(page.locator('[data-status="ready"], [data-status="failed"]')).waitFor({
       timeout: 30_000,
@@ -159,6 +163,18 @@ async function assertShellAndSelfTest(page, label) {
     if (outcome !== 'passed') {
       const detail = await page.getByTestId('storage-self-test-detail').textContent();
       throw new Error(`storage self-test ${outcome}: ${detail}`);
+    }
+  });
+
+  // The everyday storage read is the persistent transport gauge (changelog 2026-07-18
+  // (o)) — it must report on every mode, so assert it from Main.
+  await step(`${label}: transport storage gauge reports usage`, async () => {
+    await page.getByTestId('mode-tab-main').click();
+    const gauge = page.getByTestId('transport-storage');
+    await gauge.waitFor({ timeout: 15_000 });
+    const now = await gauge.getByRole('progressbar').getAttribute('aria-valuenow');
+    if (now === null || Number.isNaN(Number(now))) {
+      throw new Error(`storage gauge reported no usage: ${now}`);
     }
   });
 
@@ -382,8 +398,19 @@ async function main() {
         throw new Error('take-over must stay disabled while the first tab owns the database');
       }
       await page2.close();
-      const status = await page.getByTestId('storage-panel-status').getAttribute('data-status');
-      if (status !== 'ready') throw new Error('first tab lost database ownership to the second tab');
+      // Ownership is proven from the storage diagnostics, which live in Q-Link Edit
+      // (changelog 2026-07-18 (o)) — the first tab is left on Main by the gauge step, so
+      // go back there. Remounting re-boots the worker, which only succeeds if this tab
+      // still holds the database.
+      await page.getByTestId('mode-tab-qlink-edit').click();
+      await page.getByTestId('storage-diagnostics').locator('summary').click();
+      const status = page.getByTestId('storage-panel-status');
+      await status.and(page.locator('[data-status="ready"], [data-status="failed"]')).waitFor({
+        timeout: 30_000,
+      });
+      if ((await status.getAttribute('data-status')) !== 'ready') {
+        throw new Error('first tab lost database ownership to the second tab');
+      }
     });
 
     await devContext.close();

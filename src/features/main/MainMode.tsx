@@ -1,17 +1,19 @@
 /**
  * Main mode — the dashboard (spec §8.5.1): active sequence/track/program summary, bar
- * counter, a quick pad grid for the current bank, recent projects, and storage usage.
+ * counter, a quick pad grid for the current bank, and recent projects.
+ *
+ * Storage usage moved to the transport bar's {@link StorageGauge} (changelog 2026-07-18
+ * (ii)): the §9.7 hard stop is a mid-session warning, so it has to be on screen in every
+ * mode, not on a dashboard the user left an hour ago.
  *
  * Everything here is a live view of the stores; the pad grid sounds through the shared
  * dual-path trigger (spec §7.6), so no control on this screen is decorative (spec §3.4).
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useProgramStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
-import { estimateStorage } from '@/core/storage/safeguards';
 import { Pad, SegmentControl, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { AudioEnginePanel } from '@/ui/AudioEnginePanel';
-import { StoragePanel } from '@/ui/StoragePanel';
 import { usePadTrigger } from '@/ui/usePadTrigger';
 
 /** Pads per bank (spec §1.3.1 — 128 pads as 8 banks × 16). */
@@ -19,19 +21,6 @@ const PADS_PER_BANK = 16;
 const BANKS = [0, 1, 2, 3, 4, 5, 6, 7] as const;
 
 const BANK_OPTIONS = BANKS.map((bank) => ({ value: bank, label: String.fromCharCode(65 + bank) }));
-
-/** Format bytes in en-GB units for the storage readout (spec §1.3.1 — Intl, no libraries). */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['kB', 'MB', 'GB', 'TB'];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(value)} ${units[unitIndex]}`;
-}
 
 export function MainMode() {
   const projectName = useProjectStore((s) => s.projectName);
@@ -47,21 +36,8 @@ export function MainMode() {
   const activePadId = useProgramStore((s) => s.activePadId);
 
   const [bank, setBank] = useState<number>(0);
-  const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
 
   const { trigger, release, trackId } = usePadTrigger();
-
-  // Storage usage is read once per mount — an estimate call per frame would be wasteful
-  // and the figure moves slowly (spec §9.7).
-  useEffect(() => {
-    let cancelled = false;
-    void estimateStorage().then((estimate) => {
-      if (!cancelled) setStorage({ usage: estimate.usage, quota: estimate.quota });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const activeSequence = activeSequenceId ? sequences[activeSequenceId] : undefined;
   const activeProgram = activeProgramId ? programs[activeProgramId] : undefined;
@@ -76,8 +52,11 @@ export function MainMode() {
   }
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[2fr_1fr]">
-      <div className="flex min-h-0 flex-col gap-3">
+    // Two columns that fit the viewport (spec §8.4): every panel holds its content height
+    // except the one per column marked to absorb the leftover — the pad grid on the left,
+    // the sequence list on the right. Below `lg` this stacks and `<main>` scrolls instead.
+    <div className="grid flex-1 grid-cols-1 gap-3 lg:min-h-0 lg:grid-cols-[2fr_1fr]">
+      <div className="flex flex-col gap-3 lg:min-h-0">
         <Panel title="Now playing">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <ValueReadout label="Project" value={projectName || '—'} showLabel />
@@ -112,6 +91,7 @@ export function MainMode() {
 
         <Panel
           title="Quick pads"
+          fill
           actions={
             <SegmentControl
               label="Pad bank"
@@ -123,7 +103,7 @@ export function MainMode() {
             />
           }
         >
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-4 gap-2">
             {Array.from({ length: PADS_PER_BANK }, (_, slot) => {
               const padIndex = bank * PADS_PER_BANK + slot;
               const name = padsByIndex.get(padIndex);
@@ -138,18 +118,21 @@ export function MainMode() {
                   onTrigger={(index, velocity) => trigger(index, velocity)}
                   onRelease={(index) => release(index)}
                   onSelect={(index) => useProgramStore.getState().setActivePad(index)}
+                  fill
                   data-testid={`main-pad-${padIndex}`}
                 />
               );
             })}
           </div>
           {trackId === null && (
-            <p className="mt-3 text-xs text-bb-muted">Add a track to the active sequence to play pads.</p>
+            <p className="mt-3 shrink-0 text-xs text-bb-muted">
+              Add a track to the active sequence to play pads.
+            </p>
           )}
         </Panel>
       </div>
 
-      <div className="flex min-h-0 flex-col gap-3">
+      <div className="flex flex-col gap-3 lg:min-h-0">
         <Panel title="Engine">
           <AudioEnginePanel />
         </Panel>
@@ -179,41 +162,6 @@ export function MainMode() {
                 </li>
               ))}
           </ul>
-        </Panel>
-
-        <Panel title="Storage">
-          {storage ? (
-            <div className="flex flex-col gap-2">
-              <ValueReadout
-                label="Used"
-                value={`${formatBytes(storage.usage)} of ${formatBytes(storage.quota)}`}
-                showLabel
-                data-testid="main-storage"
-              />
-              <div
-                role="progressbar"
-                aria-label="Storage used"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={storage.quota > 0 ? Math.round((storage.usage / storage.quota) * 100) : 0}
-                className="h-2 overflow-hidden rounded-full bg-bb-raised"
-              >
-                <div
-                  className="h-full bg-bb-accent"
-                  style={{
-                    width: `${storage.quota > 0 ? Math.min(100, (storage.usage / storage.quota) * 100) : 0}%`,
-                  }}
-                />
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-bb-muted">Reading storage estimate…</p>
-          )}
-
-          {/* Durable-layer diagnostics + the §9.7 persistence/eviction notice. */}
-          <div className="mt-3 border-t border-bb-line pt-3">
-            <StoragePanel />
-          </div>
         </Panel>
       </div>
     </div>
