@@ -11,7 +11,13 @@
 import { useMemo, useState } from 'react';
 import { PPQN } from '@/core/constants';
 import { gridTicks, quantiseEvents, type QuantiseGrid } from '@/core/sequencer/quantise';
-import { endUndoGesture, useProgramStore, useSequenceStore, useTransportStore } from '@/store';
+import {
+  endUndoGesture,
+  useProgramStore,
+  useSequenceStore,
+  useTransportStore,
+  useUndoStore,
+} from '@/store';
 import type { MidiEvent } from '@/core/project/schemas';
 import { Button, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
@@ -36,6 +42,12 @@ const MIN_TICKS_PER_PIXEL = 1;
 const MAX_TICKS_PER_PIXEL = 64;
 /** A drawn note defaults to a sixteenth — the usual step-sequencing unit. */
 const DEFAULT_DRAW_DURATION = PPQN / 4;
+/**
+ * One press of a zoom button. Coarser than the wheel's 1.15 because a button press is a
+ * deliberate discrete step, not a continuous scroll — the whole range is then five presses
+ * rather than thirty (issue #43).
+ */
+const ZOOM_BUTTON_STEP = 1.5;
 
 export function GridMode() {
   const activeSequenceId = useTransportStore((s) => s.activeSequenceId);
@@ -289,11 +301,41 @@ export function GridMode() {
           </FieldLabel>
 
           <ValueReadout label="Notes" value={events.length} showLabel data-testid="grid-note-count" />
-          <ValueReadout
-            label="Zoom"
-            value={`${(DEFAULT_TICKS_PER_PIXEL / viewport.ticksPerPixel).toFixed(2)}×`}
-            showLabel
-          />
+          {/* On-screen zoom, so the readout refers to something reachable without a wheel
+              — the pinch gesture is the fast path, these are the discoverable one
+              (issue #43). */}
+          <div className="flex items-center gap-2">
+            <ValueReadout
+              label="Zoom"
+              value={`${(DEFAULT_TICKS_PER_PIXEL / viewport.ticksPerPixel).toFixed(2)}×`}
+              showLabel
+            />
+            <Button
+              label="Zoom out"
+              iconOnly
+              icon={<span aria-hidden="true">−</span>}
+              disabled={viewport.ticksPerPixel >= MAX_TICKS_PER_PIXEL}
+              onClick={() => zoom(ZOOM_BUTTON_STEP)}
+              data-testid="grid-zoom-out"
+            />
+            <Button
+              label="Zoom in"
+              iconOnly
+              icon={<span aria-hidden="true">+</span>}
+              disabled={viewport.ticksPerPixel <= MIN_TICKS_PER_PIXEL}
+              onClick={() => zoom(1 / ZOOM_BUTTON_STEP)}
+              data-testid="grid-zoom-in"
+            />
+            <Button
+              label="Reset zoom"
+              variant="quiet"
+              disabled={viewport.ticksPerPixel === DEFAULT_TICKS_PER_PIXEL}
+              onClick={() =>
+                setViewport((current) => ({ ...current, ticksPerPixel: DEFAULT_TICKS_PER_PIXEL }))
+              }
+              data-testid="grid-zoom-reset"
+            />
+          </div>
         </div>
       </Panel>
 
@@ -314,6 +356,9 @@ export function GridMode() {
               onDraw={handleDraw}
               onErase={handleErase}
               onGestureEnd={endUndoGesture}
+              // A drag the second finger turned into a pan rolls back through the normal
+              // undo history, so the aborted edit leaves nothing behind (issue #43).
+              onGestureCancel={() => useUndoStore.getState().undo()}
               onMove={handleMove}
               onResize={handleResize}
               onSetVelocity={handleVelocity}

@@ -13,6 +13,15 @@ const NOTE_MAX = 127;
 /** Width in pixels of an event's resize handle at its right edge (spec §8.5.2 resize). */
 export const RESIZE_HANDLE_PX = 6;
 
+/**
+ * The same handle for a finger. A fingertip contact patch is roughly 8–10 mm, so the 6 px
+ * mouse handle is neither deliberately hittable nor reliably avoidable by touch (issue #43)
+ * — it mostly fires by accident while trying to drag a note. {@link resizeHandleAtPoint}
+ * caps the handle at half the note's width whatever is passed, so widening it for touch
+ * cannot swallow a short note whole and leave it un-draggable.
+ */
+export const TOUCH_RESIZE_HANDLE_PX = 22;
+
 export interface GridViewport {
   readonly width: number;
   readonly height: number;
@@ -213,18 +222,26 @@ export function eventsInTickSpan(
 /**
  * The event whose right-edge resize handle is under a point, or null. Checked *before*
  * a move so grabbing the tail of a note resizes rather than drags it (spec §8.5.2).
+ *
+ * `handlePx` widens the target for touch ({@link TOUCH_RESIZE_HANDLE_PX}); it is capped at
+ * half the note's drawn width so the front half of even a very short note always starts a
+ * move. Without the cap a touch-sized handle would cover a 1/16 note entirely at anything
+ * but the closest zoom, and the note could then only ever be resized, never dragged.
  */
 export function resizeHandleAtPoint(
   events: readonly MidiEvent[],
   x: number,
   y: number,
   viewport: GridViewport,
+  handlePx: number = RESIZE_HANDLE_PX,
 ): MidiEvent | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]!;
     if (rowToNote(yToRow(y, viewport), viewport) !== event.note) continue;
     const endX = tickToX(event.tickStart + event.durationTicks, viewport);
-    if (x >= endX - RESIZE_HANDLE_PX && x < endX) return event;
+    const width = event.durationTicks / viewport.ticksPerPixel;
+    const handle = Math.min(handlePx, width / 2);
+    if (x >= endX - handle && x < endX) return event;
   }
   return null;
 }
