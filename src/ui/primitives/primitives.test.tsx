@@ -116,6 +116,22 @@ describe('Fader (spec §8.5.6)', () => {
     expect(fader).toHaveAttribute('aria-orientation', 'vertical');
     expect(fader).toHaveAttribute('aria-valuetext', '6.0 dB');
   });
+
+  it('positions the cap and fill with transforms only (spec §8.3 composite-only budget)', () => {
+    render(<Fader label="Level" value={0.25} range={[0, 1]} onCommit={vi.fn()} />);
+    const painted = Array.from(
+      screen.getByRole('slider', { name: 'Level' }).querySelectorAll<HTMLElement>(':scope > div'),
+    );
+    expect(painted.map((el) => el.style.transform)).toEqual([
+      'scaleY(0.25)',
+      'translateY(-25%)',
+    ]);
+    // A layout property here would force reflow on every frame of a drag.
+    for (const el of painted) {
+      expect(el.style.height).toBe('');
+      expect(el.style.bottom).toBe('');
+    }
+  });
 });
 
 describe('Pad (spec §8.3 velocity + §8.2 keyboard)', () => {
