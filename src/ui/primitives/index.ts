@@ -13,6 +13,7 @@ export { Toggle, type ToggleProps, type ToggleTone } from './Toggle';
 export { SegmentControl, type SegmentControlProps, type SegmentOption } from './SegmentControl';
 export { ValueReadout, type ValueReadoutProps } from './ValueReadout';
 export { Modal, type ModalProps } from './Modal';
+export { Toast, type ToastProps } from './Toast';
 export { LiveRegion, announce } from './LiveRegion';
 export {
   formatValueText,
