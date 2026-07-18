@@ -45,14 +45,16 @@ export function BrowserPanel() {
   // Load each sample's tags so the chips reflect the library rather than a fixed list
   // (spec §8.5.7). Runs when the sample set changes, not per render.
   useEffect(() => {
-    // No samples means nothing to tag — and, importantly, no reason to reach for the
-    // repositories, which would spin up the DB worker in environments that have none.
-    if (samples.length === 0) {
-      setTagsBySample({});
-      return;
-    }
     let cancelled = false;
     void (async () => {
+      // No samples means nothing to tag — and, importantly, no reason to reach for the
+      // repositories, which would spin up the DB worker in environments that have none.
+      // The clear runs inside the async body so no setState happens synchronously in the
+      // effect, which would trigger a cascading render.
+      if (samples.length === 0) {
+        if (!cancelled) setTagsBySample({});
+        return;
+      }
       try {
         const repos = getActiveRepositories();
         const entries = await Promise.all(
