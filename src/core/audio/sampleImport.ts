@@ -113,6 +113,10 @@ export async function saveChannelsAsSample(
   tags: readonly string[],
   ctx: SampleWriteContext,
 ): Promise<SampleRow> {
+  // Capture the shape BEFORE encoding: encodeWavInWorker transfers (detaches) the channel
+  // buffers, after which `channels[0].length` reads as 0.
+  const frames = channels[0]?.length ?? 0;
+  const channelCount: 1 | 2 = channels.length === 1 ? 1 : 2;
   const bytes = await encodeWavInWorker(channels, sampleRate, ctx.projectBitDepth);
   const sampleId = crypto.randomUUID();
   const path = samplePath(ctx.projectId, sampleId);
@@ -123,9 +127,9 @@ export async function saveChannelsAsSample(
     project_id: ctx.projectId,
     name,
     opfs_path: path,
-    frames: channels[0]?.length ?? 0,
+    frames,
     sample_rate: sampleRate,
-    channels: (channels.length === 1 ? 1 : 2) as 1 | 2,
+    channels: channelCount,
     root_note: 60,
   });
   await ctx.repos.samples.setTags(sampleId, [...new Set(tags)]);
