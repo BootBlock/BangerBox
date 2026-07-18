@@ -6,6 +6,26 @@
   "description": "BangerBox — an offline-first, browser-based DAW, sequencer, and sampler (installable PWA).",
   "license": "MIT",
   "author": "Joe Cox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BootBlock/BangerBox.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BootBlock/BangerBox/issues"
+  },
+  "homepage": "https://github.com/BootBlock/BangerBox#readme",
+  "keywords": [
+    "daw",
+    "sequencer",
+    "sampler",
+    "mpc",
+    "web-audio",
+    "audioworklet",
+    "pwa",
+    "offline-first",
+    "webassembly",
+    "ble-midi"
+  ],
   "engines": {
     "node": ">=24"
   },
