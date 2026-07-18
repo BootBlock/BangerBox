@@ -11,7 +11,7 @@
 import { useMemo, useState } from 'react';
 import { PPQN } from '@/core/constants';
 import { gridTicks, quantiseEvents, type QuantiseGrid } from '@/core/sequencer/quantise';
-import { useProgramStore, useSequenceStore, useTransportStore } from '@/store';
+import { endUndoGesture, useProgramStore, useSequenceStore, useTransportStore } from '@/store';
 import type { MidiEvent } from '@/core/project/schemas';
 import { Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
@@ -101,23 +101,32 @@ export function GridMode() {
     sequence().setTrackEvents(trackId, next);
   };
 
-  const handleDraw = (note: number, tickStart: number, durationTicks: number) => {
+  const handleDraw = (
+    note: number,
+    tickStart: number,
+    durationTicks: number,
+    coalesceKey?: string,
+  ) => {
     if (!trackId) return;
-    sequence().addEvents(trackId, [
-      {
-        id: crypto.randomUUID(),
-        tickStart,
-        durationTicks,
-        note,
-        velocity: 100,
-        extra: null,
-      },
-    ]);
+    sequence().addEvents(
+      trackId,
+      [
+        {
+          id: crypto.randomUUID(),
+          tickStart,
+          durationTicks,
+          note,
+          velocity: 100,
+          extra: null,
+        },
+      ],
+      coalesceKey,
+    );
   };
 
-  const handleErase = (id: string) => {
+  const handleErase = (id: string, coalesceKey?: string) => {
     if (!trackId) return;
-    sequence().removeEvents(trackId, [id]);
+    sequence().removeEvents(trackId, [id], coalesceKey);
   };
 
   const handleMove = (id: string, note: number, tickStart: number) => {
@@ -295,6 +304,7 @@ export function GridMode() {
               onSelect={setSelectedIds}
               onDraw={handleDraw}
               onErase={handleErase}
+              onGestureEnd={endUndoGesture}
               onMove={handleMove}
               onResize={handleResize}
               onSetVelocity={handleVelocity}

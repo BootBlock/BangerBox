@@ -57,6 +57,52 @@ export function rowToY(row: number, viewport: GridViewport): number {
   return row * viewport.rowHeight;
 }
 
+/** Snap a tick to the grid, or round it through when snapping is off (spec §8.5.2). */
+export function snapTick(tick: number, snapTicks: number): number {
+  return snapTicks > 0 ? Math.round(tick / snapTicks) * snapTicks : Math.round(tick);
+}
+
+/** A grid cell a paint gesture passes over: one row (note) at one snapped start tick. */
+export interface GridCell {
+  readonly note: number;
+  readonly tick: number;
+}
+
+/**
+ * The cells a drag segment passes over, in travel order (spec §8.5.2 draw). A pointer
+ * moving fast reports few, widely spaced samples, so the segment is walked at sub-cell
+ * steps rather than only its endpoints — otherwise a quick swipe would paint its start
+ * and end and leave the cells between them empty.
+ */
+export function cellsAlongSegment(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  viewport: GridViewport,
+  snapTicks: number,
+): GridCell[] {
+  // Step at half the smaller cell dimension so no cell can be stepped over.
+  const cellWidth = snapTicks > 0 ? snapTicks / viewport.ticksPerPixel : 1;
+  const step = Math.max(1, Math.min(cellWidth, viewport.rowHeight) / 2);
+  const distance = Math.hypot(to.x - from.x, to.y - from.y);
+  const samples = Math.max(1, Math.ceil(distance / step));
+
+  const cells: GridCell[] = [];
+  for (let index = 0; index <= samples; index += 1) {
+    const t = index / samples;
+    const x = from.x + (to.x - from.x) * t;
+    const y = from.y + (to.y - from.y) * t;
+    const cell = {
+      note: rowToNote(yToRow(y, viewport), viewport),
+      tick: snapTick(xToTick(x, viewport), snapTicks),
+    };
+    // Consecutive samples usually land in the same cell; keep only the transitions.
+    const previous = cells[cells.length - 1];
+    if (previous?.note === cell.note && previous.tick === cell.tick) continue;
+    cells.push(cell);
+  }
+  return cells;
+}
+
 /** The MIDI notes the viewport can currently display, top row first. */
 export function visibleRows(viewport: GridViewport): number[] {
   const count = Math.ceil(viewport.height / viewport.rowHeight);
@@ -84,6 +130,21 @@ export function eventAtPoint(
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]!;
     if (pointInEvent(event, x, y, viewport)) return event;
+  }
+  return null;
+}
+
+/**
+ * The event occupying a grid cell, or null. The cell-space counterpart of
+ * {@link eventAtPoint}, used by the paint gestures, which walk cells rather than pixels.
+ * Later events win, matching {@link eventAtPoint}.
+ */
+export function eventAtCell(events: readonly MidiEvent[], note: number, tick: number): MidiEvent | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.note === note && tick >= event.tickStart && tick < event.tickStart + event.durationTicks) {
+      return event;
+    }
   }
   return null;
 }
