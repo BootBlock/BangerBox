@@ -13,15 +13,7 @@ import { useMemo, useState } from 'react';
 import { useMixerStore, useProgramStore, useSequenceStore, useTransportStore } from '@/store';
 import { channelLevelPath, channelPanPath, channelSendPath } from '@/core/audio/params/registry';
 import { faderLevelToDb } from '@/core/audio/params/faderLaw';
-import {
-  formatValueText,
-  Button,
-  Fader,
-  Knob,
-  MeterCanvas,
-  SegmentControl,
-  Toggle,
-} from '@/ui/primitives';
+import { formatValueText, Button, Fader, Knob, MeterCanvas, SegmentControl, Toggle } from '@/ui/primitives';
 import { LEVEL_RANGE, PAN_RANGE, SEND_LEVEL_RANGE, type EffectType } from '@/core/project/schemas';
 import { EFFECT_TYPES } from '@/core/project/schemas';
 import { Panel } from '@/ui/shell/Panel';

@@ -82,9 +82,7 @@ function dataLengthFor(status: number): number {
 }
 
 function toBytes(data: Uint8Array | DataView): Uint8Array {
-  return data instanceof Uint8Array
-    ? data
-    : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  return data instanceof Uint8Array ? data : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
 }
 
 /**
@@ -95,9 +93,7 @@ function toBytes(data: Uint8Array | DataView): Uint8Array {
 export function unwrapTimestamp(timestamp13: number, arrivalMs: number): number {
   const windowStart = Math.floor(arrivalMs / BLE_MIDI_TIMESTAMP_WRAP_MS) * BLE_MIDI_TIMESTAMP_WRAP_MS;
   const candidate = windowStart + timestamp13;
-  return candidate > arrivalMs + FUTURE_TOLERANCE_MS
-    ? candidate - BLE_MIDI_TIMESTAMP_WRAP_MS
-    : candidate;
+  return candidate > arrivalMs + FUTURE_TOLERANCE_MS ? candidate - BLE_MIDI_TIMESTAMP_WRAP_MS : candidate;
 }
 
 export function createMidiParser(): MidiParser {

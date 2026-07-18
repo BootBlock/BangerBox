@@ -243,9 +243,7 @@ async function assertShellAndSelfTest(page, label) {
     const result = await page.evaluate(async () => {
       const probe = globalThis.__bangerboxAudioProbe;
       const ariaNow = () =>
-        Number(
-          document.querySelector('[data-testid="meter-master"]')?.getAttribute('aria-valuenow') ?? '0',
-        );
+        Number(document.querySelector('[data-testid="meter-master"]')?.getAttribute('aria-valuenow') ?? '0');
       let peakSeen = false;
       let ariaSeen = false;
       for (let attempt = 0; attempt < 60 && !(peakSeen && ariaSeen); attempt++) {
@@ -274,7 +272,9 @@ async function assertShellAndSelfTest(page, label) {
     );
     const after = await page.evaluate(() => performance.memory?.usedJSHeapSize ?? 0);
     if (before > 0 && after - before > 12 * 1024 * 1024) {
-      throw new Error(`heap grew ${Math.round((after - before) / 1048576)} MiB across churn — possible node leak`);
+      throw new Error(
+        `heap grew ${Math.round((after - before) / 1048576)} MiB across churn — possible node leak`,
+      );
     }
   });
 
@@ -323,22 +323,22 @@ async function assertShellAndSelfTest(page, label) {
   // Phase 5 exit criteria (spec §12): velocity-layer switching is audible and keygroup pitch
   // is accurate — both proven by offline renders through the real resolution + voice path.
   await step(`${label}: velocity switches the layer, changing pitch (spec §12)`, async () => {
-    const { soft, hard } = await page.evaluate(() =>
-      globalThis.__bangerboxAudioProbe.velocityLayerPitches(),
-    );
+    const { soft, hard } = await page.evaluate(() => globalThis.__bangerboxAudioProbe.velocityLayerPitches());
     if (!(soft > 0) || !(hard > 0)) throw new Error(`layer render silent (soft ${soft}, hard ${hard})`);
     // Hard layer is tuned +12 semitones → about one octave (2×) above the soft layer.
     const ratio = hard / soft;
     if (!(ratio > 1.8 && ratio < 2.2)) {
-      throw new Error(`velocity did not switch layers: hard/soft pitch ratio ${ratio.toFixed(3)} (expected ~2)`);
+      throw new Error(
+        `velocity did not switch layers: hard/soft pitch ratio ${ratio.toFixed(3)} (expected ~2)`,
+      );
     }
   });
 
   await step(`${label}: keygroup repitches accurately across an octave (spec §12)`, async () => {
-    const { root, octave } = await page.evaluate(() =>
-      globalThis.__bangerboxAudioProbe.keygroupPitches(),
-    );
-    if (!(root > 0) || !(octave > 0)) throw new Error(`keygroup render silent (root ${root}, octave ${octave})`);
+    const { root, octave } = await page.evaluate(() => globalThis.__bangerboxAudioProbe.keygroupPitches());
+    if (!(root > 0) || !(octave > 0)) {
+      throw new Error(`keygroup render silent (root ${root}, octave ${octave})`);
+    }
     const ratio = octave / root;
     if (!(ratio > 1.94 && ratio < 2.06)) {
       throw new Error(`keygroup octave pitch ratio ${ratio.toFixed(3)} (expected ~2.0)`);
@@ -367,11 +367,9 @@ async function assertShellAndSelfTest(page, label) {
   // playhead SAB advances (spec §7.1.4).
   await step(`${label}: transport UI advances the playhead (spec §3.4)`, async () => {
     await page.getByTestId('transport-play').click();
-    await page.waitForFunction(
-      () => (globalThis.__bangerboxAudioProbe?.playheadTick() ?? 0) > 0,
-      undefined,
-      { timeout: 6_000 },
-    );
+    await page.waitForFunction(() => (globalThis.__bangerboxAudioProbe?.playheadTick() ?? 0) > 0, undefined, {
+      timeout: 6_000,
+    });
     await page.getByTestId('transport-play').click(); // stop
   });
 
@@ -396,7 +394,9 @@ async function assertShellAndSelfTest(page, label) {
 
     await step(`${label}: sample pipeline — import, transient chop, time-stretch (spec §12)`, async () => {
       const result = await page.evaluate(() => globalThis.__bangerboxAudioProbe.samplePipelineProof());
-      if (!(result.chops >= 3)) throw new Error(`transient chop produced ${result.chops} slices — expected ≥ 3`);
+      if (!(result.chops >= 3)) {
+        throw new Error(`transient chop produced ${result.chops} slices — expected ≥ 3`);
+      }
       // rate 0.5 stretches to about twice the length.
       if (!(result.stretchedRatio > 1.7 && result.stretchedRatio < 2.3)) {
         throw new Error(
@@ -408,7 +408,9 @@ async function assertShellAndSelfTest(page, label) {
     await step(`${label}: .mpcweb export/import round-trips a project (spec §12 exit)`, async () => {
       const result = await page.evaluate(() => globalThis.__bangerboxAudioProbe.packRoundTrip());
       if (!result.imported) throw new Error('import did not open a fresh project');
-      if (!(result.samples >= 1)) throw new Error(`imported project has ${result.samples} samples — expected ≥ 1`);
+      if (!(result.samples >= 1)) {
+        throw new Error(`imported project has ${result.samples} samples — expected ≥ 1`);
+      }
     });
 
     await step(`${label}: factory kit merges and demo opens over the real path (spec §9.8)`, async () => {
@@ -424,7 +426,9 @@ async function assertShellAndSelfTest(page, label) {
       // ...into the SHARED library, not the project: factory audio is content-addressed so a
       // kit and the demo that plays it store one copy between them (spec §9.1, §9.8).
       if (r.samplesAfter !== r.samplesBefore) {
-        throw new Error(`kit merge added project-scoped samples ${r.samplesBefore} → ${r.samplesAfter} (§9.8)`);
+        throw new Error(
+          `kit merge added project-scoped samples ${r.samplesBefore} → ${r.samplesAfter} (§9.8)`,
+        );
       }
       if (r.globalAfterDemo !== r.globalAfterKit) {
         throw new Error(
@@ -444,11 +448,15 @@ async function assertShellAndSelfTest(page, label) {
       }
       // A demo opens as a new, populated project.
       if (!r.demoOpenedNewProject) throw new Error('demo pack did not open a new project');
-      if (!(r.demoSequences >= 1)) throw new Error(`demo project has ${r.demoSequences} sequences — expected ≥ 1`);
+      if (!(r.demoSequences >= 1)) {
+        throw new Error(`demo project has ${r.demoSequences} sequences — expected ≥ 1`);
+      }
       // The demo's audio is in the shared library (asserted above), so the project itself owns
       // no sample rows — its programs point at the global copies (spec §9.1, §9.8).
       if (r.demoSamples !== 0) {
-        throw new Error(`demo project owns ${r.demoSamples} sample rows — expected 0, they are global (§9.8)`);
+        throw new Error(
+          `demo project owns ${r.demoSamples} sample rows — expected 0, they are global (§9.8)`,
+        );
       }
     });
   }

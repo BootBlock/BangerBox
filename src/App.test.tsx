@@ -115,9 +115,7 @@ describe('AppShell (spec §8.1)', () => {
     // Main is index 0: stepping backwards must wrap to the end rather than stalling, which
     // a naive `index - columns` would do by going negative.
     await user.keyboard('{ArrowUp}');
-    expect(useUIStore.getState().activeMode).toBe(
-      MODE_DEFINITIONS[MODE_DEFINITIONS.length - 2]?.id,
-    );
+    expect(useUIStore.getState().activeMode).toBe(MODE_DEFINITIONS[MODE_DEFINITIONS.length - 2]?.id);
   });
 
   it('mounts every mode without crashing (spec §3.4 no dead modes)', async () => {

@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultEnvelope } from '@/core/project/schemas';
 import { createFakeAudioContext } from '@/test/mocks/audioContext';
-import {
-  scheduleAmpAttack,
-  scheduleAmpDeclick,
-  scheduleModEnvelope,
-  velocityToGain,
-} from './voiceEnvelope';
+import { scheduleAmpAttack, scheduleAmpDeclick, scheduleModEnvelope, velocityToGain } from './voiceEnvelope';
 
 /** Access a fake AudioParam's recorded schedule calls. */
 function calls(param: unknown): { method: string; args: number[] }[] {

@@ -51,9 +51,7 @@ export async function reloadSampleList(): Promise<void> {
   try {
     await refreshSamples();
   } catch (error) {
-    useBrowserStore
-      .getState()
-      .setSamplesError(messageOf(error, 'The sample library could not be read.'));
+    useBrowserStore.getState().setSamplesError(messageOf(error, 'The sample library could not be read.'));
   }
 }
 

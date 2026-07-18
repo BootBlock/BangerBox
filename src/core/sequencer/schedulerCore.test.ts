@@ -13,8 +13,9 @@ function oneBarMeta(core: SchedulerCore, ids: string[], activeId: string | null,
     string,
     { lengthBars: number; timeSigNumerator: number; timeSigDenominator: 4; tempo: null }
   > = {};
-  for (const id of ids)
-    {sequences[id] = { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: null };}
+  for (const id of ids) {
+    sequences[id] = { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: null };
+  }
   core.setSequenceMeta(sequences, 120, activeId, mode);
 }
 

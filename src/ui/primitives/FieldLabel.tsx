@@ -23,12 +23,7 @@ export interface FieldLabelProps {
 const CHASSIS =
   'flex items-center gap-1.5 text-[0.625rem] font-semibold tracking-wide text-bb-muted uppercase';
 
-export function FieldLabel({
-  children,
-  as = 'label',
-  htmlFor,
-  'data-testid': testId,
-}: FieldLabelProps) {
+export function FieldLabel({ children, as = 'label', htmlFor, 'data-testid': testId }: FieldLabelProps) {
   if (as === 'span') {
     return (
       <span className={CHASSIS} data-testid={testId}>

@@ -385,8 +385,8 @@ export function BrowserPanel() {
               samples are gone invites them to re-import — or to purge (spec §5.1). */}
           {samplesError !== null && (
             <li role="alert" className="px-2 py-2 text-xs text-bb-danger">
-              Could not read the {locationLabel}: {samplesError} Your samples have not been lost — do
-              not re-import or purge. Reload the app, and export a backup once the list returns.
+              Could not read the {locationLabel}: {samplesError} Your samples have not been lost — do not
+              re-import or purge. Reload the app, and export a backup once the list returns.
             </li>
           )}
           {samplesError === null && visibleSamples.length === 0 && (

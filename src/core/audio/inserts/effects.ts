@@ -83,10 +83,12 @@ function buildFilter(context: BaseAudioContext, params: Record<string, number>):
     biquad.type = FILTER_TYPE_TO_BIQUAD[FILTER_TYPES[clamp(Math.round(index), 0, 3)]!];
   };
   setType(params.type ?? 0);
-  if (params.cutoff !== undefined)
-    {setParamNow(biquad.frequency, clampParam('filter', 'cutoff', params.cutoff), now);}
-  if (params.resonance !== undefined)
-    {setParamNow(biquad.Q, clampParam('filter', 'resonance', params.resonance), now);}
+  if (params.cutoff !== undefined) {
+    setParamNow(biquad.frequency, clampParam('filter', 'cutoff', params.cutoff), now);
+  }
+  if (params.resonance !== undefined) {
+    setParamNow(biquad.Q, clampParam('filter', 'resonance', params.resonance), now);
+  }
 
   return {
     input: biquad,
@@ -94,10 +96,11 @@ function buildFilter(context: BaseAudioContext, params: Record<string, number>):
     latencySamples: 0,
     setParam: (name, value, when) => {
       if (name === 'type') setType(value);
-      else if (name === 'cutoff')
-        {rampParamTarget(biquad.frequency, clampParam('filter', 'cutoff', value), when);}
-      else if (name === 'resonance')
-        {rampParamTarget(biquad.Q, clampParam('filter', 'resonance', value), when);}
+      else if (name === 'cutoff') {
+        rampParamTarget(biquad.frequency, clampParam('filter', 'cutoff', value), when);
+      } else if (name === 'resonance') {
+        rampParamTarget(biquad.Q, clampParam('filter', 'resonance', value), when);
+      }
     },
     destroy: () => {
       cancelParams(biquad.frequency, biquad.Q);
@@ -127,9 +130,9 @@ function buildDelay(context: BaseAudioContext, params: Record<string, number>): 
     latencySamples: 0,
     setParam: (name, value, when) => {
       if (name === 'time') rampParamTarget(delay.delayTime, clampParam('delay', 'time', value) / 1000, when);
-      else if (name === 'feedback')
-        {rampParamTarget(feedback.gain, clampParam('delay', 'feedback', value), when);}
-      else if (name === 'tone') rampParamTarget(tone.frequency, clampParam('delay', 'tone', value), when);
+      else if (name === 'feedback') {
+        rampParamTarget(feedback.gain, clampParam('delay', 'feedback', value), when);
+      } else if (name === 'tone') rampParamTarget(tone.frequency, clampParam('delay', 'tone', value), when);
     },
     destroy: () => {
       cancelParams(delay.delayTime, feedback.gain, tone.frequency);
@@ -143,14 +146,18 @@ function buildCompressor(context: BaseAudioContext, params: Record<string, numbe
   const makeup = context.createGain();
   comp.connect(makeup);
   const now = context.currentTime;
-  if (params.threshold !== undefined)
-    {setParamNow(comp.threshold, clampParam('compressor', 'threshold', params.threshold), now);}
-  if (params.ratio !== undefined)
-    {setParamNow(comp.ratio, clampParam('compressor', 'ratio', params.ratio), now);}
-  if (params.attack !== undefined)
-    {setParamNow(comp.attack, clampParam('compressor', 'attack', params.attack) / 1000, now);}
-  if (params.release !== undefined)
-    {setParamNow(comp.release, clampParam('compressor', 'release', params.release) / 1000, now);}
+  if (params.threshold !== undefined) {
+    setParamNow(comp.threshold, clampParam('compressor', 'threshold', params.threshold), now);
+  }
+  if (params.ratio !== undefined) {
+    setParamNow(comp.ratio, clampParam('compressor', 'ratio', params.ratio), now);
+  }
+  if (params.attack !== undefined) {
+    setParamNow(comp.attack, clampParam('compressor', 'attack', params.attack) / 1000, now);
+  }
+  if (params.release !== undefined) {
+    setParamNow(comp.release, clampParam('compressor', 'release', params.release) / 1000, now);
+  }
   if (params.knee !== undefined) setParamNow(comp.knee, clampParam('compressor', 'knee', params.knee), now);
   setParamNow(makeup.gain, dbToGain(clampParam('compressor', 'makeup', params.makeup ?? 0)), now);
 
@@ -159,16 +166,18 @@ function buildCompressor(context: BaseAudioContext, params: Record<string, numbe
     output: makeup,
     latencySamples: 0,
     setParam: (name, value, when) => {
-      if (name === 'threshold')
-        {rampParamTarget(comp.threshold, clampParam('compressor', 'threshold', value), when);}
-      else if (name === 'ratio') rampParamTarget(comp.ratio, clampParam('compressor', 'ratio', value), when);
-      else if (name === 'attack')
-        {rampParamTarget(comp.attack, clampParam('compressor', 'attack', value) / 1000, when);}
-      else if (name === 'release')
-        {rampParamTarget(comp.release, clampParam('compressor', 'release', value) / 1000, when);}
-      else if (name === 'knee') rampParamTarget(comp.knee, clampParam('compressor', 'knee', value), when);
-      else if (name === 'makeup')
-        {rampParamTarget(makeup.gain, dbToGain(clampParam('compressor', 'makeup', value)), when);}
+      if (name === 'threshold') {
+        rampParamTarget(comp.threshold, clampParam('compressor', 'threshold', value), when);
+      } else if (name === 'ratio') {
+        rampParamTarget(comp.ratio, clampParam('compressor', 'ratio', value), when);
+      } else if (name === 'attack') {
+        rampParamTarget(comp.attack, clampParam('compressor', 'attack', value) / 1000, when);
+      } else if (name === 'release') {
+        rampParamTarget(comp.release, clampParam('compressor', 'release', value) / 1000, when);
+      } else if (name === 'knee') rampParamTarget(comp.knee, clampParam('compressor', 'knee', value), when);
+      else if (name === 'makeup') {
+        rampParamTarget(makeup.gain, dbToGain(clampParam('compressor', 'makeup', value)), when);
+      }
     },
     destroy: () => {
       cancelParams(comp.threshold, comp.ratio, comp.attack, comp.release, comp.knee, makeup.gain);

@@ -29,12 +29,7 @@ export interface ActiveKeygroup {
 
 export interface MidiRouterDeps {
   /** The §7.6 dual path. `timestampMs` is already latency-compensated (spec §10.2). */
-  readonly triggerLiveNote: (
-    note: number,
-    velocity: number,
-    on: boolean,
-    timestampMs: number,
-  ) => void;
+  readonly triggerLiveNote: (note: number, velocity: number, on: boolean, timestampMs: number) => void;
   /** Per-voice detune, in cents, for every sounding voice of the program (spec §10.2). */
   readonly applyPitchBend: (programId: string, cents: number) => void;
   /** Throttled CC delivery into the Q-Link runtime (spec §10.3). */
@@ -92,12 +87,7 @@ export function createMidiRouter(deps: MidiRouterDeps): MidiRouter {
           case 'noteOff': {
             // Notes are never throttled — every hit must sound (spec §7.6, §11.5 latency).
             const timestampMs = message.timestampMs - deps.inputLatencyMs();
-            deps.triggerLiveNote(
-              message.note,
-              message.velocity,
-              message.kind === 'noteOn',
-              timestampMs,
-            );
+            deps.triggerLiveNote(message.note, message.velocity, message.kind === 'noteOn', timestampMs);
             break;
           }
           case 'pitchBend':

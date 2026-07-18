@@ -143,9 +143,9 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
         >
           <p className="font-semibold">Your work cannot be saved on this device.</p>
           <p className="mt-1 leading-relaxed text-bb-text">
-            The on-device database did not open, so nothing you do will be kept. Export anything you
-            care about now, then reload. If it keeps failing, check that private browsing is off and
-            that the site has storage permission.
+            The on-device database did not open, so nothing you do will be kept. Export anything you care
+            about now, then reload. If it keeps failing, check that private browsing is off and that the site
+            has storage permission.
           </p>
           <p className="mt-1 leading-relaxed text-bb-muted">{bootDetail}</p>
         </div>

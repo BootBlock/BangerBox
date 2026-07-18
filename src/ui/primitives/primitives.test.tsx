@@ -125,10 +125,7 @@ describe('Fader (spec §8.5.6)', () => {
     const painted = Array.from(
       screen.getByRole('slider', { name: 'Level' }).querySelectorAll<HTMLElement>(':scope > div'),
     );
-    expect(painted.map((el) => el.style.transform)).toEqual([
-      'scaleY(0.25)',
-      'translateY(-25%)',
-    ]);
+    expect(painted.map((el) => el.style.transform)).toEqual(['scaleY(0.25)', 'translateY(-25%)']);
     // A layout property here would force reflow on every frame of a drag.
     for (const el of painted) {
       expect(el.style.height).toBe('');
@@ -260,7 +257,9 @@ describe('Button (spec §3.6 one chassis, no call-site re-styling)', () => {
     const radii = { sm: 'rounded-bb-sm', md: 'rounded-bb-sm', lg: 'rounded-bb-md' } as const;
     for (const [size, radius] of Object.entries(radii)) {
       for (const iconOnly of [false, true]) {
-        const { unmount } = render(<Button label="Go" size={size as 'sm' | 'md' | 'lg'} iconOnly={iconOnly} />);
+        const { unmount } = render(
+          <Button label="Go" size={size as 'sm' | 'md' | 'lg'} iconOnly={iconOnly} />,
+        );
         const classes = screen.getByRole('button', { name: 'Go' }).className.split(' ');
         expect(classes.filter((c) => c.startsWith('rounded-'))).toEqual([radius]);
         unmount();
@@ -298,7 +297,11 @@ describe('FieldLabel (spec §3.6 one caption chassis)', () => {
   });
 
   it('renders a span — not a label — when it names something that is not a control', () => {
-    render(<FieldLabel as="span" data-testid="pads-caption">Pads</FieldLabel>);
+    render(
+      <FieldLabel as="span" data-testid="pads-caption">
+        Pads
+      </FieldLabel>,
+    );
     expect(screen.getByTestId('pads-caption').tagName).toBe('SPAN');
   });
 
@@ -310,7 +313,9 @@ describe('FieldLabel (spec §3.6 one caption chassis)', () => {
     unmount();
     render(
       <>
-        <FieldLabel as="span" data-testid="b">B</FieldLabel>
+        <FieldLabel as="span" data-testid="b">
+          B
+        </FieldLabel>
         <ValueReadout label="BPM" value="120" showLabel />
       </>,
     );

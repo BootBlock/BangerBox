@@ -121,9 +121,7 @@ describe('gridGeometry — hit testing (spec §8.5.2 draw/erase/select/move/resi
 
   it('caps the touch handle at half a note, so short notes stay draggable (issue #43)', () => {
     // A 1/16 note at ticksPerPixel 4 is only 30 px wide — narrower than the touch handle.
-    const short = [
-      { id: 'short', tickStart: 0, durationTicks: 120, note: 72, velocity: 100, extra: null },
-    ];
+    const short = [{ id: 'short', tickStart: 0, durationTicks: 120, note: 72, velocity: 100, extra: null }];
     // The front half moves…
     expect(resizeHandleAtPoint(short, 10, 10, viewport, TOUCH_RESIZE_HANDLE_PX)).toBeNull();
     // …and only the back half resizes.
@@ -181,9 +179,7 @@ describe('gridGeometry — paint strokes (issue #91: drag to draw)', () => {
   });
 
   it('finds the event occupying a cell, matching eventAtPoint', () => {
-    const events = [
-      { id: 'a', tickStart: 0, durationTicks: 480, note: 72, velocity: 100, extra: null },
-    ];
+    const events = [{ id: 'a', tickStart: 0, durationTicks: 480, note: 72, velocity: 100, extra: null }];
     expect(eventAtCell(events, 72, 240)?.id).toBe('a');
     // Past the note's end, and on the wrong row.
     expect(eventAtCell(events, 72, 480)).toBeNull();

@@ -61,16 +61,12 @@ describe('changedPadLeaves (spec §4.3)', () => {
     const second = createDefaultPad(1);
     const changed = { ...second, filter: { ...second.filter, cutoff: 900 } };
     const changes = changedPadLeaves(programWith([first, second]), programWith([first, changed]));
-    expect(changes).toEqual([
-      { targetPath: `program:${PROGRAM_ID}.pad:1.filter.cutoff`, value: 900 },
-    ]);
+    expect(changes).toEqual([{ targetPath: `program:${PROGRAM_ID}.pad:1.filter.cutoff`, value: 900 }]);
   });
 
   it('ignores a newly added pad — it has no previous value to move from', () => {
     const first = createDefaultPad(0);
-    expect(changedPadLeaves(programWith([first]), programWith([first, createDefaultPad(1)]))).toEqual(
-      [],
-    );
+    expect(changedPadLeaves(programWith([first]), programWith([first, createDefaultPad(1)]))).toEqual([]);
   });
 
   it('ignores a program that is absent from the previous map', () => {

@@ -11,13 +11,7 @@
 import { useMemo, useState } from 'react';
 import { PPQN } from '@/core/constants';
 import { gridTicks, quantiseEvents, type QuantiseGrid } from '@/core/sequencer/quantise';
-import {
-  endUndoGesture,
-  useProgramStore,
-  useSequenceStore,
-  useTransportStore,
-  useUndoStore,
-} from '@/store';
+import { endUndoGesture, useProgramStore, useSequenceStore, useTransportStore, useUndoStore } from '@/store';
 import type { MidiEvent } from '@/core/project/schemas';
 import { Button, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
@@ -113,12 +107,7 @@ export function GridMode() {
     sequence().setTrackEvents(trackId, next, coalesceKey);
   };
 
-  const handleDraw = (
-    note: number,
-    tickStart: number,
-    durationTicks: number,
-    coalesceKey?: string,
-  ) => {
+  const handleDraw = (note: number, tickStart: number, durationTicks: number, coalesceKey?: string) => {
     if (!trackId) return;
     sequence().addEvents(
       trackId,

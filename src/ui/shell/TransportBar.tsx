@@ -216,7 +216,6 @@ export function TransportBar() {
           onClick={() => useUndoStore.getState().redo()}
         />
 
-
         {/* Hidden outright where the browser forbids fullscreen — a soft capability is
             never shown as a dead control (spec §2.1/§3.4). */}
         {fullscreen.available && (

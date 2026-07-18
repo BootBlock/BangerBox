@@ -10,7 +10,12 @@
  * discipline).
  */
 import { createMidiParser, type MidiMessage } from './parser';
-import { browserBluetooth, type BluetoothCharacteristicLike, type BluetoothDeviceLike, type BluetoothLike } from './bleTypes';
+import {
+  browserBluetooth,
+  type BluetoothCharacteristicLike,
+  type BluetoothDeviceLike,
+  type BluetoothLike,
+} from './bleTypes';
 
 /** BLE-MIDI GATT service UUID — spec §10.1 (binding value). */
 export const BLE_MIDI_SERVICE_UUID = '03b80e5a-ede8-4b33-a751-6ce34ec4c700';

@@ -136,9 +136,7 @@ describe('pitch bend (spec §10.2)', () => {
 describe('control change (spec §10.2, §10.4)', () => {
   it('passes a CC to the Q-Link runtime rather than the graph', () => {
     const rig = harness();
-    rig.router.route([
-      { kind: 'controlChange', channel: 0, controller: 74, value: 96, timestampMs: 1_000 },
-    ]);
+    rig.router.route([{ kind: 'controlChange', channel: 0, controller: 74, value: 96, timestampMs: 1_000 }]);
     rig.pump();
     expect(rig.ccs).toEqual([{ cc: 74, value: 96 }]);
   });

@@ -516,7 +516,9 @@ export function GridCanvas({
       if (!anchor) return;
 
       const apply = (ids: readonly string[], laneY: number) => {
-        if (ids.length > 0) onSetVelocity(ids, velocityAtLaneY(laneY, VELOCITY_LANE_HEIGHT), VELOCITY_GESTURE);
+        if (ids.length > 0) {
+          onSetVelocity(ids, velocityAtLaneY(laneY, VELOCITY_LANE_HEIGHT), VELOCITY_GESTURE);
+        }
       };
       apply([anchor.id], point.y - point.gridHeight);
 
