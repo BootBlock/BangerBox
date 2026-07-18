@@ -12,6 +12,10 @@ import {
   renderProgramNotePitch,
   type EffectRenderResult,
 } from '@/core/audio/offlineTest';
+import { projectService } from '@/core/project';
+import { importDecodedSample } from '@/core/audio/sampleImport';
+import { chopSampleToNewSamples, stretchSampleToNewSample } from '@/core/audio/sampleEditService';
+import { sampleEditContext } from '@/features/sample-edit';
 import {
   createDefaultDrumProgram,
   createDefaultKeygroupProgram,
@@ -51,6 +55,15 @@ export interface AudioProbe {
   velocityLayerPitches: () => Promise<{ soft: number; hard: number }>;
   /** Keygroup pitch accuracy: root vs one-octave-up render pitches (spec §12 exit). */
   keygroupPitches: () => Promise<{ root: number; octave: number }>;
+  /** .mpcweb export → import round-trip (spec §12 exit / §9.6 pack round-trip smoke). */
+  packRoundTrip: () => Promise<{ imported: boolean; samples: number }>;
+  /** Import → transient chop → time-stretch of a synthetic drum (spec §7.5/§8.5.4/§5.7.9). */
+  samplePipelineProof: () => Promise<{
+    chops: number;
+    importedFrames: number;
+    stretchedFrames: number;
+    stretchedRatio: number;
+  }>;
 }
 
 declare global {
@@ -173,6 +186,63 @@ async function recordThenPlayback(engine: AudioEngine): Promise<RecordPlaybackRe
   return { recorded, played };
 }
 
+/**
+ * Pack round-trip proof (spec §12 exit, §9.6): ensure the project has a sample, export it to a
+ * `.mpcweb` archive, re-import it as a fresh project, and confirm the samples came across.
+ */
+async function packRoundTrip(): Promise<{ imported: boolean; samples: number }> {
+  const ctx = sampleEditContext();
+  const existing = await ctx.repos.samples.listByProject(ctx.projectId);
+  if (existing.rows.length === 0) {
+    const tone = new Float32Array(2_000);
+    for (let i = 0; i < tone.length; i++) tone[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / ctx.projectSampleRate);
+    const { saveChannelsAsSample } = await import('@/core/audio/sampleImport');
+    await saveChannelsAsSample([tone], ctx.projectSampleRate, 'probe tone', ['probe'], ctx);
+  }
+  const originalId = ctx.projectId;
+  const blob = await projectService.exportMpcweb();
+  const file = new File([blob], 'roundtrip.mpcweb', { type: 'application/zip' });
+  const importedId = await projectService.importMpcweb(file);
+  const importedSamples = await sampleEditContext().repos.samples.listByProject(importedId);
+  return { imported: importedId !== originalId && importedId.length > 0, samples: importedSamples.rows.length };
+}
+
+/**
+ * Sample-pipeline proof (spec §12): import a synthetic drum loop (§9.4), chop it by WASM
+ * transient detection (§7.5/§8.5.4), and time-stretch it (§5.7.9) — proving the WASM kernels run
+ * end to end on the real OPFS/decode path.
+ */
+async function samplePipelineProof(engine: AudioEngine): Promise<{
+  chops: number;
+  importedFrames: number;
+  stretchedFrames: number;
+  stretchedRatio: number;
+}> {
+  const ctx = sampleEditContext();
+  const sr = ctx.projectSampleRate;
+  const buffer = engine.context.createBuffer(1, sr, sr);
+  const data = buffer.getChannelData(0);
+  for (const onset of [0, sr * 0.25, sr * 0.5, sr * 0.75]) {
+    for (let i = 0; i < 2_400 && onset + i < sr; i++) {
+      data[Math.floor(onset) + i] = 0.9 * Math.exp(-i / 400) * Math.sin((2 * Math.PI * 180 * i) / sr);
+    }
+  }
+  const imported = await importDecodedSample(buffer, 'probe drum', ['probe'], { ...ctx, context: engine.context });
+  const chops = await chopSampleToNewSamples(imported, { sensitivity: 0.6, minSpacingMs: 40 }, ctx);
+  const stretched = await stretchSampleToNewSample(imported, { rate: 0.5, pitchSemitones: 0 }, ctx);
+  // The real SQLite worker can return INTEGER columns as BigInt (rpc value union) — coerce
+  // before dividing so the ratio is a plain Number across the evaluate boundary. Read the frame
+  // counts straight off the stretched channel data to be independent of the DB round-trip.
+  const importedFrames = Number(imported.frames);
+  const stretchedFrames = Number(stretched.frames);
+  return {
+    chops: chops.length,
+    importedFrames,
+    stretchedFrames,
+    stretchedRatio: importedFrames > 0 ? stretchedFrames / importedFrames : 0,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -190,5 +260,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     recordThenPlayback: () => recordThenPlayback(engine),
     velocityLayerPitches,
     keygroupPitches,
+    packRoundTrip,
+    samplePipelineProof: () => samplePipelineProof(engine),
   };
 }

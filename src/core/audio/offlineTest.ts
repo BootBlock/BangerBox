@@ -6,7 +6,11 @@
  * This module is browser-only; it is reached only through the audio probe seam.
  */
 import type { EffectType, Program } from '@/core/project/schemas';
+import { prepareWorkletEffects } from './context';
 import { createInsert } from './inserts/insert';
+
+/** Effects whose engine is a WASM worklet and so need the processor + kernels loaded first. */
+const WORKLET_EFFECTS: ReadonlySet<EffectType> = new Set<EffectType>(['reverb', 'multibandComp', 'limiter']);
 import { resolvedVoiceToTrigger, resolveVoice } from './programVoice';
 import { VoicePool } from './voicePool';
 
@@ -50,6 +54,10 @@ export async function renderEffectOffline(
   const sampleRate = 48_000;
   const length = Math.floor(sampleRate * seconds);
   const context = new OfflineAudioContext(1, length, sampleRate);
+
+  // Worklet-hosted effects (reverb/multibandComp/limiter) need the processor + kernel modules
+  // registered on this offline context before the insert can be built synchronously (§5.6.2).
+  if (WORKLET_EFFECTS.has(effectType)) await prepareWorkletEffects(context);
 
   const osc = context.createOscillator();
   osc.frequency.value = toneHz;

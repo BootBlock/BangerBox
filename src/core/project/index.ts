@@ -11,6 +11,7 @@ export {
   installProjectService,
   loadOrCreateActiveProject,
   closeActiveProject,
+  getActiveRepositories,
 } from './projectService';
 export { getProjectService, registerProjectService, type ProjectService } from './service';
 export { startProjectSession, stopProjectSession, startAudioEngine, getAudioEngine } from './session';

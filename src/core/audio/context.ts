@@ -8,6 +8,9 @@
  */
 // spec §2.7 / §14 2026-07-17 (e): worklet modules load as real es-format files.
 import meterTapWorkletUrl from './worklets/meterTap.worklet.ts?worker&url';
+import dspEffectWorkletUrl from './worklets/dspEffect.worklet.ts?worker&url';
+import recorderWorkletUrl from './worklets/recorder.worklet.ts?worker&url';
+import { loadKernelModules } from '@/core/dsp/kernelModules';
 
 /** Create the single application AudioContext at the project sample rate (spec §5.1). */
 export function createAudioContext(sampleRate: number): AudioContext {
@@ -20,11 +23,26 @@ export async function resumeAudioContext(context: AudioContext): Promise<void> {
 }
 
 /** Every AudioWorklet processor module the engine needs (loaded during the gate). */
-const WORKLET_MODULE_URLS: readonly string[] = [meterTapWorkletUrl];
+const WORKLET_MODULE_URLS: readonly string[] = [meterTapWorkletUrl, dspEffectWorkletUrl, recorderWorkletUrl];
 
-/** Load all worklet processor modules (spec §5.1). Worklet scope has no fetch (§5.6.2). */
+/**
+ * Load all worklet processor modules AND compile the WASM kernel modules the DSP-effect
+ * worklet hosts (spec §5.1 start gate). Worklet scope has no fetch, so the kernels are compiled
+ * here on the main thread and handed over via processorOptions (spec §5.6.2).
+ */
 export async function loadAudioWorklets(context: BaseAudioContext): Promise<void> {
   for (const url of WORKLET_MODULE_URLS) {
     await context.audioWorklet.addModule(url);
   }
+  await loadKernelModules();
+}
+
+/**
+ * Prepare a (typically offline) context for the worklet-hosted effects: register the DSP-effect
+ * processor and compile the kernel modules (spec §5.6.2). Used by the offline effect renders
+ * (spec §11.2) so `multibandComp` / `limiter` / `fdnReverb` inserts build synchronously.
+ */
+export async function prepareWorkletEffects(context: BaseAudioContext): Promise<void> {
+  await context.audioWorklet.addModule(dspEffectWorkletUrl);
+  await loadKernelModules();
 }

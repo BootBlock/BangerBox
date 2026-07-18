@@ -24,6 +24,7 @@ import { loadAudioWorklets } from './context';
 import { ensureDemoSampleInOpfs } from './demoSample';
 import type { ChannelHandle } from './factory';
 import { MixerGraph } from './graph';
+import { Looper } from './looper';
 import { MeterRegistry } from './metering';
 import { Metronome } from './metronome';
 import { PreviewChannel } from './preview';
@@ -126,9 +127,26 @@ export class AudioEngine {
     });
   }
 
+  /** Create + attach a Looper capturing the master bus (spec §8.5.8). Caller owns disposal. */
+  createLooper(): Looper {
+    const looper = new Looper(this.context, this.graph.master.meterPoint, this.context.sampleRate);
+    looper.attach();
+    return looper;
+  }
+
   /** Sound one metronome click now (test UI); the scheduler drives this in Phase 4. */
   clickMetronome(accented = true): void {
     this.metronome.click(this.context.currentTime, accented);
+  }
+
+  /**
+   * Audition a sample through the preview channel (spec §5.9) — Browser-mode tap-to-hear. Never
+   * routes through a pad/track chain. Re-decodes after a destructive edit replaces the file.
+   */
+  async auditionSample(opfsPath: string, invalidate = false): Promise<void> {
+    if (invalidate) this.sampleCache.invalidate(opfsPath);
+    const buffer = await this.sampleCache.get(opfsPath);
+    this.preview.play(buffer, this.context.currentTime);
   }
 
   /** Latest playhead reading from the scheduler SAB (spec §7.1.4) — for the test probe. */

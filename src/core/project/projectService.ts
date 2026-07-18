@@ -6,12 +6,16 @@
  */
 import { getDatabaseDriver } from '@/core/storage/client';
 import { createRepositories, type Repositories } from '@/core/storage/repositories';
+import { readFile, samplePath, writeFileAtomic } from '@/core/storage/opfs';
 import { useProjectStore, useUIStore } from '@/store';
 import { AutosaveQueue } from './autosave';
 import { registerAutosave, unregisterAutosave } from './dirty';
 import { hydrateStores } from './hydrate';
+import { remapSnapshot } from './mpcweb';
+import { packMpcwebInWorker, unpackMpcwebInWorker } from './packClient';
 import { flushDirtyKeys } from './persist';
 import { registerProjectService, type ProjectService } from './service';
+import { dumpSnapshot, restoreSnapshot } from './snapshotService';
 import { createDefaultChannelStrip, createDefaultDrumProgram, createDefaultSequence } from './schemas';
 
 let repositories: Repositories | null = null;
@@ -91,14 +95,51 @@ async function saveNow(): Promise<void> {
   await queue?.flushNow();
 }
 
+/**
+ * Export the active project as a `.mpcweb` archive (spec §9.6): flush autosave, dump the row
+ * snapshot, read every referenced sample's WAV bytes from OPFS, then zip in the pack worker.
+ */
 async function exportMpcweb(): Promise<Blob> {
-  // STUB(phase-6): .mpcweb pack pipeline (spec §9.6) is not built until Phase 6.
-  throw new Error('Project export (.mpcweb) arrives in Phase 6.');
+  await saveNow();
+  const projectId = useProjectStore.getState().projectId;
+  if (!projectId) throw new Error('No active project to export.');
+  const repos = getRepositories();
+  const snapshot = await dumpSnapshot(repos, projectId);
+
+  const samples = await Promise.all(
+    snapshot.samples.map(async (sample) => ({
+      sampleId: sample.id,
+      bytes: new Uint8Array(await (await readFile(sample.opfs_path)).arrayBuffer()),
+    })),
+  );
+
+  const bytes = await packMpcwebInWorker({ snapshot, appVersion: __APP_VERSION__, samples });
+  return new Blob([bytes as BlobPart], { type: 'application/zip' });
 }
 
-async function importMpcweb(_file: File): Promise<string> {
-  // STUB(phase-6): .mpcweb unpack/import pipeline (spec §9.6) is not built until Phase 6.
-  throw new Error('Project import (.mpcweb) arrives in Phase 6.');
+/**
+ * Import a `.mpcweb` archive as a new project (spec §9.6): unpack + validate in the worker, remap
+ * every UUID so it never collides, write the samples to OPFS under the new ids, insert the rows
+ * transactionally-ordered, and open the imported project. A mid-way failure leaves no partial
+ * project because the new project id is only opened after all writes complete.
+ */
+async function importMpcweb(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const { snapshot: original, samples: sampleBytes } = await unpackMpcwebInWorker(bytes);
+  const { snapshot, projectId, sampleIdMap } = remapSnapshot(original);
+
+  // Relocate each sample's bytes to its new OPFS path before inserting rows.
+  for (const [oldId, data] of sampleBytes) {
+    const newId = sampleIdMap.get(oldId);
+    if (!newId) continue;
+    // Copy into a fresh ArrayBuffer-backed view (the OPFS stream API rejects shared buffers).
+    await writeFileAtomic(samplePath(projectId, newId), new Uint8Array(data));
+  }
+
+  const repos = getRepositories();
+  await restoreSnapshot(repos, snapshot);
+  await loadProject(projectId);
+  return projectId;
 }
 
 export const projectService: ProjectService = {
@@ -112,6 +153,11 @@ export const projectService: ProjectService = {
 /** Register the lifecycle service so the store's lifecycle actions resolve (spec §4.2). */
 export function installProjectService(): void {
   registerProjectService(projectService);
+}
+
+/** The active repository set — the only RPC clients (spec §3.1); used by Browser/Sample modes. */
+export function getActiveRepositories(): Repositories {
+  return getRepositories();
 }
 
 /** Open the most recently modified project, creating a first project if none exists (spec §8.5.1). */

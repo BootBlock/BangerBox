@@ -9,9 +9,10 @@
  *   /projects/{projectId}/bounces/{name}.wav
  *   /global_library/{sampleId}.wav
  *
- * Streamed reads/writes via sync access handles arrive with the worker-side
- * sample pipeline. // STUB(phase-6): add the worker sync-access-handle streaming
- * path when the import/looper pipelines land (spec §9.1, §8.5.8).
+ * The Phase 6 sample/looper/import pipelines write via {@link writeFileAtomic} (main-thread
+ * `createWritable`, atomic temp-then-rename — spec §9.7), which is correct and sufficient.
+ * // STUB(phase-7): a worker sync-access-handle streaming path is a throughput refinement for
+ * very large writes (spec §9.1), not a Phase 6 blocker.
  */
 
 /** Canonical OPFS path of a project-scoped sample (spec §9.1). */

@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "config": {
-    "phase": "5"
+    "phase": "6"
   },
   "scripts": {
     "dev": "vite",
@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node scripts/browser-smoke.mjs",
+    "test:e2e:quick": "node scripts/browser-smoke.mjs --dev-only",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "type-check": "tsc -b --noEmit",

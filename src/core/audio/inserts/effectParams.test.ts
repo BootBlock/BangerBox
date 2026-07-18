@@ -17,8 +17,20 @@ describe('effect parameter defaults (spec §5.7)', () => {
     }
   });
 
-  it('gives the deferred worklet effects no native params yet (spec §5.7, Phase 6)', () => {
-    expect(defaultEffectParams('multibandComp')).toEqual({});
-    expect(defaultEffectParams('limiter')).toEqual({});
+  it('ships the Phase 6 worklet effects with ranged params (spec §5.7)', () => {
+    const limiter = defaultEffectParams('limiter');
+    expect(limiter.ceiling).toBeGreaterThanOrEqual(-6);
+    expect(limiter.ceiling).toBeLessThanOrEqual(0);
+    expect(limiter.release).toBeGreaterThanOrEqual(10);
+
+    const comp = defaultEffectParams('multibandComp');
+    expect(comp.crossoverLowMid).toBeGreaterThanOrEqual(40);
+    expect(comp.crossoverMidHigh).toBeLessThanOrEqual(8_000);
+    // Every default sits inside its declared range.
+    for (const [name, value] of Object.entries(comp)) {
+      const range = EFFECT_PARAM_RANGES.multibandComp[name]!;
+      expect(value).toBeGreaterThanOrEqual(range[0]);
+      expect(value).toBeLessThanOrEqual(range[1]);
+    }
   });
 });
