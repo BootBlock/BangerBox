@@ -62,6 +62,56 @@ async function step(name, fn) {
   }
 }
 
+/**
+ * Record every toast the app raises, as it is raised.
+ *
+ * Sampling the DOM at the end cannot work: toasts are transient, so a warning raised early
+ * has usually gone by the time any later step looks. This installs a MutationObserver
+ * before any page script runs (and again after every navigation, which is why it is an
+ * init script rather than an evaluate), appending each toast to `__toastLog`.
+ *
+ * This exists because three "Autosave failed — will retry." toasts sat in the dev section
+ * for an unknown length of time without failing the run — the smoke asserted console errors
+ * but never toasts, so a warning the user would plainly see was invisible here (spec §14
+ * 2026-07-18 (r)).
+ */
+async function wireToastRecorder(pageOrContext) {
+  await pageOrContext.addInitScript(() => {
+    globalThis.__toastLog = [];
+    const record = (node) => {
+      if (node.nodeType !== 1 || node.dataset?.testid !== 'toast') return;
+      globalThis.__toastLog.push({
+        tone: node.dataset.tone ?? 'unknown',
+        message: node.querySelector('span')?.textContent ?? node.textContent ?? '',
+      });
+    };
+    const observer = new MutationObserver((records) => {
+      for (const record_ of records) {
+        for (const node of record_.addedNodes) {
+          record(node);
+          // A toast can arrive nested inside the viewport when the viewport itself mounts.
+          if (node.nodeType === 1) node.querySelectorAll?.('[data-testid="toast"]').forEach(record);
+        }
+      }
+    });
+    const start = () => observer.observe(document.body, { childList: true, subtree: true });
+    if (document.body) start();
+    else document.addEventListener('DOMContentLoaded', start, { once: true });
+  });
+}
+
+/** Fail the run on any warning/error toast; info/success are user-action confirmations. */
+async function assertNoWarningToasts(page, label) {
+  await step(`${label}: no warning or error toasts were raised`, async () => {
+    const toasts = await page.evaluate(() => globalThis.__toastLog ?? []);
+    const bad = toasts.filter((t) => t.tone === 'warning' || t.tone === 'error');
+    if (bad.length > 0) {
+      const detail = bad.map((t) => `[${t.tone}] ${t.message}`).join('; ');
+      throw new Error(`${bad.length} warning/error toast(s): ${detail}`);
+    }
+  });
+}
+
 function wireErrorCollectors(page) {
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text());
@@ -423,6 +473,7 @@ async function main() {
     await waitForServer(DEV_URL);
 
     const devContext = await browser.newContext();
+    await wireToastRecorder(devContext);
     page = await devContext.newPage();
     wireErrorCollectors(page);
     await page.goto(DEV_URL, { waitUntil: 'load' });
@@ -453,6 +504,8 @@ async function main() {
       }
     });
 
+    await assertNoWarningToasts(page, 'dev');
+
     await devContext.close();
     devServer.kill();
     devServer = undefined;
@@ -471,6 +524,7 @@ async function main() {
       await waitForServer(PREVIEW_URL);
 
       const previewContext = await browser.newContext();
+      await wireToastRecorder(previewContext);
       page = await previewContext.newPage();
       wireErrorCollectors(page);
       await page.goto(PREVIEW_URL, { waitUntil: 'load' });
@@ -531,6 +585,7 @@ async function main() {
       });
 
       await assertShellAndSelfTest(page, 'offline');
+      await assertNoWarningToasts(page, 'offline');
       await previewContext.setOffline(false);
       await previewContext.close();
     }

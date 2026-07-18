@@ -23,6 +23,10 @@ export function ToastViewport() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
+          data-testid="toast"
+          // The tone is the smoke's hook for "did anything warn or fail?" (spec §11.4) — the
+          // role alone cannot say, since the §8.2 announcer is also role="status".
+          data-tone={toast.tone}
           role={toast.tone === 'warning' || toast.tone === 'error' ? 'alert' : 'status'}
           className={`pointer-events-auto flex w-full max-w-md items-start justify-between gap-3 rounded-bb-md border bg-bb-surface px-4 py-3 text-sm shadow-bb-raised ${TONE_CLASS[toast.tone]}`}
         >
