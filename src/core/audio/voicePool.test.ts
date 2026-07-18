@@ -148,10 +148,15 @@ describe('playRegion (spec §6 trim)', () => {
 });
 
 describe('voice endings (spec §5.4 declick)', () => {
-  /** The voice's own amp gain — the last gain node created by the trigger. */
+  /**
+   * The newest voice's amp gain. Picked by having a scheduled envelope rather than by
+   * creation order, since LFO mod gains are created after it and carry no automation.
+   */
   function ampGain(fake: FakeAudioContext): unknown {
-    const gains = fake.nodes.filter((n) => n.nodeType === 'gain');
-    return (gains[gains.length - 1] as unknown as { gain: unknown }).gain;
+    const params = fake.nodes
+      .filter((n) => n.nodeType === 'gain')
+      .map((n) => (n as unknown as { gain: unknown }).gain);
+    return params.findLast((param) => paramCalls(param).length > 0);
   }
 
   it('fades to zero at the end of the buffer rather than cutting hard', () => {
@@ -221,6 +226,77 @@ describe('voice endings (spec §5.4 declick)', () => {
     pool.applyPadParam('p1:0', 'detune', 1200, 0.5); // 0.5 s left at double rate → ends at 0.75
     const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
     expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(0.75);
+    pool.destroy();
+  });
+
+  it('integrates a pitch envelope, so a swept voice fades at its real end (issue #87)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // An octave up decaying linearly to base over 0.5 s: the voice eats its 1 s buffer
+    // faster than unity throughout the sweep, so it ends well before the naive 1 s mark.
+    pool.trigger(
+      spec(context, {
+        id: 'penv',
+        when: 0,
+        pitchEnvSemitones: 12,
+        pitchEnv: createDefaultEnvelope({ attack: 0, hold: 0, decay: 500, sustain: 0, curve: 'linear' }),
+      }),
+    );
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    // ∫₀·⁵ 2^(1−2t) dt = 0.7213 s of buffer, leaving 0.2787 s at unity rate.
+    expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(0.7787, 3);
+    pool.destroy();
+  });
+
+  it('integrates a keygroup glide, not just the note it glides to (spec §6)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'g1', when: 0, playbackMode: 'mono', tuneCents: 1200 }));
+    // Retrigger the pad a semitone down with a 400 ms portamento from the octave above.
+    pool.trigger(spec(context, { id: 'g2', when: 0, playbackMode: 'mono', tuneCents: 0, glideMs: 400 }));
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    // ∫₀·⁴ 2^(1−t/0.4) dt = 0.5771 s consumed during the glide, 0.4229 s left at unity.
+    expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(0.8229, 3);
+    pool.destroy();
+  });
+
+  it('integrates a pitch-routed LFO, which no base-rate estimate can see (issue #87)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const routes: ModRoute[] = [{ source: 'lfo1', target: 'pitch', amount: 0.5 }];
+    pool.trigger(
+      spec(context, {
+        id: 'lfo',
+        when: 0,
+        lfos: [{ ...createDefaultLfo(), rate: 4 }, createDefaultLfo()],
+        modMatrix: routes,
+      }),
+    );
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    // ±600 cents of sine: 2^x is convex, so the mean rate exceeds unity and the 1 s buffer
+    // runs out early. The base-rate estimate would have put this at exactly 1 s.
+    const end = ramps[ramps.length - 1]!.args[1]!;
+    expect(end).toBeGreaterThan(0.9);
+    expect(end).toBeLessThan(0.98);
+    pool.destroy();
+  });
+
+  it('does not move the declick for a bend a pending pitch ramp will swallow', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(
+      spec(context, {
+        id: 'swallowed',
+        when: 0,
+        pitchEnvSemitones: 12,
+        pitchEnv: createDefaultEnvelope({ attack: 0, hold: 0, decay: 500, sustain: 0, curve: 'linear' }),
+      }),
+    );
+    // `setTargetAtTime` at 0.2 s is overridden by the envelope ramp still running to 0.5 s,
+    // so the voice never actually bends and its end time must not move (see `applyRetune`).
+    pool.applyProgramDetune('p1', -1200, 0.2);
+    const ramps = paramCalls(ampGain(fake)).filter((c) => c.method === 'linearRampToValueAtTime');
+    expect(ramps[ramps.length - 1]!.args[1]).toBeCloseTo(0.7787, 3);
     pool.destroy();
   });
 
