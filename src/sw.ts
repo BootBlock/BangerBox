@@ -34,6 +34,21 @@ const PRECACHE_URLS = [
 const CACHE = 'bangerbox-precache-v1';
 const INDEX_URL = 'index.html';
 
+/**
+ * Factory content cache (spec §9.8 "Caching"). Packs and the catalogue are runtime-cached
+ * cache-first in their OWN cache, deliberately separate from the precache: the §2.4
+ * precache glob covers neither `.wav` nor `.mpcweb` and is NOT widened, and keeping factory
+ * content out of `CACHE` means `pruneStalePrecache` — which deletes anything not in the
+ * current build manifest — cannot evict it.
+ */
+const FACTORY_CACHE = 'bangerbox-factory-v1';
+
+/** Caches this worker owns; every other cache is a previous build's and is swept on activate. */
+const OWNED_CACHES = new Set([CACHE, FACTORY_CACHE]);
+
+/** URL prefix of the factory directory, resolved against the deployment base path. */
+const FACTORY_PREFIX = new URL('factory/', sw.location.href).pathname;
+
 sw.addEventListener('install', (event) => {
   // A genuine update (an active worker exists) stays waiting until the user accepts
   // the in-app prompt. The very first install has no session to protect, so it
@@ -58,7 +73,7 @@ sw.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
-      await Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)));
+      await Promise.all(keys.filter((key) => !OWNED_CACHES.has(key)).map((key) => caches.delete(key)));
       await pruneStalePrecache();
       await sw.clients.claim();
     })(),
@@ -126,7 +141,29 @@ function withIsolationHeaders(response: Response): Response {
   });
 }
 
+/**
+ * Cache-first handling for factory packs and the catalogue (spec §9.8 "Caching").
+ *
+ * Cache-first, not stale-while-revalidate: pack archives are immutable build artefacts, so
+ * a hit is always correct and a background revalidation would re-download megabytes for
+ * nothing. Only successful responses are stored — caching an error would make a transient
+ * network failure permanent, and §8.5 item 7 requires a fetch failure to stay retryable.
+ */
+async function respondFactory(request: Request): Promise<Response> {
+  const cache = await caches.open(FACTORY_CACHE);
+  const cached = await cache.match(request);
+  if (cached) return withIsolationHeaders(cached);
+
+  const response = await fetch(request);
+  if (response.ok) await cache.put(request, response.clone());
+  return withIsolationHeaders(response);
+}
+
 async function respond(request: Request): Promise<Response> {
+  if (new URL(request.url).pathname.startsWith(FACTORY_PREFIX)) {
+    return respondFactory(request);
+  }
+
   const cache = await caches.open(CACHE);
 
   // App navigations resolve to the precached shell (offline-first).

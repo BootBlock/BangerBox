@@ -12,6 +12,7 @@ import { deleteFile, readFile } from '@/core/storage/opfs';
 import { useBrowserStore, useProjectStore, useUIStore } from '@/store';
 import { Toggle } from '@/ui/primitives';
 import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
+import { FactorySection } from './FactorySection';
 
 /** Trigger a browser download of a Blob (spec §9.6 export → download). */
 function downloadBlob(blob: Blob, filename: string): void {
@@ -200,6 +201,9 @@ export function BrowserPanel() {
           Purge unused samples
         </button>
       </div>
+
+      {/* Factory content (spec §8.5 item 7, §9.8) — browsed and installed from here. */}
+      <FactorySection />
 
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">

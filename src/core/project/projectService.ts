@@ -13,6 +13,7 @@ import { registerAutosave, unregisterAutosave } from './dirty';
 import { hydrateStores } from './hydrate';
 import { remapSnapshot } from './mpcweb';
 import { packMpcwebInWorker, unpackMpcwebInWorker } from './packClient';
+import type { UnpackedProject } from './mpcwebZip';
 import { flushDirtyKeys } from './persist';
 import { registerProjectService, type ProjectService } from './service';
 import { dumpSnapshot, restoreSnapshot } from './snapshotService';
@@ -125,11 +126,22 @@ async function exportMpcweb(): Promise<Blob> {
  */
 async function importMpcweb(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const { snapshot: original, samples: sampleBytes } = await unpackMpcwebInWorker(bytes);
-  const { snapshot, projectId, sampleIdMap } = remapSnapshot(original);
+  return installUnpackedAsNewProject(await unpackMpcwebInWorker(bytes));
+}
+
+/**
+ * Install an already-unpacked `.mpcweb` payload as a NEW project and open it (spec §9.6).
+ *
+ * Shared by the user import above and the factory `demo` install (spec §9.8), which is why
+ * it takes an unpacked payload rather than a File: §9.8 installs factory content "through
+ * the same unpack → Zod-validate → UUID-remap → OPFS-write → row-insert path as a user
+ * import", so there is one path here, not two.
+ */
+export async function installUnpackedAsNewProject(unpacked: UnpackedProject): Promise<string> {
+  const { snapshot, projectId, sampleIdMap } = remapSnapshot(unpacked.snapshot);
 
   // Relocate each sample's bytes to its new OPFS path before inserting rows.
-  for (const [oldId, data] of sampleBytes) {
+  for (const [oldId, data] of unpacked.samples) {
     const newId = sampleIdMap.get(oldId);
     if (!newId) continue;
     // Copy into a fresh ArrayBuffer-backed view (the OPFS stream API rejects shared buffers).
