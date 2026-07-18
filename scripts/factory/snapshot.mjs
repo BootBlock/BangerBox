@@ -1,21 +1,27 @@
 // Snapshot + archive assembly for the factory build (spec §9.8).
 //
-// Produces exactly the §9.6 `.mpcweb` layout — `manifest.json`, `project.json`,
-// `samples/<sampleId>.wav` — so packs install through the UNCHANGED user-import pipeline
-// (spec §9.8 "Delivery format": no new format, no new pipeline, no new dependency).
+// Produces exactly the §9.6 `.mpcweb` layout so packs install through the UNCHANGED
+// user-import pipeline (spec §9.8 "Delivery format": no new format, no new pipeline, no new
+// dependency).
 //
-// The archive is written here rather than by importing `mpcwebZip.ts`, because that module
-// imports its neighbours extensionlessly (TypeScript bundler resolution) and Node's type
-// stripping cannot resolve those specifiers. `factoryPacks.test.ts` therefore unpacks every
-// built archive with the REAL `unpackMpcweb` and validates it with the REAL schemas, so this
-// layout cannot silently drift from the reader that consumes it.
-import { zipSync } from 'fflate';
-import { encodeWav } from '../../src/core/audio/wav.ts';
+// This module imports the app's OWN §6 schema factories, §9.6 packer, §9.4 WAV encoder and
+// §9.1 path helper, resolved by `./resolve-hook.mjs`. Nothing here reimplements them: a
+// second definition of a pad or of the archive layout drifts silently, and a test that
+// catches drift after the fact is weaker than not having two definitions at all.
+//
+// DETERMINISM CAVEAT (spec §9.8 requires byte-identical rebuilds). Some app factories mint
+// ids with `crypto.randomUUID()` — `createDefaultPad` and `createDefaultChannelStrip` both
+// do, for their insert slots. Calling them is still correct, and still the right way to pick
+// up future §6 fields automatically, but every id they generate MUST then be re-stamped from
+// the seeded derivation below. `factoryPacks.test.ts` builds twice and compares bytes, so a
+// missed re-stamp fails the suite rather than shipping irreproducible archives.
+import { createDefaultDrumProgram, createDefaultPad } from '@/core/project/schemas/program';
+import { createDefaultChannelStrip } from '@/core/project/schemas/mixer';
+import { packMpcweb } from '@/core/project/mpcwebZip';
+import { encodeWav } from '@/core/audio/wav';
+import { samplePath } from '@/core/storage/opfs';
 import { derivedId } from './prng.mjs';
 import { SAMPLE_RATE } from './synth.mjs';
-
-/** Interchange format version this build emits (mirrors `MPCWEB_FORMAT_VERSION`, §9.6). */
-export const FORMAT_VERSION = 1;
 
 /**
  * Every timestamp the build emits, pinned (spec §9.8 "Build": a pinned `exportedAt` /
@@ -32,96 +38,65 @@ export const STEP_TICKS = PPQN / 4;
 /** Storage depth of shipped samples (spec §9.8: 48 kHz mono 16-bit). */
 const BIT_DEPTH = '16';
 
-// --- §6 program payload construction --------------------------------------------------
-// Mirrors `createDefaultPad` / `createDefaultDrumProgram` in `src/core/project/schemas/`.
-// `factoryPacks.test.ts` validates every emitted payload against the real `programSchema`,
-// which is what keeps this mirror honest.
-
-function envelope(overrides = {}) {
-  return { attack: 1, hold: 0, decay: 60, sustain: 0.8, release: 120, curve: 'exponential', ...overrides };
+/**
+ * Replace every `crypto.randomUUID()` insert-slot id with one derived from `owner`, so the
+ * payload is reproducible. See the determinism caveat at the top of this file.
+ */
+function restampInsertIds(slots, owner) {
+  return slots.map((slot, index) => ({ ...slot, id: derivedId(`${owner}:insert:${index}`) }));
 }
 
-function flatEnvelope() {
-  return envelope({ attack: 0, decay: 0, sustain: 1, release: 0, curve: 'linear' });
-}
-
-function lfo() {
-  return { rate: 1, sync: 'free', shape: 'sine', phaseOffset: 0, retrigger: true };
-}
-
-function insertSlots(packId, owner, slots = []) {
-  return Array.from({ length: 4 }, (_unused, index) => ({
-    id: derivedId(`${packId}:${owner}:insert:${index}`),
-    effectType: slots[index]?.effectType ?? null,
-    enabled: slots[index]?.enabled ?? false,
-    params: slots[index]?.params ?? {},
-  }));
-}
-
-/** A pad carrying one full-velocity layer of `sampleId` (spec §6). */
+/** A pad carrying one full-velocity layer of `sample`, built from the app's §6 factory. */
 function buildPad(packId, programId, padIndex, sample) {
-  return {
-    padIndex,
-    name: sample.name,
-    chokeGroup: sample.chokeGroup ?? 0,
-    playbackMode: sample.playbackMode ?? 'oneShot',
-    warp: false,
-    layers: [
-      {
-        sampleId: sample.id,
-        velocityStart: 0,
-        velocityEnd: 127,
-        tuneSemitones: 0,
-        tuneCents: 0,
-        gainDb: 0,
-        startFrame: 0,
-        endFrame: 0,
-        reverse: false,
-      },
-    ],
-    envelopes: {
-      amp: envelope({ attack: 0, decay: 0, sustain: 1, release: 8 }),
-      pitch: flatEnvelope(),
-      filter: flatEnvelope(),
+  const pad = createDefaultPad(padIndex, sample.name);
+  pad.playbackMode = sample.playbackMode ?? 'oneShot';
+  pad.chokeGroup = sample.chokeGroup ?? 0;
+  // A one-shot drum hit should ring out rather than be shaped by the default sustain curve.
+  pad.envelopes.amp = { ...pad.envelopes.amp, attack: 0, decay: 0, sustain: 1, release: 8 };
+  pad.layers = [
+    {
+      sampleId: sample.id,
+      velocityStart: 0,
+      velocityEnd: 127,
+      tuneSemitones: 0,
+      tuneCents: 0,
+      gainDb: 0,
+      startFrame: 0,
+      endFrame: 0,
+      reverse: false,
     },
-    pitchEnvSemitones: 0,
-    filter: { type: 'off', cutoff: 20_000, resonance: 0.7, envDepth: 0 },
-    lfos: [lfo(), lfo()],
-    modMatrix: [],
-    mixer: { level: 1, pan: 0, sendLevels: [0, 0, 0, 0] },
-    inserts: insertSlots(packId, `${programId}:pad:${padIndex}`),
-  };
+  ];
+  pad.inserts = restampInsertIds(pad.inserts, `${packId}:${programId}:pad:${padIndex}`);
+  return pad;
 }
 
 /** A drum program whose pads are the given samples, in order from pad 0 (spec §6). */
 export function buildDrumProgram(packId, name, samples) {
   const id = derivedId(`${packId}:program:${name}`);
-  return {
-    id,
-    name,
-    type: 'drum',
-    pads: samples.map((sample, index) => buildPad(packId, id, index, sample)),
-  };
+  const program = createDefaultDrumProgram(name, id);
+  program.pads = samples.map((sample, index) => buildPad(packId, id, index, sample));
+  return program;
 }
 
 /** A mixer channel strip (spec §4.2 `ChannelStrip`), optionally carrying insert slots. */
 export function buildChannelStrip(packId, channelId, { level = 1, pan = 0, slots = [] } = {}) {
-  return {
-    id: channelId,
-    level,
-    pan,
-    mute: false,
-    solo: false,
-    sendLevels: [0, 0, 0, 0],
-    inserts: insertSlots(packId, channelId, slots),
-  };
+  const strip = createDefaultChannelStrip(channelId);
+  strip.level = level;
+  strip.pan = pan;
+  strip.inserts = restampInsertIds(strip.inserts, `${packId}:${channelId}`).map((slot, index) => ({
+    ...slot,
+    effectType: slots[index]?.effectType ?? slot.effectType,
+    enabled: slots[index]?.enabled ?? slot.enabled,
+    params: slots[index]?.params ?? slot.params,
+  }));
+  return strip;
 }
 
 // --- Sample synthesis + rows -----------------------------------------------------------
 
 /**
  * Render one kit's samples to WAV bytes and their `samples` rows (spec §9.3). `opfs_path`
- * follows §9.1 for the pack's own project id; the install path rewrites it (§9.8).
+ * comes from the app's own §9.1 helper so it cannot drift; the install path rewrites it (§9.8).
  */
 export function renderSamples(packId, projectId, definitions, rngFor) {
   const rows = [];
@@ -137,7 +112,7 @@ export function renderSamples(packId, projectId, definitions, rngFor) {
       id,
       project_id: projectId,
       name: definition.name,
-      opfs_path: `/projects/${projectId}/samples/${id}.wav`,
+      opfs_path: samplePath(projectId, id),
       frames: channel.length,
       sample_rate: SAMPLE_RATE,
       channels: 1,
@@ -166,32 +141,12 @@ export function buildProjectRow(projectId, name, { bpm = 120 } = {}) {
 }
 
 /**
- * Zip a snapshot + WAVs into `.mpcweb` bytes in the §9.6 layout.
+ * Zip a snapshot + WAVs into `.mpcweb` bytes via the app's own §9.6 packer.
  *
- * `mtime` is pinned for every entry: zip local headers embed a DOS timestamp, so the
- * default (now) would change the archive bytes on every rebuild (spec §9.8 "fixed zip entry
- * mtimes"). Object key insertion order is deterministic here, which fixes entry order too.
+ * `exportedAt` is pinned, which pins both the manifest timestamp and every zip entry mtime
+ * (spec §9.8). Samples are sorted so entry order never depends on Map iteration incidentals.
  */
 export function packArchive({ snapshot, appVersion, wavs }) {
-  const manifest = {
-    format: 'mpcweb',
-    formatVersion: FORMAT_VERSION,
-    appVersion,
-    projectId: snapshot.project.id,
-    projectName: snapshot.project.name,
-    exportedAt: FACTORY_EPOCH_ISO,
-  };
-
-  const entries = {
-    'manifest.json': encodeText(JSON.stringify(manifest)),
-    'project.json': encodeText(JSON.stringify(snapshot)),
-  };
-  // Sorted so entry order never depends on Map iteration incidentals.
-  for (const id of [...wavs.keys()].sort()) entries[`samples/${id}.wav`] = wavs.get(id);
-
-  return zipSync(entries, { level: 6, mtime: FACTORY_EPOCH_MS });
-}
-
-function encodeText(text) {
-  return new TextEncoder().encode(text);
+  const samples = [...wavs.keys()].sort().map((sampleId) => ({ sampleId, bytes: wavs.get(sampleId) }));
+  return packMpcweb({ snapshot, appVersion, samples, exportedAt: FACTORY_EPOCH_ISO });
 }

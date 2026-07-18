@@ -23,7 +23,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -454,10 +454,17 @@ async function main() {
   // Factory packs are a gitignored artefact too (spec §9.8) — build them if absent so the
   // smoke stays self-sufficient on a fresh checkout.
   if (!existsSync(resolve(root, 'public/factory/index.json'))) {
-    const factory = spawnSync(process.execPath, [resolve(root, 'scripts/build-factory.mjs')], {
-      cwd: root,
-      stdio: 'inherit',
-    });
+    // `--import` installs the generator's TS/alias resolution hook (spec §9.8), exactly as
+    // the `build:factory` script does — without it the generator cannot resolve `@/`.
+    const factory = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        pathToFileURL(resolve(root, 'scripts/factory/register.mjs')).href,
+        resolve(root, 'scripts/build-factory.mjs'),
+      ],
+      { cwd: root, stdio: 'inherit' },
+    );
     if (factory.status !== 0) throw new Error('build:factory failed');
   }
 
