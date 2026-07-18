@@ -36,7 +36,7 @@
     "dev": "vite",
     "build": "npm run build:wasm && npm run build:factory && tsc -b && vite build",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "build:factory": "node scripts/build-factory.mjs",
+    "build:factory": "node --import ./scripts/factory/register.mjs scripts/build-factory.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

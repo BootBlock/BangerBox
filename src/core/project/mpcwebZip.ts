@@ -29,6 +29,13 @@ export interface PackInput {
   readonly snapshot: ProjectSnapshot;
   readonly appVersion: string;
   readonly samples: readonly PackedSample[];
+  /**
+   * Fixed export timestamp. A user export omits it and gets "now" (spec §9.6). The factory
+   * generator pins it, because §9.8 requires byte-reproducible packs and BOTH the manifest's
+   * `exportedAt` AND the zip's per-entry mtimes are otherwise read from the clock — two
+   * archives of identical content would then differ on every rebuild.
+   */
+  readonly exportedAt?: string;
 }
 
 export interface UnpackedProject {
@@ -38,9 +45,9 @@ export interface UnpackedProject {
 }
 
 /** Pack a project into `.mpcweb` bytes (spec §9.6). */
-export function packMpcweb({ snapshot, appVersion, samples }: PackInput): Uint8Array {
+export function packMpcweb({ snapshot, appVersion, samples, exportedAt }: PackInput): Uint8Array {
   const entries: Record<string, Uint8Array> = {
-    [MANIFEST_ENTRY]: strToU8(JSON.stringify(buildManifest(snapshot.project, appVersion))),
+    [MANIFEST_ENTRY]: strToU8(JSON.stringify(buildManifest(snapshot.project, appVersion, exportedAt))),
     [PROJECT_ENTRY]: strToU8(serialiseSnapshot(snapshot)),
   };
   for (const sample of samples) {
@@ -48,7 +55,9 @@ export function packMpcweb({ snapshot, appVersion, samples }: PackInput): Uint8A
     entries[`${SAMPLE_PREFIX}${sample.sampleId}.wav`] = sample.bytes;
   }
   // project.json compresses well; samples are stored — a per-entry level keeps both cheap.
-  return zipSync(entries, { level: 6 });
+  // A pinned `exportedAt` also pins the entry mtimes (spec §9.8 byte-determinism); without
+  // it fflate stamps each entry from the clock, as a user export should.
+  return zipSync(entries, exportedAt === undefined ? { level: 6 } : { level: 6, mtime: exportedAt });
 }
 
 /** Unpack `.mpcweb` bytes, validating the manifest and snapshot (spec §9.6). */
