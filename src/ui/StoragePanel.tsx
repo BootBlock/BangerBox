@@ -131,6 +131,25 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
 
   return (
     <section aria-labelledby="storage-panel-heading">
+      {/* A failed boot means no durable layer at all — nothing will save. That is the least
+          hideable state the app has, so it sits outside the disclosure with the action to
+          take, above the raw exception rather than replaced by it (spec §5.1). */}
+      {status === 'failed' && (
+        <div
+          role="alert"
+          data-testid="storage-boot-failure"
+          className="mb-3 rounded-bb-sm border border-bb-danger/50 bg-bb-raised px-3 py-2 text-xs text-bb-danger"
+        >
+          <p className="font-semibold">Your work cannot be saved on this device.</p>
+          <p className="mt-1 leading-relaxed text-bb-text">
+            The on-device database did not open, so nothing you do will be kept. Export anything you
+            care about now, then reload. If it keeps failing, check that private browsing is off and
+            that the site has storage permission.
+          </p>
+          <p className="mt-1 leading-relaxed text-bb-muted">{bootDetail}</p>
+        </div>
+      )}
+
       {/* The §9.7 eviction warning sits outside the disclosure: it is a condition the user
           has to act on, not a diagnostic to go looking for. */}
       {status === 'ready' && persisted === false && !evictionWarningDismissed && (

@@ -27,7 +27,7 @@ import { extractAndBakeGroove } from '@/core/audio/grooveService';
 import { useBrowserStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
 import { SegmentControl } from '@/ui/primitives/SegmentControl';
 import { WaveformEditor } from '@/ui/primitives/WaveformEditor';
-import { refreshSamples, sampleEditContext } from './sampleContext';
+import { auditionSample, refreshSamples, reloadSampleList, sampleEditContext } from './sampleContext';
 
 /** The three §8.5.4 Chop modes, in the order the spec lists them. */
 type ChopMode = ChopSpec['mode'];
@@ -59,9 +59,12 @@ export function SampleEditPanel() {
   const [sliceCount, setSliceCount] = useState(8);
   const [markers, setMarkers] = useState<number[]>([]);
   const [selection, setSelection] = useState<SliceRegion | null>(null);
+  /** Why the selected sample's audio could not be read, or null when it read fine. */
+  const [waveformError, setWaveformError] = useState<string | null>(null);
+  const samplesError = useBrowserStore((state) => state.samplesError);
 
   useEffect(() => {
-    void refreshSamples();
+    void reloadSampleList();
   }, [projectId]);
 
   const select = async (row: SampleRow) => {
@@ -71,10 +74,14 @@ export function SampleEditPanel() {
     // the next one would silently point them at unrelated audio.
     setSelection(null);
     setMarkers([]);
+    setWaveformError(null);
     try {
       setPyramid(await getPeakPyramid(row.opfs_path));
-    } catch {
+    } catch (error) {
+      // An unreadable sample used to draw exactly like an empty one, with every destructive
+      // tool still armed against it. Say so, and disarm them below.
       setPyramid(null);
+      setWaveformError(error instanceof Error && error.message ? error.message : 'The audio could not be read.');
     }
   };
 
@@ -131,6 +138,10 @@ export function SampleEditPanel() {
   const chopBlockedReason =
     chopMode === 'markers' && markers.length === 0 ? 'Place at least one marker to chop.' : null;
 
+  // Every tool here renders a NEW sample from the selected audio. Running one against audio
+  // that would not load means rendering from nothing, so they stay disarmed until it reads.
+  const toolsBlocked = busy || waveformError !== null;
+
   return (
     <section aria-labelledby="sample-edit-heading" className="mt-6">
       <h3 id="sample-edit-heading" className="text-lg font-bold">
@@ -176,7 +187,15 @@ export function SampleEditPanel() {
               </button>
             </li>
           ))}
-          {samples.length === 0 && <li className="px-2 py-2 text-xs text-bb-muted">No samples yet.</li>}
+          {samplesError !== null && (
+            <li role="alert" className="px-2 py-2 text-xs text-bb-danger">
+              Could not read the sample list: {samplesError} Your samples have not been lost — reload
+              the app rather than re-importing.
+            </li>
+          )}
+          {samplesError === null && samples.length === 0 && (
+            <li className="px-2 py-2 text-xs text-bb-muted">No samples yet.</li>
+          )}
         </ul>
 
         <div>
@@ -192,6 +211,13 @@ export function SampleEditPanel() {
             minSpacingFrames={msToFrames(MIN_SLICE_MS, sampleRate)}
             ariaLabel={selected ? `Waveform of ${selected.name}` : 'No sample selected'}
           />
+          {/* A waveform that would not load must not look like an empty one (spec §5.1). */}
+          {selected && waveformError !== null && (
+            <p role="alert" data-testid="waveform-error" className="mt-2 text-xs text-bb-danger">
+              Could not read the audio for {selected.name}: {waveformError} The editing tools are
+              unavailable for it — the file may be missing from storage.
+            </p>
+          )}
           {selected && (
             <div className="mt-2 space-y-2">
               <div className="flex flex-wrap gap-1.5">
@@ -199,30 +225,30 @@ export function SampleEditPanel() {
                   type="button"
                   disabled={busy}
                   className="rounded-bb-sm border border-bb-line px-2 py-1 text-xs disabled:opacity-50"
-                  onClick={() => void getAudioEngine()?.auditionSample(selected.opfs_path)}
+                  onClick={() => void auditionSample(selected.opfs_path, selected.name)}
                 >
                   Audition
                 </button>
                 <ToolButton
-                  busy={busy}
+                  busy={toolsBlocked}
                   label="Normalise"
                   onClick={() => edit('Normalise', (c) => normalise(c))}
                 />
-                <ToolButton busy={busy} label="Reverse" onClick={() => edit('Reverse', reverse)} />
+                <ToolButton busy={toolsBlocked} label="Reverse" onClick={() => edit('Reverse', reverse)} />
                 <ToolButton
-                  busy={busy}
+                  busy={toolsBlocked}
                   label="Fade in"
                   onClick={() => edit('Fade in', (c) => fadeIn(c, msToFrames(fadeMs, selected.sample_rate)))}
                 />
                 <ToolButton
-                  busy={busy}
+                  busy={toolsBlocked}
                   label="Fade out"
                   onClick={() =>
                     edit('Fade out', (c) => fadeOut(c, msToFrames(fadeMs, selected.sample_rate)))
                   }
                 />
                 <ToolButton
-                  busy={busy || !selection}
+                  busy={toolsBlocked || !selection}
                   label="Trim to selection"
                   title={selection ? undefined : 'Drag a selection on the waveform first.'}
                   onClick={() => {
@@ -255,7 +281,7 @@ export function SampleEditPanel() {
                   />
                 </label>
                 <ToolButton
-                  busy={busy}
+                  busy={toolsBlocked}
                   label="Groove → bake to track"
                   testId="sample-groove"
                   onClick={() => {
@@ -320,7 +346,7 @@ export function SampleEditPanel() {
                   </span>
                 )}
                 <ToolButton
-                  busy={busy || chopBlockedReason !== null}
+                  busy={toolsBlocked || chopBlockedReason !== null}
                   label="Chop"
                   testId="sample-chop"
                   title={chopBlockedReason ?? undefined}
@@ -356,7 +382,7 @@ export function SampleEditPanel() {
                   />
                 </label>
                 <ToolButton
-                  busy={busy}
+                  busy={toolsBlocked}
                   label="Time-stretch render"
                   testId="sample-stretch"
                   onClick={() =>

@@ -11,7 +11,7 @@ const getActiveRepositories = vi.fn(() => ({ samples: { listByProject, listGloba
 
 vi.mock('@/core/project', () => ({ getActiveRepositories: () => getActiveRepositories() }));
 
-const { refreshSamples } = await import('./sampleContext');
+const { refreshSamples, reloadSampleList } = await import('./sampleContext');
 const { useBrowserStore, useProjectStore } = await import('@/store');
 const { GLOBAL_LIBRARY_ROOT, projectSamplesRoot } = await import('@/core/storage/opfs');
 
@@ -53,5 +53,24 @@ describe('refreshSamples (spec §8.5.7)', () => {
     useProjectStore.setState({ projectId: '' });
     await refreshSamples();
     expect(getActiveRepositories).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A query that never ran must not read as an empty library — the panels render that as "no
+ * samples", which is a false data-loss report the user may try to fix by re-importing.
+ */
+describe('reloadSampleList (spec §5.1)', () => {
+  it('records why the query failed instead of leaving the list looking empty', async () => {
+    listByProject.mockRejectedValue(new Error('database worker is not responding'));
+    await reloadSampleList();
+    expect(useBrowserStore.getState().samplesError).toBe('database worker is not responding');
+  });
+
+  it('clears a previous failure once the query succeeds again', async () => {
+    useBrowserStore.setState({ samplesError: 'database worker is not responding' });
+    await reloadSampleList();
+    expect(useBrowserStore.getState().samplesError).toBeNull();
+    expect(useBrowserStore.getState().samples).toEqual([PROJECT_ROW]);
   });
 });

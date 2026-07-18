@@ -251,6 +251,39 @@ describe('useUIStore (spec §4.2)', () => {
     useUIStore.getState().setActiveMode('mixer');
     expect(useUIStore.getState().activeMode).toBe('mixer');
   });
+
+  it('refreshes a repeated notice rather than queueing it again', () => {
+    useUIStore.setState({ toasts: [] });
+    const first = useUIStore.getState().pushToast('Autosave failed', 'error');
+    const second = useUIStore.getState().pushToast('Autosave failed', 'error');
+    expect(second).toBe(first);
+    expect(useUIStore.getState().toasts).toHaveLength(1);
+  });
+
+  it('evicts advisory notices before errors when the queue overflows', () => {
+    useUIStore.setState({ toasts: [] });
+    const critical = useUIStore.getState().pushToast('Could not open your project', 'error');
+    // Nine distinct advisory notices against a queue that holds eight.
+    for (let i = 0; i < 9; i += 1) useUIStore.getState().pushToast(`Notice ${i}`, 'info');
+    const toasts = useUIStore.getState().toasts;
+    expect(toasts).toHaveLength(8);
+    expect(toasts.some((toast) => toast.id === critical)).toBe(true);
+  });
+
+  it('auto-dismisses advisory notices but leaves errors up until dismissed', () => {
+    vi.useFakeTimers();
+    try {
+      useUIStore.setState({ toasts: [] });
+      useUIStore.getState().pushToast('Saved', 'success');
+      const error = useUIStore.getState().pushToast('Export failed', 'error');
+      vi.advanceTimersByTime(30_000);
+      const toasts = useUIStore.getState().toasts;
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0]?.id).toBe(error);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('useHardwareStore (spec §10.3, §4.5)', () => {
