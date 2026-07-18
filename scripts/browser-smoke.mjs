@@ -51,8 +51,11 @@ function record(name, ok, detail = '') {
 
 async function step(name, fn) {
   try {
-    await fn();
+    // The step's value is passed through so one step can feed the next (e.g. the factory
+    // cache warm-up hands the offline assertion the pack filename it warmed).
+    const value = await fn();
     record(name, true);
+    return value;
   } catch (error) {
     record(name, false, error instanceof Error ? error.message : String(error));
     throw error;
@@ -463,8 +466,43 @@ async function main() {
         });
       });
 
+      // Warm the factory runtime cache while still online, so the offline assertion below
+      // tests the CACHE rather than merely re-testing the network (spec §9.8 "Caching").
+      const warmedPack = await step('preview: factory content is runtime-cached (spec §9.8)', async () => {
+        const result = await page.evaluate(async () => {
+          const catalogue = await (await fetch('factory/index.json')).json();
+          const first = catalogue[0];
+          // Drain the body: an unread response stream is aborted by the reload below, which
+          // the smoke's own console-hygiene check would (correctly) flag as an error.
+          await (await fetch(`factory/${first.file}`)).arrayBuffer();
+          const cache = await caches.open('bangerbox-factory-v1');
+          return {
+            file: first.file,
+            catalogueCached: (await cache.match(new URL('factory/index.json', location.href).href)) != null,
+            packCached: (await cache.match(new URL(`factory/${first.file}`, location.href).href)) != null,
+          };
+        });
+        if (!result.catalogueCached) throw new Error('catalogue was not runtime-cached');
+        if (!result.packCached) throw new Error(`${result.file} was not runtime-cached`);
+        return result.file;
+      });
+
       await previewContext.setOffline(true);
       await page.reload({ waitUntil: 'load' });
+
+      await step('offline: factory catalogue and pack are served from cache (spec §9.8)', async () => {
+        const result = await page.evaluate(async (file) => {
+          const catalogue = await fetch('factory/index.json');
+          const pack = await fetch(`factory/${file}`);
+          return { catalogue: catalogue.ok, pack: pack.ok, bytes: (await pack.arrayBuffer()).byteLength };
+        }, warmedPack);
+        // With the network down these can only succeed from the dedicated factory cache —
+        // which is also the proof it survived the §2.4 stale-precache prune on activate.
+        if (!result.catalogue) throw new Error('factory catalogue is unavailable offline');
+        if (!result.pack) throw new Error('factory pack is unavailable offline');
+        if (!(result.bytes > 0)) throw new Error('cached factory pack is empty offline');
+      });
+
       await assertShellAndSelfTest(page, 'offline');
       await previewContext.setOffline(false);
       await previewContext.close();
