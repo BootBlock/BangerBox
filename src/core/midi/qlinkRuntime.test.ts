@@ -6,24 +6,14 @@
  * directly, so every assertion here is about *store* state.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  channelLevelPath,
-  programParamPath,
-  transportParamPath,
-} from '@/core/audio/params/registry';
+import { channelLevelPath, programParamPath, transportParamPath } from '@/core/audio/params/registry';
 import {
   createDefaultChannelStrip,
   createDefaultDrumProgram,
   createDefaultPad,
   type QLinkBinding,
 } from '@/core/project/schemas';
-import {
-  useHardwareStore,
-  useMixerStore,
-  useProgramStore,
-  useTransportStore,
-  useUIStore,
-} from '@/store';
+import { useHardwareStore, useMixerStore, useProgramStore, useTransportStore, useUIStore } from '@/store';
 import { useUndoStore } from '@/store/undo/useUndoStore';
 import { QLINK_COMMIT_IDLE_MS, createQLinkRuntime } from './qlinkRuntime';
 

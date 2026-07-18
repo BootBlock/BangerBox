@@ -41,8 +41,9 @@
   /* Composite transitions used by primitives. Press feedback snaps; the velocity glow
      decays slowly on release. Transform/opacity/shadow only — never layout properties
      (spec §8.3 60 fps budget). */
-  --transition-bb-pad: transform 150ms var(--ease-bb-snap), background-color 150ms
-    var(--ease-bb-snap), border-color 150ms var(--ease-bb-snap), box-shadow 420ms var(--ease-bb-glide);
+  --transition-bb-pad:
+    transform 150ms var(--ease-bb-snap), background-color 150ms var(--ease-bb-snap),
+    border-color 150ms var(--ease-bb-snap), box-shadow 420ms var(--ease-bb-glide);
 }
 
 /* Pointer-target expansion — spec §8.1/§8.5.3 (touch-large controls). A control that must

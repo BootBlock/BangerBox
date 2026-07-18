@@ -115,10 +115,12 @@ function wake(): void {
   const result = core.tick(now);
 
   if (result.batch.length > 0) post({ kind: 'scheduleBatch', events: result.batch });
-  for (const flush of result.recorded)
-    {post({ kind: 'recorded', trackId: flush.trackId, events: flush.events });}
-  for (const erase of result.erased)
-    {post({ kind: 'erased', trackId: erase.trackId, eventIds: erase.eventIds });}
+  for (const flush of result.recorded) {
+    post({ kind: 'recorded', trackId: flush.trackId, events: flush.events });
+  }
+  for (const erase of result.erased) {
+    post({ kind: 'erased', trackId: erase.trackId, eventIds: erase.eventIds });
+  }
   for (const tick of result.loopWrapped) post({ kind: 'loopWrapped', tick });
   for (const entryIndex of result.songAdvanced) post({ kind: 'songAdvanced', entryIndex });
 

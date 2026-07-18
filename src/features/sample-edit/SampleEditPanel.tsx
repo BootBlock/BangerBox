@@ -82,7 +82,9 @@ export function SampleEditPanel() {
       // An unreadable sample used to draw exactly like an empty one, with every destructive
       // tool still armed against it. Say so, and disarm them below.
       setPyramid(null);
-      setWaveformError(error instanceof Error && error.message ? error.message : 'The audio could not be read.');
+      setWaveformError(
+        error instanceof Error && error.message ? error.message : 'The audio could not be read.',
+      );
     }
   };
 
@@ -190,8 +192,8 @@ export function SampleEditPanel() {
           ))}
           {samplesError !== null && (
             <li role="alert" className="px-2 py-2 text-xs text-bb-danger">
-              Could not read the sample list: {samplesError} Your samples have not been lost — reload
-              the app rather than re-importing.
+              Could not read the sample list: {samplesError} Your samples have not been lost — reload the app
+              rather than re-importing.
             </li>
           )}
           {samplesError === null && samples.length === 0 && (
@@ -215,8 +217,8 @@ export function SampleEditPanel() {
           {/* A waveform that would not load must not look like an empty one (spec §5.1). */}
           {selected && waveformError !== null && (
             <p role="alert" data-testid="waveform-error" className="mt-2 text-xs text-bb-danger">
-              Could not read the audio for {selected.name}: {waveformError} The editing tools are
-              unavailable for it — the file may be missing from storage.
+              Could not read the audio for {selected.name}: {waveformError} The editing tools are unavailable
+              for it — the file may be missing from storage.
             </p>
           )}
           {selected && (

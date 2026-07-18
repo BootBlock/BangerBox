@@ -40,9 +40,8 @@ jobs:
       - name: Project checks (deps, language, stubs)
         run: npm run verify
 
-      # NOTE: `npm run format:check` is deliberately not run yet — 25 tracked files
-      # predate it and fail. Re-enable this step as part of the formatting cleanup so
-      # CI goes green in the same commit that fixes them.
+      - name: Format check
+        run: npm run format:check
 
   unit:
     name: Unit tests

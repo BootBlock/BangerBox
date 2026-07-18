@@ -172,8 +172,9 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
       (s) => s.events,
       (events) => {
         for (const [trackId, list] of Object.entries(events)) {
-          if (list !== prevEvents[trackId])
-            {diffTrackEvents(scheduler, trackId, prevEvents[trackId] ?? [], list);}
+          if (list !== prevEvents[trackId]) {
+            diffTrackEvents(scheduler, trackId, prevEvents[trackId] ?? [], list);
+          }
         }
         prevEvents = events;
       },

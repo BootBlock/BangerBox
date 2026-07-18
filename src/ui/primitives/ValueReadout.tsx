@@ -44,9 +44,7 @@ export function ValueReadout({
 }: ValueReadoutProps) {
   return (
     <div className="flex flex-col gap-0.5">
-      {showLabel && (
-        <FieldLabel as="span">{label}</FieldLabel>
-      )}
+      {showLabel && <FieldLabel as="span">{label}</FieldLabel>}
       {/* A <span>, deliberately not <output>: `output` carries an implicit `role="status"`,
           which would turn every readout in the app into a live region competing with the
           real announcer and the toasts (spec §8.2 — one polite LiveRegion). */}

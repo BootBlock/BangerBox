@@ -36,10 +36,7 @@ const RELATIVE_FULL_SCALE_DETENTS = 127;
 export const DEFAULT_QLINK_CC_BASE = 70;
 
 /** The binding an incoming CC drives, or undefined when that CC is unbound (spec §10.3). */
-export function bindingForCc(
-  bindings: readonly QLinkBinding[],
-  cc: number,
-): QLinkBinding | undefined {
+export function bindingForCc(bindings: readonly QLinkBinding[], cc: number): QLinkBinding | undefined {
   let best: QLinkBinding | undefined;
   for (const candidate of bindings) {
     if (candidate.cc !== cc) continue;

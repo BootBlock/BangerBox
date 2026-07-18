@@ -25,9 +25,7 @@ export function useQLinkFocus(params: readonly QLinkFocusParam[]): void {
       const current = useUIStore.getState().focusedControlParams;
       const stillOurs =
         current.length === params.length &&
-        current.every(
-          (entry, index) => entry.targetParameterPath === params[index]?.targetParameterPath,
-        );
+        current.every((entry, index) => entry.targetParameterPath === params[index]?.targetParameterPath);
       if (stillOurs) useUIStore.getState().setFocusedControlParams([]);
     };
   }, [params]);

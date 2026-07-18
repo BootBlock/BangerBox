@@ -10,12 +10,7 @@ import { clamp } from '@/core/math';
 // The taper itself lives in `@/core/math` so the Q-Link encoder scaling (spec §10.3) maps
 // values through exactly the same curve the primitives draw (spec §3.6 ZERO DRY). It is
 // re-exported here so every primitive keeps importing its maths from one module.
-export {
-  normalisedToValue,
-  valueToNormalised,
-  type ControlCurve,
-  type ControlRange,
-} from '@/core/math';
+export { normalisedToValue, valueToNormalised, type ControlCurve, type ControlRange } from '@/core/math';
 import type { ControlRange } from '@/core/math';
 
 export interface StepOptions {

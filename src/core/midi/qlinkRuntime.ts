@@ -11,19 +11,9 @@
  * the audio graph — spec §10.2 forbids the MIDI listener doing so, and the sync layer
  * already carries every one of these store changes to the nodes (spec §4.3).
  */
-import {
-  parseParamTarget,
-  targetRange,
-  type ParamTarget,
-} from '@/core/audio/params/registry';
+import { parseParamTarget, targetRange, type ParamTarget } from '@/core/audio/params/registry';
 import type { QLinkBinding } from '@/core/project/schemas';
-import {
-  useHardwareStore,
-  useMixerStore,
-  useProgramStore,
-  useTransportStore,
-  useUIStore,
-} from '@/store';
+import { useHardwareStore, useMixerStore, useProgramStore, useTransportStore, useUIStore } from '@/store';
 import { bindingForCc, defaultBindingsForMode, DEFAULT_QLINK_CC_BASE, nextValueForCc } from './qlink';
 
 /**

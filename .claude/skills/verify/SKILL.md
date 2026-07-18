@@ -46,10 +46,9 @@ cp ../../../src/core/dsp/dist/*.wasm src/core/dsp/dist/
 
 ```js
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
-await page.getByTestId('audio-start').click();                    // §5.1 start gate
-await page.getByTestId('audio-engine-status')
-  .and(page.locator('[data-status="running"]')).waitFor();
-await page.getByTestId('mode-tab-browser').click();               // mode-tab-<mode id>
+await page.getByTestId('audio-start').click(); // §5.1 start gate
+await page.getByTestId('audio-engine-status').and(page.locator('[data-status="running"]')).waitFor();
+await page.getByTestId('mode-tab-browser').click(); // mode-tab-<mode id>
 ```
 
 To get real samples into the library, merge a factory kit in Browser mode
@@ -60,7 +59,7 @@ project before installing a kit". The 808 kit yields 14 samples.
 ## Gotchas
 
 - **Check the port is actually free.** A leftover server from an earlier run
-  keeps serving the *old* build and the run silently verifies stale code; Vite
+  keeps serving the _old_ build and the run silently verifies stale code; Vite
   prints "Port N is already in use" but the driver happily connects. Kill it:
   `Get-NetTCPConnection -LocalPort N -State Listen | Stop-Process -Id { $_.OwningProcess }`.
   Port 5199 (the smoke's default) is squatted by another local project.

@@ -89,8 +89,9 @@ export async function renderEffectOffline(
 function sineBuffer(context: BaseAudioContext, frequency: number, seconds: number): AudioBuffer {
   const buffer = context.createBuffer(1, Math.floor(context.sampleRate * seconds), context.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++)
-    {data[i] = Math.sin((2 * Math.PI * frequency * i) / context.sampleRate);}
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.sin((2 * Math.PI * frequency * i) / context.sampleRate);
+  }
   return buffer;
 }
 
