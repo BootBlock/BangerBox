@@ -23,13 +23,13 @@ do not "optimise" this by widening the precache glob (§9.8 forbids it).
 
 Unchanged from the Phase 8 handover, all nineteen. Two notes specific to this work:
 
-- **#2 (Node ≥ 24)** now load-bearing beyond tooling: `scripts/build-factory.mjs` imports
-  `src/core/audio/wav.ts` directly and relies on **Node's native TypeScript type stripping**.
-  This works only because `wav.ts` has type-only imports; it does NOT generalise to modules
-  with runtime imports, because Node cannot resolve the app's extensionless bundler-style
-  specifiers.
-- **#12 (fflate)** now also packs the factory archives. No new dependency was added; the §2.2
-  closed matrix is intact.
+- **#2 (Node ≥ 24)** now load-bearing beyond tooling: the factory generator imports the app's
+  own TypeScript modules and relies on **Node's native type stripping**, plus the build-time
+  resolution hook described in §4 (§14 2026-07-18 (s)). `build:factory` therefore MUST run as
+  `node --import ./scripts/factory/register.mjs …`; invoking `scripts/build-factory.mjs`
+  bare fails to resolve `@/`.
+- **#12 (fflate)** now also packs the factory archives, through the app's own `packMpcweb`.
+  No new dependency was added; the §2.2 closed matrix is intact.
 
 ## 2. Spec deviations / corrections in effect
 
@@ -80,10 +80,19 @@ storage gate → (`installUnpackedAsNewProject` | `installKitPack`) → stores.
   random. Timestamps are pinned to `FACTORY_EPOCH_MS`. Zip entry `mtime` is fixed and entry
   order is sorted. **If you add content, do not reach for `Math.random()` or `Date.now()` —
   `factoryPacks.test.ts` builds twice and compares bytes, and will fail.**
-- **The build script mirrors §6/§9.3 shapes by hand** (Node cannot resolve the app's imports).
-  That mirror is guarded by `factoryPacks.test.ts`, which unpacks every built archive with the
-  **real** `unpackMpcweb` and validates payloads with the **real** `programSchema`. If you
-  change a §6 schema, that test is what tells you the build script drifted.
+- **The generator uses the app's own modules — do not reintroduce copies** (§14 2026-07-18 (s)).
+  `scripts/factory/resolve-hook.mjs` + `register.mjs` supply the `@/` alias and extensionless
+  `.ts` resolution that Node lacks, so `snapshot.mjs` calls the real `createDefaultPad`,
+  `createDefaultChannelStrip`, `createDefaultDrumProgram`, `packMpcweb`, `samplePath` and
+  `encodeWav`. Build-time only; Vitest goes through Vite and needs no hook.
+- **THE TRAP, if you import more app factories:** several mint ids with `crypto.randomUUID()`
+  (`createDefaultPad` and `createDefaultChannelStrip` do, for insert slots). Calling them is
+  right — it is how future §6 fields arrive automatically — but every id they generate MUST be
+  re-stamped via `restampInsertIds` or the equivalent, or rebuilds stop being byte-identical.
+  This is exactly the defect that made the salvaged branch's own determinism test unpassable.
+- `factoryPacks.test.ts` remains the guard: it unpacks every built archive with the **real**
+  `unpackMpcweb`, validates payloads with the **real** `programSchema`, and builds twice
+  comparing bytes.
 - **`factoryCatalogue.ts`** (pure) — the catalogue Zod schema. `file` is constrained to a bare
   `*.mpcweb` filename: the catalogue is network input concatenated into a fetch URL, so the
   path-traversal guard lives at the schema.
