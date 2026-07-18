@@ -146,6 +146,46 @@ describe('AutosaveQueue', () => {
     expect(queue.hasPending).toBe(false);
   });
 
+  it('reports the flush outcome so an explicit save can announce the truth (issue #41)', async () => {
+    let fail = false;
+    const flush = vi.fn(async () => {
+      if (fail) throw new Error('quota exceeded');
+    });
+    const queue = new AutosaveQueue({ flush, onError: vi.fn() });
+
+    expect(await queue.flushNow()).toBe('idle'); // nothing queued is not a save
+
+    queue.markDirty('project:1');
+    expect(await queue.flushNow()).toBe('saved');
+
+    fail = true;
+    queue.markDirty('project:1');
+    expect(await queue.flushNow()).toBe('failed');
+  });
+
+  it('gives a coalesced save the outcome of the flush it waited on', async () => {
+    let finishFirst!: () => void;
+    const flush = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    const queue = new AutosaveQueue({ flush });
+
+    queue.markDirty('a');
+    const first = queue.flushNow();
+    // A second explicit save arrives while the first flush is still in flight. It queues no
+    // dirt of its own, so it must inherit that flush's verdict rather than report 'idle' —
+    // the in-flight write is what saved the user's work.
+    const second = queue.flushNow();
+    finishFirst();
+
+    expect(await first).toBe('saved');
+    expect(await second).toBe('saved');
+    expect(flush).toHaveBeenCalledTimes(1);
+  });
+
   it('stops accepting work after dispose', async () => {
     const flush = vi.fn(async () => {});
     const queue = new AutosaveQueue({ flush });

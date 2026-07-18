@@ -36,6 +36,12 @@ export class UnflushableKeyError extends Error {
   }
 }
 
+/**
+ * What a flush actually achieved, so an explicit save can report the truth (spec §4.4).
+ * `'idle'` means there was nothing queued — not a save, and not a failure either.
+ */
+export type SaveOutcome = 'saved' | 'failed' | 'idle';
+
 export interface AutosaveQueueOptions {
   /**
    * Persist the given dirty keys. Resolves only once they are written; rejects to trigger
@@ -58,7 +64,7 @@ export class AutosaveQueue {
 
   private readonly dirty = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private flushing: Promise<void> | null = null;
+  private flushing: Promise<SaveOutcome> | null = null;
   private disposed = false;
 
   constructor(options: AutosaveQueueOptions) {
@@ -88,31 +94,34 @@ export class AutosaveQueue {
   /**
    * Flush now, awaited (spec §4.4 `saveNow`, and the visibility/pre-switch hooks).
    * Coalesces with any in-flight flush and re-flushes if new dirt accrued meanwhile.
+   *
+   * Resolves with what the flush achieved rather than merely that it finished: never
+   * rejecting is what keeps auto-flushes quiet, but an explicit save must be able to
+   * tell a write that landed from one that failed and was re-queued.
    */
-  async flushNow(): Promise<void> {
+  async flushNow(): Promise<SaveOutcome> {
     this.disarm();
-    if (this.flushing) await this.flushing;
-    if (this.dirty.size === 0) return;
+    // A coalesced flush's outcome is this call's outcome too — it wrote our dirt.
+    const coalesced = this.flushing ? await this.flushing : null;
+    if (this.dirty.size === 0) return coalesced ?? 'idle';
 
     const batch = [...this.dirty];
     this.dirty.clear();
-    let succeeded = true;
-    this.flushing = this.runFlush(batch).then((ok) => {
-      succeeded = ok;
-    });
-    await this.flushing;
+    this.flushing = this.runFlush(batch).then((ok) => (ok ? 'saved' : 'failed'));
+    const outcome = await this.flushing;
     this.flushing = null;
 
-    if (!succeeded) {
+    if (outcome === 'failed') {
       // The batch was re-queued; schedule a debounced retry rather than spinning.
       if (!this.disposed) this.arm();
-      return;
+      return 'failed';
     }
 
     // Mutations that landed during the flush are persisted on the next pass;
     // otherwise the queue is fully drained.
-    if (this.dirty.size > 0) await this.flushNow();
-    else this.onIdle?.();
+    if (this.dirty.size > 0) return await this.flushNow();
+    this.onIdle?.();
+    return 'saved';
   }
 
   /** Cancel timers and drop the in-memory queue (project close — spec §4.4). */
