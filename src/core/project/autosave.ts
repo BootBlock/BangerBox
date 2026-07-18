@@ -12,11 +12,35 @@
  * A flush is never allowed to reject: a failed write re-marks its keys dirty and is
  * reported through `onError`, so a transient failure retries on the next tick and an
  * auto-flush can never surface an unhandled rejection.
+ *
+ * Resolving is the flush's assertion that the batch reached storage — it is what clears
+ * the unsaved dot — so a key the flush cannot write must never resolve. Keys no flush
+ * handles reject with {@link UnflushableKeyError}, which the queue treats as permanent:
+ * retrying could not write them either, so they are dropped without `onIdle` (leaving the
+ * project marked modified, which is the truth) rather than re-queued into a retry spin.
  */
 import { AUTOSAVE_DEBOUNCE_MS } from '@/core/constants';
 
+/**
+ * A dirty key that no flush path can write — an unknown kind, or one whose owning state
+ * is gone. Permanent by construction: unlike a quota or worker failure, the same batch
+ * would fail identically forever, so the queue must not retry it (spec §4.4).
+ */
+export class UnflushableKeyError extends Error {
+  readonly keys: readonly string[];
+
+  constructor(keys: readonly string[], detail: string) {
+    super(`${detail} (${keys.join(', ')})`);
+    this.name = 'UnflushableKeyError';
+    this.keys = keys;
+  }
+}
+
 export interface AutosaveQueueOptions {
-  /** Persist the given dirty keys. Resolves on success; rejects to trigger a retry. */
+  /**
+   * Persist the given dirty keys. Resolves only once they are written; rejects to trigger
+   * a retry, or with {@link UnflushableKeyError} for keys that can never be written.
+   */
   readonly flush: (keys: readonly string[]) => Promise<void>;
   /** Debounce window; defaults to `AUTOSAVE_DEBOUNCE_MS` (spec §2.6). */
   readonly debounceMs?: number;
@@ -104,6 +128,13 @@ export class AutosaveQueue {
       await this.flushImpl(batch);
       return true;
     } catch (error) {
+      if (error instanceof UnflushableKeyError) {
+        // Permanent: re-queueing would rebuild the same doomed batch every debounce, forever.
+        // Drop the keys but report and return failure, so `onIdle` never runs and the project
+        // stays marked modified — the work really is unsaved.
+        this.onError?.(error, error.keys);
+        return false;
+      }
       // Re-queue so nothing is lost; a re-armed debounce (or saveNow) retries.
       for (const key of batch) this.dirty.add(key);
       this.onError?.(error, batch);
