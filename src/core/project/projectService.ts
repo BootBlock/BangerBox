@@ -87,7 +87,18 @@ async function loadProject(id: string): Promise<void> {
 
   queue = new AutosaveQueue({
     flush: (keys) => flushDirtyKeys(repos, keys),
-    onError: () => useUIStore.getState().pushToast('Autosave failed — will retry.', 'warning'),
+    // Autosave failing means edits are only in memory — an error, not a warning, and one the
+    // user can act on: export now, before a reload takes the unsaved work with it. The cause
+    // is named because "quota full" and "worker died" call for different responses.
+    onError: (error) =>
+      useUIStore
+        .getState()
+        .pushToast(
+          `Autosave failed — your recent changes are not saved. Export the project now. (${
+            error instanceof Error && error.message ? error.message : 'unknown cause'
+          })`,
+          'error',
+        ),
     onIdle: () => useProjectStore.getState().setModified(false),
   });
   registerAutosave(queue, { onDirty: () => useProjectStore.getState().setModified(true) });

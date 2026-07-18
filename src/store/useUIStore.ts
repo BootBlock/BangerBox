@@ -78,8 +78,48 @@ interface UIState {
 /** Toast queue depth — old toasts drop off the back so a burst can't grow unbounded. */
 const MAX_TOASTS = 8;
 
+/**
+ * How long an advisory notice stays up before it dismisses itself. Warnings and errors are
+ * NOT on a timer: they report something the user has to know about and act on, so they wait
+ * to be dismissed by hand.
+ */
+const AUTO_DISMISS_MS = 6000;
+const AUTO_DISMISS: ReadonlySet<ToastTone> = new Set<ToastTone>(['info', 'success']);
+
+/**
+ * Trim the queue to {@link MAX_TOASTS} by dropping the oldest notice the user can afford to
+ * lose. A repeating failure (autosave retries every debounce tick) would otherwise push a
+ * one-shot "could not open your project" off the back before it had been read, so advisory
+ * notices are evicted first and an error is only dropped when the queue is nothing but errors.
+ */
+function trimQueue(toasts: Toast[]): Toast[] {
+  if (toasts.length <= MAX_TOASTS) return toasts;
+  const victim = toasts.findIndex((toast) => toast.tone !== 'error');
+  const index = victim === -1 ? 0 : victim;
+  return [...toasts.slice(0, index), ...toasts.slice(index + 1)];
+}
+
+/** Pending auto-dismiss timers by toast id, so a refreshed notice restarts rather than stacks. */
+const dismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleAutoDismiss(id: string, tone: ToastTone): void {
+  const pending = dismissTimers.get(id);
+  if (pending !== undefined) clearTimeout(pending);
+  if (!AUTO_DISMISS.has(tone)) {
+    dismissTimers.delete(id);
+    return;
+  }
+  dismissTimers.set(
+    id,
+    setTimeout(() => {
+      dismissTimers.delete(id);
+      useUIStore.getState().dismissToast(id);
+    }, AUTO_DISMISS_MS),
+  );
+}
+
 export const useUIStore = create<UIState>()(
-  subscribeWithSelector((set) => ({
+  subscribeWithSelector((set, get) => ({
     activeMode: 'main',
     modal: null,
     dragDropPayload: null,
@@ -96,8 +136,22 @@ export const useUIStore = create<UIState>()(
     setCapabilities: (capabilities) => set({ capabilities }),
 
     pushToast: (message, tone = 'info') => {
+      // A retrying failure says the same thing every tick. Refreshing the notice already on
+      // screen keeps the queue describing distinct problems rather than one problem eight times.
+      const existing = get().toasts.find((toast) => toast.message === message && toast.tone === tone);
+      if (existing) {
+        set((state) => ({
+          toasts: state.toasts.map((toast) =>
+            toast.id === existing.id ? { ...toast, createdAt: Date.now() } : toast,
+          ),
+        }));
+        scheduleAutoDismiss(existing.id, tone);
+        return existing.id;
+      }
+
       const toast: Toast = { id: crypto.randomUUID(), message, tone, createdAt: Date.now() };
-      set((state) => ({ toasts: [...state.toasts, toast].slice(-MAX_TOASTS) }));
+      set((state) => ({ toasts: trimQueue([...state.toasts, toast]) }));
+      scheduleAutoDismiss(toast.id, tone);
       return toast.id;
     },
     dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) })),
