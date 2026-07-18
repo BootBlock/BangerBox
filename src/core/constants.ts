@@ -25,6 +25,14 @@ export const CHOKE_FADE_MS = 20;
  * Fade applied at the natural end of a voice in milliseconds — spec §5.4 ("never a hard
  * cut/click"). A sample whose last frame is not at zero — a chop slice, a trimmed layer,
  * a truncated one-shot — would otherwise step straight to silence and click.
+ *
+ * This fade is deliberately the *whole* answer for such samples: the stored audio is left
+ * honest, discontinuity and all, and nothing bakes a boundary fade into the written file
+ * (issue #86). Chop slices are a contiguous partition of their source, so a baked fade-out
+ * would dip the level at every boundary when slices are re-sequenced back to back — the
+ * workflow chopping exists for — and would then be faded a second time here on playback.
+ * Bounce/export needs no separate treatment: every §9.5 variant renders through the same
+ * VoicePool (see bounceService.renderSegments), so it inherits this declick already.
  */
 export const DECLICK_FADE_MS = 3;
 
