@@ -137,8 +137,11 @@ await withServer({ blockServiceWorker: true }, async (page, { pageErrors }) => {
   await page.goto(`http://localhost:${PORT}${BASE}`, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 2500));
   const text = await page.evaluate(() => document.body.innerText.trim());
-  record('capability gate renders instead of a blank page', /unsupported browser/i.test(text));
-  record('gate names the missing isolation', /cross-origin isolation/i.test(text));
+  // Copy per §14 2026-07-18 (n): with only isolation missing the gate leads with the
+  // reload it knows will fix it, rather than blaming the browser.
+  record('capability gate renders instead of a blank page', /needs one more reload/i.test(text));
+  record('gate names the missing isolation', /crossOriginIsolated/i.test(text));
+  record('gate offers the troubleshooting guide', /troubleshooting guide/i.test(text));
   // Only uncaught exceptions count here: this scenario deliberately 404s the worker and
   // its bootstrap, so console 404s are the simulation working, not a defect.
   record('no uncaught import-time error', pageErrors.length === 0, pageErrors[0] ?? '');

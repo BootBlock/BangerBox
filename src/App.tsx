@@ -5,6 +5,7 @@ import { AppShell } from '@/ui/shell/AppShell';
 import { StartGate } from '@/ui/shell/StartGate';
 import { PwaUpdatePrompt } from '@/ui/PwaUpdatePrompt';
 import { ToastViewport } from '@/ui/ToastViewport';
+import { UnsupportedBrowserNotice } from '@/ui/UnsupportedBrowserNotice';
 import { useUndoKeyboard } from '@/ui/useUndoKeyboard';
 import type { PwaUpdateApi } from '@/ui/usePwaUpdate';
 
@@ -37,6 +38,9 @@ export function App({ capabilities, pwaApiOverride }: AppProps) {
       </StartGate>
       <PwaUpdatePrompt apiOverride={pwaApiOverride} />
       <ToastViewport />
+      {/* Non-blocking: the gate already let this browser through on capability (spec §2.1);
+          this only warns that the engine is untested (spec §1.3 #15). */}
+      <UnsupportedBrowserNotice browser={capabilities.browser} />
     </>
   );
 }

@@ -37,6 +37,8 @@ function seed(bluetooth = true) {
       soft: { bluetooth, microphone: true, persistentStorage: true, wakeLock: true },
       hardSupported: true,
       missingHard: [],
+      missingHardDetails: [],
+      browser: { engine: 'chromium', name: 'your browser', supported: true },
     },
   });
 }
@@ -141,10 +143,7 @@ describe('QLinkEditMode (spec §8.5.11)', () => {
     });
     const user = userEvent.setup();
     render(<QLinkEditMode />);
-    await user.selectOptions(
-      screen.getByTestId('qlink-param-0'),
-      'program:prog-1.pad:0.filter.cutoff',
-    );
+    await user.selectOptions(screen.getByTestId('qlink-param-0'), 'program:prog-1.pad:0.filter.cutoff');
     expect(useHardwareStore.getState().qLinkBindings[0]).toMatchObject({
       targetParameterPath: 'program:prog-1.pad:0.filter.cutoff',
       targetStore: 'program',

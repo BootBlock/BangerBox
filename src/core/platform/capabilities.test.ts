@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   detectCapabilities,
   evaluateCapabilities,
+  HARD_CAPABILITY_DETAILS,
   HARD_CAPABILITY_LABELS,
   type HardCapabilities,
   type SoftCapabilities,
@@ -55,6 +56,30 @@ describe('evaluateCapabilities (spec §2.1)', () => {
     expect(Object.isFrozen(report.hard)).toBe(true);
     expect(Object.isFrozen(report.soft)).toBe(true);
     expect(Object.isFrozen(report.missingHard)).toBe(true);
+    expect(Object.isFrozen(report.missingHardDetails)).toBe(true);
+    expect(Object.isFrozen(report.browser)).toBe(true);
+  });
+
+  it('pairs every missing requirement with its own explanation and remedy', () => {
+    const report = evaluateCapabilities({ ...allHard, opfs: false, atomics: false }, allSoft);
+    expect(report.missingHardDetails).toHaveLength(2);
+    // Not a blanket message: each entry must carry its own actionable copy.
+    for (const detail of report.missingHardDetails) {
+      expect(detail.title).toBeTruthy();
+      expect(detail.what).toBeTruthy();
+      expect(detail.fix).toBeTruthy();
+      expect(detail.technical).toBeTruthy();
+    }
+    expect(report.missingHardDetails.map((d) => d.title)).toEqual([
+      HARD_CAPABILITY_DETAILS.opfs.title,
+      HARD_CAPABILITY_DETAILS.atomics.title,
+    ]);
+  });
+
+  it('labels stay in lockstep with the details they are derived from', () => {
+    for (const key of Object.keys(HARD_CAPABILITY_DETAILS) as (keyof typeof HARD_CAPABILITY_DETAILS)[]) {
+      expect(HARD_CAPABILITY_LABELS[key]).toBe(HARD_CAPABILITY_DETAILS[key].technical);
+    }
   });
 });
 

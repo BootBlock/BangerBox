@@ -9,7 +9,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from './App';
 import { AppShell } from './ui/shell/AppShell';
-import { evaluateCapabilities } from './core/platform/capabilities';
+import { detectBrowser, evaluateCapabilities } from './core/platform/capabilities';
 import { CapabilityGate } from './ui/CapabilityGate';
 import { MODE_DEFINITIONS } from './features/modes';
 import { useUIStore } from './store';
@@ -175,12 +175,106 @@ describe('StartGate (spec §5.1 autoplay gate)', () => {
 });
 
 describe('CapabilityGate blocking screen (spec §2.1)', () => {
-  it('lists exactly what is missing and which browser to use', () => {
-    render(<CapabilityGate missing={['SharedArrayBuffer shared memory', 'WebAssembly']} />);
+  const allHard = {
+    crossOriginIsolated: true,
+    sharedArrayBuffer: true,
+    audioWorklet: true,
+    opfs: true,
+    webAssembly: true,
+    atomics: true,
+  };
+  const allSoft = { bluetooth: true, microphone: true, persistentStorage: true, wakeLock: true };
+  const firefox = { engine: 'firefox' as const, name: 'Firefox', supported: false };
+
+  it('explains each missing requirement individually, not as one blanket statement', () => {
+    const report = evaluateCapabilities({ ...allHard, webAssembly: false, opfs: false }, allSoft);
+    render(<CapabilityGate report={report} />);
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('SharedArrayBuffer shared memory');
+
+    // The plain-English name, what it costs the user, and the specific thing to try —
+    // for BOTH items, not just a shared summary.
     expect(alert).toHaveTextContent('WebAssembly');
-    expect(alert).toHaveTextContent('Microsoft Edge');
-    expect(alert).toHaveTextContent('Google Chrome');
+    expect(alert).toHaveTextContent('native speed');
+    expect(alert).toHaveTextContent('enterprise/group policy');
+    expect(alert).toHaveTextContent('Private file storage');
+    expect(alert).toHaveTextContent('Private/incognito windows block this storage');
+    expect(alert).toHaveTextContent('navigator.storage.getDirectory');
+  });
+
+  it('leads with a reload when only isolation is missing — the browser is fine', () => {
+    const report = evaluateCapabilities(
+      { ...allHard, crossOriginIsolated: false, sharedArrayBuffer: false },
+      allSoft,
+    );
+    render(<CapabilityGate report={report} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('BangerBox needs one more reload');
+    expect(screen.getByTestId('capability-gate-reload')).toBeInTheDocument();
+  });
+
+  it('does not offer the reload shortcut when a genuine capability is absent', () => {
+    const report = evaluateCapabilities({ ...allHard, audioWorklet: false }, allSoft);
+    render(<CapabilityGate report={report} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('can’t start in this browser');
+    expect(screen.queryByTestId('capability-gate-reload')).not.toBeInTheDocument();
+  });
+
+  it('links to the repo, the wiki, and a troubleshooting guide that exists', () => {
+    const report = evaluateCapabilities({ ...allHard, webAssembly: false }, allSoft);
+    render(<CapabilityGate report={report} />);
+    // In-repo, NOT the wiki: a GitHub wiki answers 200 with its Home page for any page
+    // that does not exist, so an unwritten wiki deep link misdirects silently. See
+    // core/platform/links.ts.
+    expect(screen.getByRole('link', { name: /troubleshooting guide/i })).toHaveAttribute(
+      'href',
+      'https://github.com/BootBlock/BangerBox/blob/main/docs/TROUBLESHOOTING.md',
+    );
+    expect(screen.getByRole('link', { name: /documentation wiki/i })).toHaveAttribute(
+      'href',
+      'https://github.com/BootBlock/BangerBox/wiki',
+    );
+    expect(screen.getByRole('link', { name: /bangerbox on github/i })).toHaveAttribute(
+      'href',
+      'https://github.com/BootBlock/BangerBox',
+    );
+  });
+
+  it('names an untested browser without blaming it for the fault', () => {
+    const report = evaluateCapabilities({ ...allHard, webAssembly: false }, allSoft, firefox);
+    render(<CapabilityGate report={report} />);
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('You’re using Firefox');
+    expect(alert).toHaveTextContent('Other browsers may still work');
+  });
+
+  it('says nothing about the browser when it is the supported one', () => {
+    const report = evaluateCapabilities({ ...allHard, webAssembly: false }, allSoft);
+    render(<CapabilityGate report={report} />);
+    expect(screen.getByRole('alert')).not.toHaveTextContent('isn’t supported');
+  });
+});
+
+describe('detectBrowser (spec §1.3 #15)', () => {
+  // Edge and Chrome both carry "Safari" in their UA, so ordering is the whole test.
+  it.each([
+    [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+      'chromium',
+      true,
+    ],
+    [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      'chromium',
+      true,
+    ],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0', 'firefox', false],
+    [
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+      'safari',
+      false,
+    ],
+  ])('identifies %s', (ua, engine, supported) => {
+    const info = detectBrowser(ua);
+    expect(info.engine).toBe(engine);
+    expect(info.supported).toBe(supported);
   });
 });

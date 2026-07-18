@@ -27,7 +27,7 @@ function renderScreen(screen: ReactNode): void {
 
 async function bootstrap(): Promise<void> {
   if (!capabilities.hardSupported) {
-    renderScreen(<CapabilityGate missing={capabilities.missingHard} />);
+    renderScreen(<CapabilityGate report={capabilities} />);
     return;
   }
 
