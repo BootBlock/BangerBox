@@ -12,6 +12,17 @@ import { useEffect, useRef } from 'react';
 import { formatValueText, valueToNormalised, type ControlCurve, type ControlRange } from './controlMaths';
 import { useContinuousControl } from './useContinuousControl';
 
+/**
+ * Cap and fill are driven by transforms alone so a drag stays composite-only — no layout
+ * property is written on a gesture frame (spec §8.3, §11.5 60 fps budget).
+ *
+ * The cap's positioner spans the full travel, so a percentage `translateY` resolves against
+ * the track height; the cap inside it is offset by its own half-height to centre on the
+ * travel point. The fill scales from its bottom edge.
+ */
+const capTransform = (normalised: number) => `translateY(${-normalised * 100}%)`;
+const fillTransform = (normalised: number) => `scaleY(${normalised})`;
+
 export interface FaderProps {
   label: string;
   value: number;
@@ -52,9 +63,8 @@ export function Fader({
   const describe = (v: number) => formatValue?.(v) ?? formatValueText(v, unit);
 
   const paint = (next: number, normalised: number) => {
-    const percent = `${normalised * 100}%`;
-    if (capRef.current) capRef.current.style.bottom = percent;
-    if (fillRef.current) fillRef.current.style.height = percent;
+    if (capRef.current) capRef.current.style.transform = capTransform(normalised);
+    if (fillRef.current) fillRef.current.style.transform = fillTransform(normalised);
     const text = describe(next);
     if (readoutRef.current) readoutRef.current.textContent = text;
     rootRef.current?.setAttribute('aria-valuenow', String(next));
@@ -80,9 +90,8 @@ export function Fader({
   // Keep the ref-painted visuals honest when the value changes outside a gesture
   // (undo, automation, Q-Link) — spec §3.4.
   useEffect(() => {
-    const percent = `${normalised * 100}%`;
-    if (capRef.current) capRef.current.style.bottom = percent;
-    if (fillRef.current) fillRef.current.style.height = percent;
+    if (capRef.current) capRef.current.style.transform = capTransform(normalised);
+    if (fillRef.current) fillRef.current.style.transform = fillTransform(normalised);
     if (readoutRef.current) readoutRef.current.textContent = valueText;
   }, [normalised, valueText]);
 
@@ -107,20 +116,23 @@ export function Fader({
           disabled ? 'opacity-40' : 'cursor-grab active:cursor-grabbing'
         }`}
       >
-        {/* Travel fill below the cap. */}
+        {/* Travel fill below the cap; scaled from its bottom edge. */}
         <div
           ref={fillRef}
           aria-hidden="true"
-          className="absolute inset-x-0 bottom-0 rounded-bb-sm bg-bb-accent/25"
-          style={{ height: `${normalised * 100}%` }}
+          className="absolute inset-0 origin-bottom rounded-bb-sm bg-bb-accent/25 will-change-transform"
+          style={{ transform: fillTransform(normalised) }}
         />
-        {/* Cap; translated up by its own half-height so it centres on the travel point. */}
+        {/* Cap positioner: full travel height, so a percentage translate tracks the fader. */}
         <div
           ref={capRef}
           aria-hidden="true"
-          className="absolute inset-x-0.5 h-3 -translate-y-1/2 rounded-bb-sm border border-bb-line bg-bb-raised shadow-bb-raised will-change-transform"
-          style={{ bottom: `${normalised * 100}%` }}
-        />
+          className="pointer-events-none absolute inset-x-0.5 inset-y-0 will-change-transform"
+          style={{ transform: capTransform(normalised) }}
+        >
+          {/* Cap; translated down by its own half-height so it centres on the travel point. */}
+          <div className="absolute inset-x-0 bottom-0 h-3 translate-y-1/2 rounded-bb-sm border border-bb-line bg-bb-raised shadow-bb-raised" />
+        </div>
       </div>
       <span className="max-w-16 truncate text-center text-[0.625rem] leading-tight text-bb-muted">
         {label}
