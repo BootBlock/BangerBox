@@ -12,10 +12,11 @@ tables, grid geometry, schedule-time groove, pad-strip derivation, program-param
 offline — now including the Phase 7 proof **all 12 modes mount from the rail** alongside every
 prior Phase 0–6 proof, plus `lint`, `type-check`, `verify` (**no open stubs**), and `build`.
 
-**Bundle size is deliberately unconstrained** (§11.5, §14 2026-07-18 (j)): the main-JS-chunk size
-budget was removed at the human developer's direction. Do NOT reintroduce a size limit, a size gate
-in `npm run verify`, or code-splitting undertaken for size alone. The remaining §11.5 runtime budgets
-(touch-to-sound, underruns, 60 fps, cold load) are unchanged and still binding.
+**Bundle size and load time are deliberately unconstrained** (§11.5, §14 2026-07-18 (j)): the
+main-JS-chunk size budget and the cold-load target were both removed at the human developer's
+direction. Do NOT reintroduce a size limit, a cold-load target, a size/timing gate in
+`npm run verify`, or code-splitting/deferred loading undertaken to hit either. The remaining §11.5
+runtime budgets (touch-to-sound, underruns, 60 fps) are unchanged and still binding.
 
 ---
 
