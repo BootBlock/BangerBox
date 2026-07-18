@@ -27,6 +27,14 @@ export interface CcThrottleOptions {
   readonly now?: () => number;
   /** Frame scheduler; defaults to `requestAnimationFrame` (spec §10.4 rAF alignment). */
   readonly schedule?: (callback: () => void) => void;
+  /**
+   * Dither band in raw controller steps (spec §10.4 "±1"). Pitch bend passes its 14-bit
+   * value through the same coalescing, where one step of 16 384 is not dither, so it
+   * lowers this to zero.
+   */
+  readonly hysteresisSteps?: number;
+  /** Values that always pass the hysteresis gate, keeping the travel ends reachable. */
+  readonly endpoints?: readonly [number, number];
 }
 
 export interface CcThrottle {
@@ -48,6 +56,8 @@ export function createCcThrottle(
   const intervalMs = options.intervalMs ?? CC_THROTTLE_MS;
   const now = options.now ?? (() => performance.now());
   const schedule = options.schedule ?? defaultSchedule;
+  const hysteresisSteps = options.hysteresisSteps ?? HYSTERESIS_STEPS;
+  const [endpointMin, endpointMax] = options.endpoints ?? [CC_MIN, CC_MAX];
 
   /** Latest unapplied value per CC — the coalescing buffer (spec §10.4). */
   const pending = new Map<number, number>();
@@ -69,8 +79,8 @@ export function createCcThrottle(
       // Still inside this controller's window — leave it pending and retry next frame.
       if (last && at - last.at < intervalMs) continue;
       pending.delete(cc);
-      const isEndpoint = value === CC_MIN || value === CC_MAX;
-      if (last && !isEndpoint && Math.abs(value - last.value) <= HYSTERESIS_STEPS) continue;
+      const isEndpoint = value === endpointMin || value === endpointMax;
+      if (last && !isEndpoint && Math.abs(value - last.value) <= hysteresisSteps) continue;
       lastApplied.set(cc, { value, at });
       try {
         apply(cc, value);

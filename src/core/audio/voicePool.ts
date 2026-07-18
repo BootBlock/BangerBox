@@ -177,6 +177,18 @@ export class VoicePool {
     }
   }
 
+  /**
+   * Apply a pitch-bend detune, in cents, to every sounding voice of a program (spec §10.2).
+   * Layered on each voice's base detune so pad tune and pitch modulation survive the bend
+   * (spec §6), and ramped like any other live parameter change (spec §4.3 dezipper).
+   */
+  applyProgramDetune(programId: string, cents: number, when: number): void {
+    for (const voice of this.voices.values()) {
+      if (voice.programId !== programId || voice.stopScheduled) continue;
+      rampParamTarget(voice.source.detune, voice.baseDetune + cents, when);
+    }
+  }
+
   /** Live voices sounding a given program (keygroup polyphony bookkeeping, spec §6). */
   programVoiceCount(programId: string): number {
     let count = 0;
