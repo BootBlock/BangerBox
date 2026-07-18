@@ -59,6 +59,8 @@ let nodeSeq = 0;
 class FakeAudioNode {
   readonly id = nodeSeq++;
   readonly outputs: FakeAudioNode[] = [];
+  /** Params this node is connected into (mod routes, bend) — spec §6, §10.2. */
+  readonly paramOutputs: FakeAudioParam[] = [];
   disconnectCount = 0;
   /** True once `disconnect()` has been called with no argument (full teardown). */
   fullyDisconnected = false;
@@ -72,6 +74,7 @@ class FakeAudioNode {
 
   connect<T extends FakeAudioNode | FakeAudioParam>(destination: T): T {
     if (destination instanceof FakeAudioNode) this.outputs.push(destination);
+    else this.paramOutputs.push(destination);
     return destination;
   }
 
@@ -79,6 +82,7 @@ class FakeAudioNode {
     this.disconnectCount++;
     if (destination === undefined) {
       this.outputs.length = 0;
+      this.paramOutputs.length = 0;
       this.fullyDisconnected = true;
       return;
     }
@@ -158,6 +162,23 @@ class FakeOscillatorNode extends FakeAudioNode {
   stopped = false;
   constructor(context: FakeAudioContext) {
     super(context, 'oscillator');
+  }
+  start(_when?: number): void {
+    this.started = true;
+  }
+  stop(_when?: number): void {
+    this.stopped = true;
+  }
+}
+
+class FakeConstantSourceNode extends FakeAudioNode {
+  /** Defaults to 1, as the real node does — the pool must zero it before starting. */
+  readonly offset = new FakeAudioParam(1);
+  onended: (() => void) | null = null;
+  started = false;
+  stopped = false;
+  constructor(context: FakeAudioContext) {
+    super(context, 'constantSource');
   }
   start(_when?: number): void {
     this.started = true;
@@ -253,6 +274,9 @@ export class FakeAudioContext {
   }
   createOscillator(): FakeOscillatorNode {
     return new FakeOscillatorNode(this);
+  }
+  createConstantSource(): FakeConstantSourceNode {
+    return new FakeConstantSourceNode(this);
   }
   createBuffer(numberOfChannels: number, length: number, sampleRate: number): FakeAudioBuffer {
     return new FakeAudioBuffer(numberOfChannels, length, sampleRate);

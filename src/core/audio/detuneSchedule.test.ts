@@ -27,7 +27,7 @@ function referenceEnd(cents: (time: number) => number, from: number, region: num
 }
 
 function schedule(over: Partial<DetuneSchedule> = {}): DetuneSchedule {
-  return { breakpoints: [{ time: 0, cents: 0 }], oscillations: [], ...over };
+  return { breakpoints: [{ time: 0, cents: 0 }], bend: [], oscillations: [], ...over };
 }
 
 describe('detune schedule (spec §6)', () => {
@@ -141,9 +141,9 @@ describe('live retune folding (spec §10.2)', () => {
     expect(baseDetuneAt(s, 0.7)).toBe(0);
   });
 
-  it('ignores a retune superseded by a ramp that is still pending', () => {
-    // `setTargetAtTime` only renders while it is the last event on the param: a pending
-    // `linearRampToValueAtTime` interpolates from the preceding event and overrides it.
+  it('sums a retune onto a contour ramp that is still pending', () => {
+    // The bend rides its own node into `source.detune`, so a ramp still running there
+    // neither swallows it nor is truncated by it — the two simply add (spec §10.2).
     const s = schedule({
       breakpoints: [
         { time: 0, cents: 0 },
@@ -151,7 +151,18 @@ describe('live retune folding (spec §10.2)', () => {
       ],
     });
     applyRetune(s, 0.5, -1200);
-    expect(baseDetuneAt(s, 0.5)).toBe(600); // unchanged — the glide/envelope ramp wins
-    expect(baseDetuneAt(s, 2)).toBe(1200);
+    expect(baseDetuneAt(s, 0.25)).toBe(300); // before the bend: the contour alone
+    expect(baseDetuneAt(s, 0.5)).toBe(-600); // 600 of contour, less the 1200 bend
+    expect(baseDetuneAt(s, 0.75)).toBe(-300); // the contour keeps ramping underneath it
+    expect(baseDetuneAt(s, 2)).toBe(0); // and the bend survives the ramp's last event
+  });
+
+  it('steps between successive retunes rather than interpolating across them', () => {
+    const s = schedule();
+    applyRetune(s, 1, 100);
+    applyRetune(s, 2, -100);
+    expect(baseDetuneAt(s, 0.5)).toBe(0); // unbent until the first retune
+    expect(baseDetuneAt(s, 1.5)).toBe(100); // held, not ramping toward the next
+    expect(baseDetuneAt(s, 3)).toBe(-100);
   });
 });
