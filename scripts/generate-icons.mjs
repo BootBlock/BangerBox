@@ -5,8 +5,7 @@
 // The glyph is a dark rounded plate carrying a 4×4 grid of sampler pads with an amber
 // gradient sheen — the BangerBox pad bank. SVG is the master; the raster fallbacks are
 // rendered with the Playwright engine already used by the browser smoke (system Edge
-// channel first — no browser download), so this script adds no dependency. Pattern
-// adapted from the Gubbins icon generator (§13.6 reference-implementation rule).
+// channel first — no browser download), so this script adds no dependency.
 //
 //   npm run icons
 //

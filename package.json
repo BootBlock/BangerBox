@@ -5,6 +5,7 @@
   "type": "module",
   "description": "BangerBox — an offline-first, browser-based DAW, sequencer, and sampler (installable PWA).",
   "license": "MIT",
+  "author": "Joe Cox",
   "engines": {
     "node": ">=24"
   },

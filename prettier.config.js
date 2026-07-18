@@ -1,4 +1,4 @@
-// Prettier config — house style shared with the Gubbins reference repo: single-quote,
+// Prettier config — house style: single-quote,
 // semicolons, 2-space indent, ~110-column lines. Prettier never adds/removes braces, so
 // the braceless single-line-guard style is enforced by ESLint's `curly` rule instead.
 /** @type {import('prettier').Config} */

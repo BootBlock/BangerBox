@@ -3,7 +3,7 @@
  * into the exact archive layout (`manifest.json`, `project.json`, `samples/<sampleId>.wav`) and
  * back. Runs in `pack.worker.ts` off the main thread (spec §9.6); the logic is a pure function
  * pair so the round-trip is unit-testable in memory (§11.1). fflate is the §1.3 #12 archiver
- * (`zipSync`/`unzipSync`), proven in the Gubbins reference.
+ * (`zipSync`/`unzipSync`).
  */
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import {

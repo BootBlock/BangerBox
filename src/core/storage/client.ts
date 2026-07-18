@@ -5,7 +5,7 @@
  * open the OPFS connection, then apply any outstanding migrations before the UI
  * is allowed to use the database (spec §9.2). Kept as a module singleton so the
  * worker — which holds the exclusive OPFS write lock — is created exactly once
- * per tab. Adapted from the proven Gubbins client (spec §13.6).
+ * per tab.
  */
 import { WorkerDatabaseDriver, type DbDiagnostics } from './rpc';
 import { migrations, runMigrations, type MigrationReport } from './migrations';

@@ -10,8 +10,7 @@
  * The SW MUST NOT intercept OPFS or blob URLs; it caches only the static app shell and
  * audio data never transits it (spec §2.4). Cross-origin isolation comes from the
  * dev/preview server headers (locked decision §1.3 #14) — precached responses retain
- * those headers, so the offline shell stays isolated too. Adapted from the proven
- * Gubbins worker (§13.6 reference-implementation rule).
+ * those headers, so the offline shell stays isolated too.
  */
 
 interface PrecacheEntry {
@@ -24,7 +23,7 @@ const sw = self as unknown as ServiceWorkerGlobalScope;
 // `self.__WB_MANIFEST` is the injection point vite-plugin-pwa replaces at build time.
 // De-duplicate by URL: the manifest can list the same asset twice (precache glob +
 // webmanifest icon injection) and `cache.addAll` REJECTS on duplicate requests, which
-// would abort install and leave the worker redundant (lesson from Gubbins).
+// would abort install and leave the worker redundant.
 const PRECACHE_URLS = [
   ...new Set((self as unknown as { __WB_MANIFEST: PrecacheEntry[] }).__WB_MANIFEST.map((entry) => entry.url)),
 ];
@@ -99,7 +98,7 @@ const MATCH_OPTIONS: CacheQueryOptions = { ignoreSearch: true, ignoreVary: true 
  * strips `?vfs=opfs` from sqlite-wasm's OPFS async-proxy worker offline and breaks
  * the whole database (the proxy throws "Expecting vfs=… URL argument"). Re-wrapping
  * the body in a fresh Response clears `response.url`, making the browser fall back
- * to the request URL — query preserved (same mechanism as the proven Gubbins SW).
+ * to the request URL — query preserved.
  */
 function preserveRequestUrl(cached: Response, request: Request): Response {
   if (cached.url === '' || cached.url === request.url) return cached;

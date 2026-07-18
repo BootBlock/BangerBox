@@ -8,7 +8,6 @@
  * another tab already holds it, we report `acquired: false` so the UI shows the
  * styled "already open in another tab" screen, plus `whenReleased` — settling
  * once the owning tab goes away — so the blocked tab can offer to take over.
- * Adapted from the proven Gubbins tab lock (spec §13.6).
  */
 
 /** The §9.7 lock name — binding. */

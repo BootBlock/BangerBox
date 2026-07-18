@@ -4,7 +4,6 @@
  * SQLite/worker failures are serialised across the RPC bridge and rebuilt on the
  * main thread as `DbError`, so call sites (repositories, and the stores/undo layer
  * in Phase 2) can branch on a stable `code` rather than parsing message strings.
- * Adapted from the proven Gubbins error model (spec §13.6 reference rule).
  */
 
 export type DbErrorCode =

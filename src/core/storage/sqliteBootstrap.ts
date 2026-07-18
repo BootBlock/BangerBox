@@ -7,7 +7,7 @@
  * worker can report it cleanly rather than silently degrading.
  *
  * Runs exclusively inside `db.worker.ts` — the main thread never imports the WASM
- * (spec §9.2). Adapted from the proven Gubbins bootstrap (spec §13.6).
+ * (spec §9.2).
  */
 import sqlite3InitModule, { type OpfsDatabase, type Sqlite3Static } from '@sqlite.org/sqlite-wasm';
 import { DbError } from './errors';

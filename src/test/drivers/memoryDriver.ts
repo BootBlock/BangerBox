@@ -5,7 +5,7 @@
  * `node:sqlite` — a real SQLite engine — so storage logic (migrations, repository
  * SQL) is validated instantly in Vitest without the Web Worker, OPFS, or WASM
  * loading. This is the dependency injected in place of the worker bridge during
- * unit tests. Adapted from the proven Gubbins memory driver (spec §13.6).
+ * unit tests.
  *
  * NEVER imported by production code — it depends on a Node builtin and lives under
  * src/test/, which is excluded from the application tsconfig.

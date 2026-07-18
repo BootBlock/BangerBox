@@ -9,8 +9,7 @@
  * than leaving a half-migrated database.
  *
  * Operates against the IDatabaseDriver abstraction, so the entire engine is
- * validated in unit tests against the in-memory driver (spec §11.3). Adapted from
- * the proven Gubbins migration engine (spec §13.6 reference rule).
+ * validated in unit tests against the in-memory driver (spec §11.3).
  */
 import { DbError } from '../errors';
 import type { IDatabaseDriver, SqlStatement } from '../driver';

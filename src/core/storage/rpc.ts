@@ -6,7 +6,6 @@
  * `id`; the worker replies with the matching `id` and either a result or a
  * serialised error. Envelopes are Zod-validated at both ends (locked decision
  * §1.3 #11 — RPC payload guards). Messages are structured-clone-safe.
- * Adapted from the proven Gubbins worker bridge (spec §13.6 reference rule).
  */
 import { z } from 'zod';
 import { DbError, isSerialisedDbError, type SerialisedDbError } from './errors';

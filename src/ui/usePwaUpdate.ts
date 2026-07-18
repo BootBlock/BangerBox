@@ -6,8 +6,7 @@
  * installs but never activates on its own, so a deploy can never reload the page out
  * from under an unsaved project. Registration goes through an injectable seam so the
  * hook is testable with a fake — the real seam lazily imports `virtual:pwa-register`
- * (§2.7 pinned form), which is never evaluated in test environments. Adapted from the
- * proven Gubbins hook (§13.6 reference-implementation rule).
+ * (§2.7 pinned form), which is never evaluated in test environments.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 

@@ -4,8 +4,7 @@
  * Repositories are the only RPC clients (spec §9.2); they depend only on the
  * injected {@link IDatabaseDriver} — never the worker — keeping them
  * unit-testable against the in-memory driver. React code never contains SQL
- * (spec §3.1): all SQL lives in this directory. Adapted from the proven Gubbins
- * base repository (spec §13.6).
+ * (spec §3.1): all SQL lives in this directory.
  */
 import type { IDatabaseDriver, SqlValue } from '../driver';
 import type { Page, PageParams } from './types';

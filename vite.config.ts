@@ -112,7 +112,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     // worker_threads pool: on Node 25 the default forks pool hits a cold-start spawn
-    // race that fails whole runs (lesson from the Gubbins reference repo).
+    // race that fails whole runs.
     pool: 'threads',
     // spec §2.3.9 — concurrent-agent worktrees carry full copies of src/ and their own
     // node_modules; sweeping them loads a second React and breaks hooks for every test.

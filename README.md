@@ -51,6 +51,11 @@ npm run build:wasm   # compile the AssemblyScript DSP kernels
 npm run dev
 ```
 
+`npm run build:wasm` is not optional on a fresh checkout. The compiled kernels are build
+artefacts and are not committed, and the DSP golden-output tests load them from disk — so
+`npm test` reports failures until they exist. `npm run build` runs it for you; a bare
+`npm test` does not.
+
 On Windows you can instead run `Run.ps1` (or `Run.bat`), which checks the toolchain, starts the dev
 server, and opens the browser against a concrete loopback address.
 

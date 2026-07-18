@@ -1,5 +1,4 @@
-// Flat ESLint config (ESLint 9) — adapted from the proven Gubbins reference config
-// (spec §13.6 reference-implementation rule): 2-space, single-quote, braceless
+// Flat ESLint config (ESLint 9) — house style: 2-space, single-quote, braceless
 // single-line guards; Prettier owns formatting (eslint-config-prettier last).
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';

@@ -11,7 +11,7 @@
  * or race the asynchronous boot — OPFS holds an exclusive lock and rapid
  * successive writes must never surface SQLITE_BUSY (spec §9.2). Because the OPFS
  * VFS runs synchronously within this worker, each handler completes atomically
- * before the next begins. Adapted from the proven Gubbins DB worker (spec §13.6).
+ * before the next begins.
  */
 import { bootstrapDatabase, readDiagnostics, type BootstrapResult } from './sqliteBootstrap';
 import { DbError } from './errors';
