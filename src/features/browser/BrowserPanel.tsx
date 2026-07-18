@@ -218,11 +218,9 @@ export function BrowserPanel() {
   };
 
   return (
-    <section aria-labelledby="browser-heading" className="flex min-h-0 flex-col gap-3">
-      <h2 id="browser-heading" className="sr-only">
-        Browser
-      </h2>
-
+    // No heading of its own: the mode's name comes from the shell's `h2` (§8.2), and a
+    // second sr-only "Browser" would just read the mode out twice.
+    <div className="flex min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -390,6 +388,6 @@ export function BrowserPanel() {
           )}
         </ul>
       </div>
-    </section>
+    </div>
   );
 }

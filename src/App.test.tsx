@@ -111,6 +111,32 @@ describe('AppShell (spec §8.1)', () => {
     }
   });
 
+  it('anchors heading navigation with exactly one h1 (spec §8.2)', () => {
+    renderShell();
+    const h1s = screen.getAllByRole('heading', { level: 1 });
+    expect(h1s).toHaveLength(1);
+    expect(h1s[0]).toHaveTextContent('BangerBox');
+  });
+
+  it('gives every mode the same heading hierarchy (spec §3.5 lens 1)', async () => {
+    const user = userEvent.setup();
+    renderShell();
+    for (const mode of MODE_DEFINITIONS) {
+      await user.click(screen.getByTestId(`mode-tab-${mode.id}`));
+      // The cross-fade unmounts the outgoing mode before mounting the incoming one, so
+      // wait for the new mode's own heading rather than the panel's `aria-label`.
+      await screen.findByRole('heading', { level: 2, name: mode.title });
+
+      // One h2 per mode — no mode may skip it or add a second of its own.
+      expect(screen.getAllByRole('heading', { level: 2 }), mode.id).toHaveLength(1);
+
+      // And nothing below it skips a level: an h4 only exists under an h3.
+      if (screen.queryAllByRole('heading', { level: 4 }).length > 0) {
+        expect(screen.queryAllByRole('heading', { level: 3 }).length, mode.id).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it('exposes the transport controls with accessible names (spec §8.2)', () => {
     renderShell();
     const toolbar = screen.getByRole('toolbar', { name: 'Transport' });

@@ -82,9 +82,9 @@ export function SampleEditPanel() {
 
   return (
     <section aria-labelledby="sample-edit-heading" className="mt-6">
-      <h2 id="sample-edit-heading" className="text-lg font-bold">
+      <h3 id="sample-edit-heading" className="text-lg font-bold">
         Sample edit
-      </h2>
+      </h3>
       <p className="mt-1 text-xs leading-relaxed text-bb-muted">
         Import, audition, and edit samples. Destructive tools render a new sample; the original is kept.
       </p>

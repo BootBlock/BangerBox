@@ -27,6 +27,9 @@ export function AppShell() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
+      {/* The document's one `h1`. Visually hidden because the frame already says what the
+          app is; heading-list navigation needs the top-level anchor regardless (§8.2). */}
+      <h1 className="sr-only">BangerBox</h1>
       <TransportBar />
       <div className="flex min-h-0 flex-1">
         <ModeRail />
@@ -54,6 +57,10 @@ export function AppShell() {
               transition={{ duration: 0.12 }}
               className="flex min-h-0 flex-1 flex-col gap-3"
             >
+              {/* Every mode gets its `h2` from here rather than from its own markup, so
+                  the hierarchy under the `h1` is identical across all 12 (§3.5 lens 1)
+                  and `Panel` can render `h3` beneath it unconditionally. */}
+              <h2 className="sr-only">{mode.title}</h2>
               <Mode />
             </motion.div>
           </AnimatePresence>

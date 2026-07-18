@@ -52,9 +52,9 @@ export function LooperPanel() {
 
   return (
     <section aria-labelledby="looper-heading" className="mt-6">
-      <h2 id="looper-heading" className="text-lg font-bold">
+      <h3 id="looper-heading" className="text-lg font-bold">
         Looper
-      </h2>
+      </h3>
       <p className="mt-1 text-xs leading-relaxed text-bb-muted">
         Resample the master output into a new sample. Start the engine and play something, then record.
       </p>
