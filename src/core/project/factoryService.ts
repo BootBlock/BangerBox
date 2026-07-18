@@ -14,7 +14,14 @@
  * Both remap every UUID (§9.6) and both are transactional in the §9.6 sense. For `demo`
  * that is free — nothing is visible until the new project is opened. For `kit` it is not:
  * the merge writes into a LIVE project, so this module records every OPFS file it writes
- * and every row it inserts, and unwinds them on failure (see `installKitPack`).
+ * and every row it inserts, and unwinds them on failure (see `applyKitMerge`).
+ *
+ * That same record is what makes a SUCCESSFUL kit merge undoable (spec §4.5). A demo install
+ * is harmless to mis-tap — it lands in a new project — but a kit merges into the project the
+ * user is working in, and before this the only recourse was the §8.5.7 purge, which would take
+ * the user's own unreferenced samples along with the kit's. So the merge pushes one composite
+ * undo entry ("Install …") whose undo replays the compensation and whose redo replays the
+ * merge, both over the retained {@link KitMergeRecord}.
  *
  * Installing is a storage-growing write, so it passes the §9.7 hard stop first — measured
  * against the pack's UNCOMPRESSED sample payload, before any OPFS write (spec §9.8).
@@ -23,9 +30,10 @@ import { checkWriteHeadroom } from '@/core/storage/safeguards';
 import { deleteFile, writeFileAtomic } from '@/core/storage/opfs';
 import type { Repositories } from '@/core/storage/repositories';
 import { programSchema } from './schemas';
-import { useProgramStore, useUIStore } from '@/store';
+import { pushUndo, useProgramStore, useUIStore } from '@/store';
+import type { Program } from './schemas';
 import { parseFactoryCatalogue, type FactoryCatalogue, type FactoryPack } from './factoryCatalogue';
-import { buildKitMerge } from './factoryMerge';
+import { buildKitMerge, type KitMerge } from './factoryMerge';
 import { planSharedSamples, type SharedSampleWrite } from './sampleSharing';
 import { remapSnapshot } from './mpcweb';
 import { unpackMpcwebInWorker } from './packClient';
@@ -130,6 +138,11 @@ function bytesByRemappedId(
  * Returns the paths written and rows inserted so a failing install can unwind exactly what it
  * added. Reused samples appear in neither list — they were already installed, possibly by a
  * pack the user still has, so undoing this install must never remove them.
+ *
+ * Idempotent, because REDO runs it too: between an undo and its redo another install may have
+ * adopted the same content-addressed path, in which case the bytes are already stored and this
+ * install owns nothing to re-add. `planSharedSamples` has made the check redundant on the
+ * first pass, but doing it here is what lets one function serve both.
  */
 async function installSharedSamples(
   writes: readonly SharedSampleWrite[],
@@ -137,12 +150,17 @@ async function installSharedSamples(
   written: string[],
   inserted: string[],
 ): Promise<void> {
+  const missing: SharedSampleWrite[] = [];
   for (const sample of writes) {
+    if ((await repos.samples.getGlobalByPath(sample.opfs_path)) === undefined) missing.push(sample);
+  }
+
+  for (const sample of missing) {
     // Fresh ArrayBuffer-backed view — the OPFS stream API rejects shared buffers.
     await writeFileAtomic(sample.opfs_path, new Uint8Array(sample.bytes));
     written.push(sample.opfs_path);
   }
-  for (const sample of writes) {
+  for (const sample of missing) {
     await repos.samples.create({
       id: sample.id,
       // NULL project id IS the global-library encoding (spec §9.3).
@@ -159,15 +177,37 @@ async function installSharedSamples(
 }
 
 /**
- * Merge a `kit` pack's programs and samples into the active project (spec §9.8).
+ * Everything one kit merge contributes, retained for the lifetime of its undo entry so the
+ * merge can be reversed and replayed (spec §4.5, §9.8).
  *
- * Transactional by compensation: unlike a new-project import, these writes land in a
- * project the user is already working in, so there is no "nothing is visible until the end"
- * safety net. Every OPFS file written and every row inserted is recorded, and a failure at
- * any point unwinds them in reverse before rethrowing — leaving no partial merge and no
- * orphaned files (spec §9.8, §9.6).
+ * Holding the sample BYTES is what costs something here, and it is deliberate: undo has to
+ * free the storage the install consumed — that quota is half of why a mis-tapped kit hurts —
+ * so redo cannot recover the audio from OPFS and must carry its own copy. A shipped kit is
+ * ~14 sub-second one-shots, on the order of a megabyte, held until the §2.6 undo depth evicts
+ * the entry. The alternative — re-fetching the pack on redo — trades that for a redo that can
+ * fail offline, which is the worse deal for an app whose first premise is offline-first (§1.1).
  */
-async function installKitPack(unpacked: UnpackedProject, projectId: string): Promise<void> {
+interface KitMergeRecord {
+  /** Samples this install would add; reused ones are absent (see {@link planSharedSamples}). */
+  readonly writes: readonly SharedSampleWrite[];
+  /** Program rows re-parented onto the active project (spec §9.8). */
+  readonly programs: KitMerge['programs'];
+}
+
+/** The runtime form of a merged program row — the store holds parsed programs, not payloads. */
+function runtimeProgram(program: KitMergeRecord['programs'][number]): Program {
+  return programSchema.parse(JSON.parse(program.payload));
+}
+
+/**
+ * Plan a `kit` merge into the active project without writing anything (spec §9.8).
+ *
+ * Split from {@link applyKitMerge} because only the FIRST install plans: it remaps ids, decides
+ * what de-duplicates against the global library, and passes the §9.7 hard stop. A redo replays
+ * the resulting record as-is — re-planning would mint fresh ids and the undo entry would no
+ * longer describe what is actually stored.
+ */
+async function planKitMerge(unpacked: UnpackedProject, projectId: string): Promise<KitMergeRecord> {
   const repos = getActiveRepositories();
   const { snapshot, sampleIdMap } = remapSnapshot(unpacked.snapshot);
 
@@ -176,16 +216,34 @@ async function installKitPack(unpacked: UnpackedProject, projectId: string): Pro
   const plan = await planSharedSamples(snapshot, bytesByRemappedId(unpacked, sampleIdMap), repos);
   await assertStorageHeadroom(plan.writes.reduce((sum, write) => sum + write.bytes.byteLength, 0));
 
-  const merge = buildKitMerge(plan.snapshot, projectId);
+  return { writes: plan.writes, programs: buildKitMerge(plan.snapshot, projectId).programs };
+}
+
+/**
+ * Write a planned kit merge into the active project (spec §9.8) — the initial install and
+ * every redo of it.
+ *
+ * Transactional by compensation: unlike a new-project import, these writes land in a
+ * project the user is already working in, so there is no "nothing is visible until the end"
+ * safety net. Every OPFS file written and every row inserted is recorded, and a failure at
+ * any point unwinds them in reverse before rethrowing — leaving no partial merge and no
+ * orphaned files (spec §9.8, §9.6).
+ *
+ * No §9.7 gate on the redo path: redo restores exactly the bytes its undo freed, so it is not
+ * storage-growing relative to the state the user last chose. Should the space have gone
+ * elsewhere meanwhile, the OPFS write fails and unwinds like any other mid-merge failure.
+ */
+async function applyKitMerge(record: KitMergeRecord): Promise<void> {
+  const repos = getActiveRepositories();
 
   const writtenPaths: string[] = [];
   const insertedSamples: string[] = [];
   const insertedPrograms: string[] = [];
 
   try {
-    await installSharedSamples(plan.writes, repos, writtenPaths, insertedSamples);
+    await installSharedSamples(record.writes, repos, writtenPaths, insertedSamples);
 
-    for (const program of merge.programs) {
+    for (const program of record.programs) {
       await repos.programs.create({
         id: program.id,
         project_id: program.project_id,
@@ -202,10 +260,58 @@ async function installKitPack(unpacked: UnpackedProject, projectId: string): Pro
 
   // Publish the new programs to the runtime store so they appear without reloading the
   // project (spec §1.3 #16: Zustand is runtime truth, SQLite durable truth — both are now
-  // written, so the store must not be left stale).
-  for (const program of merge.programs) {
-    useProgramStore.getState().addProgram(programSchema.parse(JSON.parse(program.payload)));
+  // written, so the store must not be left stale). `mergePrograms`, not `addProgram`: the
+  // caller pushes ONE undo entry for the merge, so the store must not push one per program.
+  useProgramStore.getState().mergePrograms(record.programs.map(runtimeProgram));
+}
+
+/**
+ * Undo a merged kit: take back its programs, then the audio nothing else still plays
+ * (spec §4.5, §9.8).
+ *
+ * Programs go first, and not only because it reverses the install order. The samples are in the
+ * shared global library, and between this install and this undo another pack may have ADOPTED
+ * one of them — `planSharedSamples` reuses a stored row rather than writing a second copy, so
+ * "this install wrote it" stops meaning "this install is its only owner". So each sample is put
+ * to the §8.5.7 question — does any program left in the database reference it? — which is only
+ * answerable once the kit's own programs, which reference all of them, are gone.
+ *
+ * Best-effort per item, as {@link unwindKitMerge} is and for the same reason: one failed step
+ * must not strand the rest half-removed.
+ */
+async function revertKitMerge(record: KitMergeRecord): Promise<void> {
+  const repos = getActiveRepositories();
+
+  useProgramStore.getState().dropPrograms(record.programs.map((program) => program.id));
+  for (const program of record.programs) {
+    try {
+      await repos.programs.remove(program.id);
+    } catch {
+      // Already absent, or the DB is the thing that failed — nothing more to do here.
+    }
   }
+
+  // Unpaged deliberately (spec §8.5.7): a payload missed past a page boundary reads as
+  // "nothing references this" and the sample is deleted out from under whatever does.
+  const payloads = await repos.programs.allPayloads();
+  const orphaned = record.writes.filter((write) => !payloads.some((payload) => payload.includes(write.id)));
+  await unwindKitMerge({
+    writtenPaths: orphaned.map((write) => write.opfs_path),
+    insertedSamples: orphaned.map((write) => write.id),
+    insertedPrograms: [],
+  });
+}
+
+/**
+ * Run one leg of the kit-merge undo entry. The §4.5 command stack is synchronous — every other
+ * undoable action is a store mutation — but this one has to reach OPFS and SQLite, so it is
+ * fired and its failure reported as a toast rather than thrown into the stack, which has
+ * already moved the entry by the time the work settles.
+ */
+function runKitMergeStep(work: () => Promise<void>, failureMessage: string): void {
+  void work().catch(() => {
+    useUIStore.getState().pushToast(failureMessage, 'error');
+  });
 }
 
 /**
@@ -272,7 +378,16 @@ export async function installFactoryPack(
   if (!activeProjectId) {
     throw new Error('Open a project before installing a kit — a kit merges into the project you are in.');
   }
-  await installKitPack(unpacked, activeProjectId);
+  const record = await planKitMerge(unpacked, activeProjectId);
+  await applyKitMerge(record);
+
+  // A kit merges into the project the user is already in, so a mis-tap must be reversible
+  // (spec §4.5). One entry for the whole merge — programs and audio together.
+  pushUndo({
+    label: `Install “${pack.title}”`,
+    undo: () => runKitMergeStep(() => revertKitMerge(record), `Could not fully remove “${pack.title}”.`),
+    redo: () => runKitMergeStep(() => applyKitMerge(record), `Could not reinstall “${pack.title}”.`),
+  });
   return { kind: 'kit', projectId: activeProjectId };
 }
 

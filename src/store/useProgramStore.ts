@@ -23,6 +23,16 @@ interface ProgramState {
 
   addProgram: (program: Program) => void;
   removeProgram: (id: string) => void;
+
+  /**
+   * Add/remove programs WITHOUT recording undo or marking dirty — for callers that write
+   * the rows themselves and own a single composite undo entry covering the whole operation
+   * (the §9.8 kit merge: one "Install …" step, not one per program). Going through
+   * {@link addProgram} there would push a stray per-program entry underneath the composite
+   * one, whose redo would resurrect a program whose samples the composite undo had deleted.
+   */
+  mergePrograms: (programs: readonly Program[]) => void;
+  dropPrograms: (ids: readonly string[]) => void;
   renameProgram: (id: string, name: string) => void;
 
   /** UI selection — not undoable/persisted (spec §4.5). */
@@ -147,6 +157,20 @@ export const useProgramStore = create<ProgramState>()(
     activePadId: null,
 
     setPrograms: (programs) => set({ programs: { ...programs } }),
+
+    mergePrograms: (incoming) =>
+      set((state) => {
+        const programs = { ...state.programs };
+        for (const program of incoming) programs[program.id] = program;
+        return { programs };
+      }),
+
+    dropPrograms: (ids) =>
+      set((state) => {
+        const programs = { ...state.programs };
+        for (const id of ids) delete programs[id];
+        return { programs };
+      }),
 
     addProgram: (program) => {
       const write = (value: Program | undefined) =>
