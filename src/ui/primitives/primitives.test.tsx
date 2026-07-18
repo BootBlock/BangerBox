@@ -12,6 +12,7 @@ import { Knob } from './Knob';
 import { Modal } from './Modal';
 import { Pad } from './Pad';
 import { SegmentControl } from './SegmentControl';
+import { Toast } from './Toast';
 import { Toggle } from './Toggle';
 
 describe('Knob (spec §8.2 ARIA + keyboard)', () => {
@@ -217,5 +218,27 @@ describe('Modal (spec §8.2 dialog contract)', () => {
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
     await user.tab();
     expect(screen.getByRole('button', { name: 'Close dialog' })).toHaveFocus();
+  });
+});
+
+describe('Toast (spec §8.2 severity → announcement role)', () => {
+  it.each([
+    ['info', 'status'],
+    ['success', 'status'],
+    ['warning', 'alert'],
+    ['error', 'alert'],
+  ] as const)('announces a %s notice as role="%s"', (tone, role) => {
+    render(<Toast message="Autosave failed" tone={tone} onDismiss={vi.fn()} />);
+    const toast = screen.getByRole(role);
+    expect(toast).toHaveTextContent('Autosave failed');
+    expect(toast).toHaveAttribute('data-tone', tone);
+  });
+
+  it('dismisses through a labelled control (spec §8.2)', async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    render(<Toast message="Project saved" tone="success" onDismiss={onDismiss} />);
+    await user.click(screen.getByRole('button', { name: 'Dismiss notification' }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 });
