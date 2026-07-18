@@ -125,7 +125,7 @@ export function MixerMode() {
               : 'No channels in this group yet.'}
           </p>
         ) : (
-          <div className="flex gap-3 overflow-x-auto pb-2">
+          <div className="flex gap-3 overflow-x-auto overscroll-contain pb-2">
             {strips.map((strip) => {
               const state = channels[strip.id];
               const level = state?.level ?? 1;

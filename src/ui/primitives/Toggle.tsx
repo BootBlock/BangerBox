@@ -8,6 +8,14 @@ import type { ReactNode } from 'react';
 
 export type ToggleTone = 'accent' | 'danger' | 'warn' | 'neutral';
 
+/**
+ * `lg` is the *performance* size: a toggle thrown mid-take, where the target has to be
+ * found without looking (spec §8.5.3 — large touch hitboxes for live mute/solo). It draws
+ * large rather than relying on `bb-touch-target`, because an invisible hit area still
+ * leaves the eye aiming at a small button.
+ */
+export type ToggleSize = 'sm' | 'md' | 'lg';
+
 export interface ToggleProps {
   label: string;
   pressed: boolean;
@@ -18,7 +26,9 @@ export interface ToggleProps {
   icon?: ReactNode;
   /** Hide the text label visually while keeping it as the accessible name. */
   iconOnly?: boolean;
-  size?: 'sm' | 'md';
+  size?: ToggleSize;
+  /** Stretch to the width of the container rather than hugging the label, as Button does. */
+  block?: boolean;
   title?: string;
   'data-testid'?: string;
 }
@@ -30,9 +40,10 @@ const PRESSED_TONE: Record<ToggleTone, string> = {
   neutral: 'bg-bb-line text-bb-text border-bb-line',
 };
 
-const SIZE: Record<'sm' | 'md', string> = {
+const SIZE: Record<ToggleSize, string> = {
   sm: 'px-2 py-1 text-[0.625rem] gap-1',
-  md: 'px-3 py-2 text-xs gap-1.5',
+  md: 'min-h-11 px-3 py-2 text-xs gap-1.5',
+  lg: 'min-h-14 px-3 py-3 text-xs gap-1.5',
 };
 
 export function Toggle({
@@ -44,6 +55,7 @@ export function Toggle({
   icon,
   iconOnly = false,
   size = 'md',
+  block = false,
   title,
   'data-testid': testId,
 }: ToggleProps) {
@@ -58,8 +70,12 @@ export function Toggle({
       onClick={() => onChange(!pressed)}
       className={[
         'inline-flex items-center justify-center rounded-bb-sm border font-semibold',
+        // ~44 px hit area whatever the drawn size (spec §8.1) — a mixer strip's solo is
+        // 24 px because the strip is 128 px wide, not because 24 px is tappable.
+        'bb-touch-target',
         'transition-colors duration-150 ease-bb-snap',
         SIZE[size],
+        block ? 'w-full' : '',
         pressed ? PRESSED_TONE[tone] : 'border-bb-line bg-bb-raised text-bb-text',
         disabled ? 'cursor-not-allowed opacity-40' : 'hover:border-bb-accent-strong',
       ].join(' ')}

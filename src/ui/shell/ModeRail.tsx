@@ -12,19 +12,40 @@ import { motion, useReducedMotion } from 'motion/react';
 import { useUIStore, type Mode } from '@/store';
 import { MODE_DEFINITIONS } from '@/features/modes';
 
+/**
+ * Two columns, because one does not fit. Twelve 64 px entries stacked singly need
+ * 12 × 64 + 11 × 4 + 16 = 828 px of rail, against roughly 712 px of content row at the
+ * 1280 × 800 target — so the rail always overflowed and the last two modes (Q-Link Edit and
+ * Song) were off-screen on first paint, reachable only by dragging an 80 px strip. Six rows
+ * of two need 404 px and fit with room to spare, and §8.1's "touch-large" entries keep
+ * their full 64 px rather than being shrunk to fit a single column.
+ */
+const RAIL_COLUMNS = 2;
+
 export function ModeRail() {
   const activeMode = useUIStore((s) => s.activeMode);
   const listRef = useRef<HTMLDivElement | null>(null);
   const reduceMotion = useReducedMotion();
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
-    const backward = event.key === 'ArrowUp' || event.key === 'ArrowLeft';
-    if (!forward && !backward) return;
+    // Two columns filled row-major, so left/right step one mode and up/down step a whole
+    // row. Both wrap over the flat order, which keeps every mode reachable with either axis.
+    const step =
+      event.key === 'ArrowRight'
+        ? 1
+        : event.key === 'ArrowLeft'
+          ? -1
+          : event.key === 'ArrowDown'
+            ? RAIL_COLUMNS
+            : event.key === 'ArrowUp'
+              ? -RAIL_COLUMNS
+              : 0;
+    if (step === 0) return;
     event.preventDefault();
     const index = MODE_DEFINITIONS.findIndex((mode) => mode.id === activeMode);
     if (index < 0) return;
-    const nextIndex = (index + (forward ? 1 : -1) + MODE_DEFINITIONS.length) % MODE_DEFINITIONS.length;
+    const count = MODE_DEFINITIONS.length;
+    const nextIndex = (((index + step) % count) + count) % count;
     const next = MODE_DEFINITIONS[nextIndex];
     if (!next) return;
     useUIStore.getState().setActiveMode(next.id as Mode);
@@ -34,14 +55,21 @@ export function ModeRail() {
   return (
     <nav
       aria-label="Modes"
-      className="flex shrink-0 overflow-y-auto border-r border-bb-line bg-bb-surface p-2"
+      // `overscroll-contain` for the short-viewport case where the rail does still scroll:
+      // its edge must not chain into a history navigation (spec §1.3 #14).
+      className="flex shrink-0 overflow-y-auto overscroll-contain border-r border-bb-line bg-bb-surface p-2"
     >
       <div
         ref={listRef}
         role="tablist"
         aria-label="Modes"
-        aria-orientation="vertical"
-        className="flex flex-col gap-1"
+        // No `aria-orientation`: the rail is a grid, and neither axis alone describes it.
+        // `auto-rows-fr`: the six rows share the rail's height equally, so the space freed
+        // by the second column is spent making each entry taller than its `min-h-16` floor
+        // rather than left as dead rail. Below the height where that floor binds, the six
+        // rows overflow and the nav scrolls — the same fallback as before, but now reached
+        // only on a viewport far shorter than the 1280 × 800 target.
+        className="grid w-full auto-rows-fr grid-cols-2 gap-1"
       >
         {MODE_DEFINITIONS.map((mode) => {
           const selected = mode.id === activeMode;

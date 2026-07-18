@@ -97,9 +97,27 @@ describe('AppShell (spec §8.1)', () => {
     const mainTab = screen.getByTestId('mode-tab-main');
     expect(mainTab).toHaveAttribute('tabindex', '0');
     mainTab.focus();
-    await user.keyboard('{ArrowDown}');
+    // The rail is two columns filled row-major, so left/right step one mode along the §8.5
+    // order and up/down step a whole row.
+    await user.keyboard('{ArrowRight}');
     // Grid follows Main in the §8.5 order.
     expect(useUIStore.getState().activeMode).toBe('grid');
+    await user.keyboard('{ArrowDown}');
+    expect(useUIStore.getState().activeMode).toBe(MODE_DEFINITIONS[3]?.id);
+    await user.keyboard('{ArrowUp}');
+    expect(useUIStore.getState().activeMode).toBe('grid');
+  });
+
+  it('wraps the rail arrow keys around both axes so no mode is unreachable', async () => {
+    const user = userEvent.setup();
+    renderShell();
+    screen.getByTestId('mode-tab-main').focus();
+    // Main is index 0: stepping backwards must wrap to the end rather than stalling, which
+    // a naive `index - columns` would do by going negative.
+    await user.keyboard('{ArrowUp}');
+    expect(useUIStore.getState().activeMode).toBe(
+      MODE_DEFINITIONS[MODE_DEFINITIONS.length - 2]?.id,
+    );
   });
 
   it('mounts every mode without crashing (spec §3.4 no dead modes)', async () => {

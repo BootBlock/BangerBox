@@ -113,7 +113,10 @@ export function Knob({
         onPointerDown={control.onPointerDown}
         onKeyDown={control.onKeyDown}
         onDoubleClick={control.onDoubleClick}
-        className={`relative touch-none rounded-full border border-bb-line bg-bb-raised shadow-bb-raised transition-shadow duration-150 ease-bb-snap ${
+        // `bb-touch-target`: the 36 px `sm` circle is hard to *acquire* on touch even though
+        // the drag itself is well tuned (FULL_TRAVEL_PX). The hit area reaches 44 px; the
+        // circle stays 36 px so a transport bar of knobs keeps its density (spec §8.1).
+        className={`bb-touch-target touch-none rounded-full border border-bb-line bg-bb-raised shadow-bb-raised transition-shadow duration-150 ease-bb-snap ${
           SIZE_CLASS[size]
         } ${disabled ? 'opacity-40' : 'cursor-grab hover:shadow-bb-glow active:cursor-grabbing'}`}
       >
