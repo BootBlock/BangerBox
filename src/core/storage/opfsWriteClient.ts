@@ -21,7 +21,8 @@ function ensureWorker(): Worker {
     type: 'module',
     name: 'bangerbox-opfs-write',
   });
-  worker.addEventListener('message', (event: MessageEvent<OpfsWriteResponse>) => {
+  const active = worker;
+  active.addEventListener('message', (event: MessageEvent<OpfsWriteResponse>) => {
     const response = event.data;
     const entry = pending.get(response.id);
     if (!entry) return;
@@ -29,7 +30,32 @@ function ensureWorker(): Worker {
     if (response.ok) entry.resolve();
     else entry.reject(new Error(response.error));
   });
-  return worker;
+  // A worker that crashes, fails to load, or receives an unclonable message never replies, so
+  // without this every in-flight write would hang forever (spec §13.6, mirroring the DB bridge).
+  const handleFailure = (event: Event): void => {
+    const detail = event instanceof ErrorEvent && event.message ? event.message : 'unknown worker failure';
+    failAll(new Error(`OPFS write worker error: ${detail}`), active);
+  };
+  active.addEventListener('error', handleFailure);
+  active.addEventListener('messageerror', handleFailure);
+  return active;
+}
+
+/**
+ * Settle every in-flight write with `error` and drop the dead worker so the next write builds a
+ * fresh one. Guarded on identity: a late failure from an already-replaced worker must not tear
+ * down its successor.
+ */
+function failAll(error: Error, source: Worker): void {
+  if (worker !== source) {
+    source.terminate();
+    return;
+  }
+  worker = null;
+  const entries = [...pending.values()];
+  pending.clear();
+  for (const entry of entries) entry.reject(error);
+  source.terminate();
 }
 
 /**
