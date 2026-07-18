@@ -46,7 +46,7 @@ function context(scope?: 'project' | 'global') {
       },
     },
     projectId: 'p1',
-    projectBitDepth: 16,
+    projectBitDepth: '16',
     scope,
   } as unknown as Parameters<typeof saveChannelsAsSample>[4];
 }

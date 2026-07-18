@@ -14,6 +14,6 @@ export {
   INPUT_LATENCY_RANGE,
   type ConnectionState,
 } from './useHardwareStore';
-export { useBrowserStore } from './useBrowserStore';
+export { useBrowserStore, BROWSER_INITIAL_PATH } from './useBrowserStore';
 export { useUndoStore, pushUndo, endUndoGesture, clearUndoHistory } from './undo';
 export type { Mode, QLinkFocusParam } from './useUIStore';

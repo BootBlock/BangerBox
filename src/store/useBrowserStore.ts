@@ -8,6 +8,12 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { SampleRow } from '@/core/storage/repositories';
 
+/**
+ * The path held before the folder tree has resolved a real location (spec §8.5.7). No
+ * project id exists at module load, so the Browser panel replaces this on its first render.
+ */
+export const BROWSER_INITIAL_PATH = '/';
+
 interface BrowserState {
   /** Current OPFS/library location being browsed (spec §9.1). */
   currentPath: string;
@@ -29,7 +35,7 @@ interface BrowserState {
 
 export const useBrowserStore = create<BrowserState>()(
   subscribeWithSelector((set) => ({
-    currentPath: '/',
+    currentPath: BROWSER_INITIAL_PATH,
     samples: [],
     tagFilter: [],
     textFilter: '',
