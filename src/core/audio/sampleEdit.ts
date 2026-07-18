@@ -102,9 +102,12 @@ export function applyToRegion(
   endFrame: number,
   transform: (region: Float32Array[]) => Float32Array[],
 ): Float32Array[] {
-  const length = channels[0]?.length ?? 0;
-  const start = Math.max(0, Math.min(startFrame, length));
-  const end = Math.max(0, Math.min(endFrame, length));
+  // Clamped against the shortest channel for the same reason as `trim`: a region that runs
+  // past a short channel would splice back out of bounds.
+  const length = channels.reduce((min, channel) => Math.min(min, channel.length), Infinity);
+  const bound = Number.isFinite(length) ? length : 0;
+  const start = Math.max(0, Math.min(startFrame, bound));
+  const end = Math.max(0, Math.min(endFrame, bound));
   if (end <= start) throw new Error(`applyToRegion: empty range [${start}, ${end})`);
   const processed = transform(channels.map((channel) => channel.slice(start, end)));
   return channels.map((channel, index) => {
@@ -119,15 +122,20 @@ export function applyToRegion(
  * Slice the half-open frame range `[startFrame, endFrame)` from every channel (spec §8.5.4
  * Trim). Bounds are clamped into the sample; an empty or inverted resulting range throws so a
  * zero-length sample is never written.
+ *
+ * Bounds are clamped against the *shortest* channel, so every returned channel has the same
+ * length. Clamping against `channels[0]` alone would return ragged channels for a mis-decoded
+ * stereo sample, which `AudioBuffer.copyToChannel` then rejects or silently misaligns.
  */
 export function trim(
   channels: readonly Float32Array[],
   startFrame: number,
   endFrame: number,
 ): Float32Array[] {
-  const length = channels[0]?.length ?? 0;
-  const start = Math.max(0, Math.min(startFrame, length));
-  const end = Math.max(0, Math.min(endFrame, length));
+  const length = channels.reduce((min, channel) => Math.min(min, channel.length), Infinity);
+  const bound = Number.isFinite(length) ? length : 0;
+  const start = Math.max(0, Math.min(startFrame, bound));
+  const end = Math.max(0, Math.min(endFrame, bound));
   if (end <= start) throw new Error(`trim: empty range [${start}, ${end})`);
   return channels.map((channel) => channel.slice(start, end));
 }

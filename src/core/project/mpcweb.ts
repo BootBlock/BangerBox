@@ -180,8 +180,19 @@ export interface RemapResult {
  * program-payload sample ids, automation target-path ids, and sample OPFS paths — consistently.
  */
 export function remapSnapshot(snapshot: ProjectSnapshot): RemapResult {
+  const ids = collectIds(snapshot);
+  // Two rows sharing an id would map onto one new id and collide on the primary key part-way
+  // through `restoreSnapshot`, leaving rows already written. Reject the archive up front so the
+  // import fails before it touches the database (spec §9.6).
+  const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  if (duplicates.length > 0) {
+    throw new Error(
+      `This project file is corrupt: it reuses the same id for more than one item (${duplicates.join(', ')}).`,
+    );
+  }
+
   const idMap = new Map<string, string>();
-  for (const id of collectIds(snapshot)) if (!idMap.has(id)) idMap.set(id, crypto.randomUUID());
+  for (const id of ids) idMap.set(id, crypto.randomUUID());
 
   let json = serialiseSnapshot(snapshot);
   for (const [oldId, newId] of idMap) json = json.split(oldId).join(newId);

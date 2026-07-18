@@ -99,6 +99,24 @@ describe('AutosaveQueue', () => {
     expect(flush.mock.calls[1]![0]).toEqual(['b']);
   });
 
+  it('does not re-queue a failed batch onto a queue disposed mid-flush (issue #77)', async () => {
+    let rejectFirst!: (error: Error) => void;
+    const flush = vi.fn(() => new Promise<void>((_resolve, reject) => (rejectFirst = reject)));
+    const queue = new AutosaveQueue({ flush, onError: vi.fn() });
+
+    queue.markDirty('project:1');
+    const flushing = queue.flushNow();
+    // The project closes while the write is still in flight, and only then does it fail.
+    queue.dispose();
+    rejectFirst(new Error('quota'));
+    await flushing;
+
+    // Nothing re-arms for a disposed queue, so a re-queued key would stay dirty forever and
+    // pin the unsaved dot on a project that is already gone.
+    expect(queue.pendingKeys).toEqual([]);
+    expect(queue.hasPending).toBe(false);
+  });
+
   it('never signals idle for a batch the flush could not write (issue #72)', async () => {
     const onIdle = vi.fn();
     const onError = vi.fn();
