@@ -74,7 +74,9 @@ function main() {
   writeFileSync(resolve(outDir, 'index.json'), catalogueJson);
 
   for (const entry of catalogue) {
-    console.log(`  ${entry.file.padEnd(24)} ${(entry.bytes / 1024).toFixed(0).padStart(6)} kB  ${entry.kind}`);
+    console.log(
+      `  ${entry.file.padEnd(24)} ${(entry.bytes / 1024).toFixed(0).padStart(6)} kB  ${entry.kind}`,
+    );
   }
   console.log(`built ${catalogue.length} factory packs, ${(total / 1024 / 1024).toFixed(2)} MB total`);
 }

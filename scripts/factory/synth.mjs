@@ -34,7 +34,14 @@ function render(length, generate) {
 }
 
 /** A sine partial with an exponential pitch sweep from `startHz` to `endHz`. */
-export function sweepSine({ seconds, startHz, endHz, sweepTime = seconds * 0.35, attack = 0.001, curve = 1 }) {
+export function sweepSine({
+  seconds,
+  startHz,
+  endHz,
+  sweepTime = seconds * 0.35,
+  attack = 0.001,
+  curve = 1,
+}) {
   const length = frames(seconds);
   const attackFrames = frames(attack);
   let phase = 0;

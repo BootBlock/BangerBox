@@ -77,14 +77,18 @@ describe('FactorySection listing (spec §8.5 item 7)', () => {
 
   it('labels the action by install mode — a kit merges, a demo opens', async () => {
     render(<FactorySection />);
-    expect(await screen.findByRole('button', { name: 'Merge 808 Kit into this project' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Merge 808 Kit into this project' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open House Demo as a new project' })).toBeInTheDocument();
   });
 });
 
 describe('FactorySection failure handling (spec §8.5 item 7)', () => {
   it('surfaces a fetch failure as a retryable error, not an empty list', async () => {
-    fetchFactoryCatalogue.mockRejectedValueOnce(new Error('Could not load the factory catalogue (HTTP 503).'));
+    fetchFactoryCatalogue.mockRejectedValueOnce(
+      new Error('Could not load the factory catalogue (HTTP 503).'),
+    );
     render(<FactorySection />);
 
     const alert = await screen.findByRole('alert');

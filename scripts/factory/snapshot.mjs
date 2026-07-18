@@ -79,7 +79,11 @@ function buildPad(packId, programId, padIndex, sample) {
         reverse: false,
       },
     ],
-    envelopes: { amp: envelope({ attack: 0, decay: 0, sustain: 1, release: 8 }), pitch: flatEnvelope(), filter: flatEnvelope() },
+    envelopes: {
+      amp: envelope({ attack: 0, decay: 0, sustain: 1, release: 8 }),
+      pitch: flatEnvelope(),
+      filter: flatEnvelope(),
+    },
     pitchEnvSemitones: 0,
     filter: { type: 'off', cutoff: 20_000, resonance: 0.7, envDepth: 0 },
     lfos: [lfo(), lfo()],

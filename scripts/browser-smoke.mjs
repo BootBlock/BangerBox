@@ -339,6 +339,33 @@ async function assertShellAndSelfTest(page, label) {
       if (!result.imported) throw new Error('import did not open a fresh project');
       if (!(result.samples >= 1)) throw new Error(`imported project has ${result.samples} samples — expected ≥ 1`);
     });
+
+    await step(`${label}: factory kit merges and demo opens over the real path (spec §9.8)`, async () => {
+      const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.factoryInstallProof());
+
+      if (!(r.kits >= 3 && r.demos >= 3)) {
+        throw new Error(`catalogue has ${r.kits} kits / ${r.demos} demos — expected ≥ 3 of each (§9.8)`);
+      }
+      // A kit contributes sound...
+      if (!(r.programsAfter > r.programsBefore)) throw new Error('kit merge added no program');
+      if (!(r.samplesAfter > r.samplesBefore)) throw new Error('kit merge added no samples');
+      if (!r.mergedSamplesReadable) throw new Error('a merged sample is missing or empty in OPFS (§9.1)');
+      // ...and never arrangement: the active project's sequences, tracks and song are
+      // exactly as they were (spec §9.8).
+      if (r.sequencesAfter !== r.sequencesBefore) {
+        throw new Error(`kit merge changed sequence count ${r.sequencesBefore} → ${r.sequencesAfter}`);
+      }
+      if (r.tracksAfter !== r.tracksBefore) {
+        throw new Error(`kit merge changed track count ${r.tracksBefore} → ${r.tracksAfter}`);
+      }
+      if (r.songEntriesAfter !== r.songEntriesBefore) {
+        throw new Error(`kit merge changed song entries ${r.songEntriesBefore} → ${r.songEntriesAfter}`);
+      }
+      // A demo opens as a new, populated project.
+      if (!r.demoOpenedNewProject) throw new Error('demo pack did not open a new project');
+      if (!(r.demoSequences >= 1)) throw new Error(`demo project has ${r.demoSequences} sequences — expected ≥ 1`);
+      if (!(r.demoSamples >= 1)) throw new Error(`demo project has ${r.demoSamples} samples — expected ≥ 1`);
+    });
   }
 }
 
@@ -353,6 +380,16 @@ async function main() {
       stdio: 'inherit',
     });
     if (wasm.status !== 0) throw new Error('build:wasm failed');
+  }
+
+  // Factory packs are a gitignored artefact too (spec §9.8) — build them if absent so the
+  // smoke stays self-sufficient on a fresh checkout.
+  if (!existsSync(resolve(root, 'public/factory/index.json'))) {
+    const factory = spawnSync(process.execPath, [resolve(root, 'scripts/build-factory.mjs')], {
+      cwd: root,
+      stdio: 'inherit',
+    });
+    if (factory.status !== 0) throw new Error('build:factory failed');
   }
 
   const browser = await launchBrowser();

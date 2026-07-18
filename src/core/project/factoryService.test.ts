@@ -30,7 +30,9 @@ vi.mock('@/core/storage/opfs', async (importOriginal) => {
 });
 
 const checkWriteHeadroom = vi.fn();
-vi.mock('@/core/storage/safeguards', () => ({ checkWriteHeadroom: (bytes: number) => checkWriteHeadroom(bytes) }));
+vi.mock('@/core/storage/safeguards', () => ({
+  checkWriteHeadroom: (bytes: number) => checkWriteHeadroom(bytes),
+}));
 
 const programCreate = vi.fn();
 const programRemove = vi.fn();
@@ -73,7 +75,8 @@ function stubFetch(body: Uint8Array | object, ok = true, status = 200) {
       Promise.resolve({
         ok,
         status,
-        arrayBuffer: () => Promise.resolve(body instanceof Uint8Array ? body.slice().buffer : new ArrayBuffer(0)),
+        arrayBuffer: () =>
+          Promise.resolve(body instanceof Uint8Array ? body.slice().buffer : new ArrayBuffer(0)),
         json: () => Promise.resolve(body),
       }),
     ),
@@ -115,7 +118,10 @@ describe('catalogue fetch (spec §9.8)', () => {
 describe('demo install (spec §9.8)', () => {
   it('installs as a new project through the shared import path', async () => {
     stubFetch(archiveFor('demo-house.mpcweb'));
-    const result = await installFactoryPack(pack({ kind: 'demo', file: 'demo-house.mpcweb' }), ACTIVE_PROJECT);
+    const result = await installFactoryPack(
+      pack({ kind: 'demo', file: 'demo-house.mpcweb' }),
+      ACTIVE_PROJECT,
+    );
 
     expect(result).toEqual({ kind: 'demo', projectId: 'new-project-id' });
     // The demo path must NOT hand-roll writes — it delegates to the §9.6 import path.
@@ -184,7 +190,13 @@ describe('kit merge (spec §9.8)', () => {
 
 describe('storage hard stop (spec §9.7, §9.8)', () => {
   it('refuses before any OPFS write when headroom is breached', async () => {
-    checkWriteHeadroom.mockResolvedValue({ allowed: false, usage: 9, quota: 10, ratio: 0.9, supported: true });
+    checkWriteHeadroom.mockResolvedValue({
+      allowed: false,
+      usage: 9,
+      quota: 10,
+      ratio: 0.9,
+      supported: true,
+    });
     stubFetch(archiveFor('kit-808.mpcweb'));
 
     await expect(installFactoryPack(pack(), ACTIVE_PROJECT)).rejects.toBeInstanceOf(FactoryStorageError);
@@ -209,7 +221,13 @@ describe('storage hard stop (spec §9.7, §9.8)', () => {
   });
 
   it('carries a distinct error type so the UI can offer the purge affordance', async () => {
-    checkWriteHeadroom.mockResolvedValue({ allowed: false, usage: 9, quota: 10, ratio: 0.9, supported: true });
+    checkWriteHeadroom.mockResolvedValue({
+      allowed: false,
+      usage: 9,
+      quota: 10,
+      ratio: 0.9,
+      supported: true,
+    });
     stubFetch(archiveFor('kit-808.mpcweb'));
     await expect(installFactoryPack(pack(), ACTIVE_PROJECT)).rejects.toThrow(/purge unused samples/i);
   });
@@ -220,7 +238,10 @@ describe('kit merge transactionality (spec §9.8, §9.6)', () => {
     stubFetch(archiveFor('kit-808.mpcweb'));
     const total = unpackMpcweb(archiveFor('kit-808.mpcweb')).snapshot.samples.length;
     // Fail partway through the sample rows, after files and programs have landed.
-    sampleCreate.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('disk on fire'));
+    sampleCreate
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('disk on fire'));
 
     await expect(installFactoryPack(pack(), ACTIVE_PROJECT)).rejects.toThrow('disk on fire');
 

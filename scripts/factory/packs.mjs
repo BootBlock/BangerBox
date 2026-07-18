@@ -93,12 +93,25 @@ function emptySnapshot(project) {
 // --- Kit packs -------------------------------------------------------------------------
 
 /** A one-bar pattern that plays a handful of a kit's pads, by pad index. */
-const KIT_DEMO_STEPS = { 0: [[0, 118], [8, 104]], 2: [[4, 112], [12, 112]] };
+const KIT_DEMO_STEPS = {
+  0: [
+    [0, 118],
+    [8, 104],
+  ],
+  2: [
+    [4, 112],
+    [12, 112],
+  ],
+};
 
 function buildKitPack(kit, appVersion) {
   const packId = kit.id;
   const projectId = derivedId(`${packId}:project`);
-  const { rows: sampleRows, wavs, resolved } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
+  const {
+    rows: sampleRows,
+    wavs,
+    resolved,
+  } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
 
   const program = buildDrumProgram(packId, kit.title, resolved);
   const sequence = buildSequenceRow(packId, projectId, 0, 'Kit Demo', { lengthBars: 1 });
@@ -111,14 +124,28 @@ function buildKitPack(kit, appVersion) {
   const events = eventsFromSteps(packId, track.id, padIndexByName, KIT_DEMO_STEPS);
 
   const snapshot = emptySnapshot(buildProjectRow(projectId, kit.title));
-  snapshot.programs = [{ id: program.id, project_id: projectId, name: program.name, type: 'drum', payload: JSON.stringify(program) }];
+  snapshot.programs = [
+    {
+      id: program.id,
+      project_id: projectId,
+      name: program.name,
+      type: 'drum',
+      payload: JSON.stringify(program),
+    },
+  ];
   snapshot.samples = sampleRows;
   snapshot.sequences = [sequence];
   snapshot.tracks = [track];
   snapshot.midiEvents = events;
 
   return {
-    entry: { id: packId, title: kit.title, kind: 'kit', file: `${packId}.mpcweb`, description: kit.description },
+    entry: {
+      id: packId,
+      title: kit.title,
+      kind: 'kit',
+      file: `${packId}.mpcweb`,
+      description: kit.description,
+    },
     snapshot,
     wavs,
     appVersion,
@@ -144,10 +171,18 @@ function buildBoomBapDemo(appVersion) {
   const packId = 'demo-boom-bap';
   const kit = KITS.find((entry) => entry.id === 'kit-acoustic');
   const projectId = derivedId(`${packId}:project`);
-  const { rows: sampleRows, wavs, resolved } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
+  const {
+    rows: sampleRows,
+    wavs,
+    resolved,
+  } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
 
   const program = buildDrumProgram(packId, 'Boom Bap Kit', resolved);
-  const sequence = buildSequenceRow(packId, projectId, 0, 'Boom Bap', { lengthBars: 4, tempo: 88, swing: 58 });
+  const sequence = buildSequenceRow(packId, projectId, 0, 'Boom Bap', {
+    lengthBars: 4,
+    tempo: 88,
+    swing: 58,
+  });
   const strip = buildChannelStrip(packId, 'track:drums', {});
   const track = buildTrackRow(packId, sequence.id, program.id, 'Drums', strip);
 
@@ -166,12 +201,28 @@ function buildBoomBapDemo(appVersion) {
     Kick: kick,
     Snare: snare,
     'Closed Hat': everyNth(4, 2, 88),
-    'Open Hat': [[14, 96], [30, 96], [46, 96], [62, 90]],
-    Ride: [[0, 70], [32, 70]],
+    'Open Hat': [
+      [14, 96],
+      [30, 96],
+      [46, 96],
+      [62, 90],
+    ],
+    Ride: [
+      [0, 70],
+      [32, 70],
+    ],
   });
 
   const snapshot = emptySnapshot(buildProjectRow(projectId, 'Boom Bap Demo', { bpm: 88 }));
-  snapshot.programs = [{ id: program.id, project_id: projectId, name: program.name, type: 'drum', payload: JSON.stringify(program) }];
+  snapshot.programs = [
+    {
+      id: program.id,
+      project_id: projectId,
+      name: program.name,
+      type: 'drum',
+      payload: JSON.stringify(program),
+    },
+  ];
   snapshot.samples = sampleRows;
   snapshot.sequences = [sequence];
   snapshot.tracks = [track];
@@ -205,12 +256,20 @@ function buildHouseDemo(appVersion) {
   const packId = 'demo-house';
   const kit = KITS.find((entry) => entry.id === 'kit-909');
   const projectId = derivedId(`${packId}:project`);
-  const { rows: sampleRows, wavs, resolved } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
+  const {
+    rows: sampleRows,
+    wavs,
+    resolved,
+  } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
 
   const program = buildDrumProgram(packId, 'House Kit', resolved);
   const sequence = buildSequenceRow(packId, projectId, 0, 'House Groove', { lengthBars: 4, tempo: 124 });
 
-  const filterSlot = { effectType: 'filter', enabled: true, params: { type: 0, cutoff: 20_000, resonance: 4 } };
+  const filterSlot = {
+    effectType: 'filter',
+    enabled: true,
+    params: { type: 0, cutoff: 20_000, resonance: 4 },
+  };
   const strip = buildChannelStrip(packId, 'track:house', { slots: [filterSlot] });
   const track = buildTrackRow(packId, sequence.id, program.id, 'Drums', strip);
 
@@ -220,7 +279,12 @@ function buildHouseDemo(appVersion) {
     'Closed Hat': everyNth(4, 2, 84, 2),
     'Open Hat': everyNth(4, 8, 98, 6),
     Shaker: everyNth(4, 2, 62, 1),
-    Ride: [[32, 74], [40, 74], [48, 74], [56, 74]],
+    Ride: [
+      [32, 74],
+      [40, 74],
+      [48, 74],
+      [56, 74],
+    ],
   });
 
   // The sweep: cutoff opens across bars 1–3 then closes into the loop point, so the filter
@@ -245,7 +309,11 @@ function buildHouseDemo(appVersion) {
 
   // Mixer automation (spec §9.8 "exercising mixer automation"): a level dip on the turnaround.
   const levelPath = `mixer.track:${track.id}.level`;
-  for (const [step, value] of [[0, 1], [56, 0.72], [63, 1]]) {
+  for (const [step, value] of [
+    [0, 1],
+    [56, 0.72],
+    [63, 1],
+  ]) {
     automation.push({
       id: derivedId(`${packId}:automation:level:${step}`),
       scope: 'sequence',
@@ -258,7 +326,15 @@ function buildHouseDemo(appVersion) {
   }
 
   const snapshot = emptySnapshot(buildProjectRow(projectId, 'House Demo', { bpm: 124 }));
-  snapshot.programs = [{ id: program.id, project_id: projectId, name: program.name, type: 'drum', payload: JSON.stringify(program) }];
+  snapshot.programs = [
+    {
+      id: program.id,
+      project_id: projectId,
+      name: program.name,
+      type: 'drum',
+      payload: JSON.stringify(program),
+    },
+  ];
   snapshot.samples = sampleRows;
   snapshot.sequences = [sequence];
   snapshot.tracks = [track];
@@ -284,36 +360,90 @@ function buildSongDemo(appVersion) {
   const packId = 'demo-song';
   const kit = KITS.find((entry) => entry.id === 'kit-808');
   const projectId = derivedId(`${packId}:project`);
-  const { rows: sampleRows, wavs, resolved } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
+  const {
+    rows: sampleRows,
+    wavs,
+    resolved,
+  } = renderSamples(packId, projectId, kit.samples, rngFactory(packId));
 
   const program = buildDrumProgram(packId, 'Song Kit', resolved);
   const pads = padIndexMap(resolved);
 
   /** Each section is its own sequence; song entries order and repeat them (spec §7.9). */
   const sections = [
-    { name: 'Intro', bars: 2, steps: { 'Closed Hat': everyNth(2, 4, 78), Clave: [[0, 96], [16, 96]] }, repeats: 2 },
+    {
+      name: 'Intro',
+      bars: 2,
+      steps: {
+        'Closed Hat': everyNth(2, 4, 78),
+        Clave: [
+          [0, 96],
+          [16, 96],
+        ],
+      },
+      repeats: 2,
+    },
     {
       name: 'Main',
       bars: 2,
       steps: {
-        Kick: [[0, 122], [6, 100], [16, 122], [22, 100]],
-        Clap: [[4, 112], [12, 112], [20, 112], [28, 112]],
+        Kick: [
+          [0, 122],
+          [6, 100],
+          [16, 122],
+          [22, 100],
+        ],
+        Clap: [
+          [4, 112],
+          [12, 112],
+          [20, 112],
+          [28, 112],
+        ],
         'Closed Hat': everyNth(2, 2, 84),
-        'Open Hat': [[14, 96], [30, 96]],
+        'Open Hat': [
+          [14, 96],
+          [30, 96],
+        ],
       },
       repeats: 4,
     },
     {
       name: 'Break',
       bars: 2,
-      steps: { Snare: everyNth(2, 4, 104), Maracas: everyNth(2, 2, 70, 1), Cowbell: [[8, 100], [24, 100]] },
+      steps: {
+        Snare: everyNth(2, 4, 104),
+        Maracas: everyNth(2, 2, 70, 1),
+        Cowbell: [
+          [8, 100],
+          [24, 100],
+        ],
+      },
       repeats: 1,
     },
-    { name: 'Outro', bars: 2, steps: { Kick: [[0, 118], [16, 110]], Cymbal: [[0, 96]] }, repeats: 1 },
+    {
+      name: 'Outro',
+      bars: 2,
+      steps: {
+        Kick: [
+          [0, 118],
+          [16, 110],
+        ],
+        Cymbal: [[0, 96]],
+      },
+      repeats: 1,
+    },
   ];
 
   const snapshot = emptySnapshot(buildProjectRow(projectId, 'Song Demo', { bpm: 102 }));
-  snapshot.programs = [{ id: program.id, project_id: projectId, name: program.name, type: 'drum', payload: JSON.stringify(program) }];
+  snapshot.programs = [
+    {
+      id: program.id,
+      project_id: projectId,
+      name: program.name,
+      type: 'drum',
+      payload: JSON.stringify(program),
+    },
+  ];
   snapshot.samples = sampleRows;
 
   sections.forEach((section, index) => {

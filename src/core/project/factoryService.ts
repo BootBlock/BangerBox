@@ -242,9 +242,7 @@ export async function installFactoryPack(
 
 /** Sample-count-free human summary used by the Browser list (spec §8.5 item 7). */
 export function describeInstall(result: InstallResult, pack: FactoryPack): string {
-  return result.kind === 'demo'
-    ? `Opened “${pack.title}”.`
-    : `Merged “${pack.title}” into this project.`;
+  return result.kind === 'demo' ? `Opened “${pack.title}”.` : `Merged “${pack.title}” into this project.`;
 }
 
 /** Surface an install failure as a toast, keeping the storage refusal distinguishable. */

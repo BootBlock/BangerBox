@@ -147,7 +147,9 @@ describe('factory archives round-trip through the real reader (spec §9.6, §9.8
         // Synthesis that silently produced nothing would otherwise ship as a dead pad.
         expect(peak, `${row.name} is silent`).toBeGreaterThan(0.5);
         // `finalise` fades every sample to zero so retriggers do not click.
-        expect(Math.abs(channel![channel!.length - 1]!), `${row.name} does not end at zero`).toBeLessThan(0.01);
+        expect(Math.abs(channel![channel!.length - 1]!), `${row.name} does not end at zero`).toBeLessThan(
+          0.01,
+        );
       }
     },
   );

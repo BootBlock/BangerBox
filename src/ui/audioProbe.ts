@@ -64,6 +64,33 @@ export interface AudioProbe {
     stretchedFrames: number;
     stretchedRatio: number;
   }>;
+  /** Factory catalogue fetch → kit merge → demo install over the real path (spec §9.8). */
+  factoryInstallProof: () => Promise<FactoryInstallResult>;
+}
+
+/** Outcome of the §9.8 factory install proof (see {@link factoryInstallProof}). */
+export interface FactoryInstallResult {
+  catalogueSize: number;
+  kits: number;
+  demos: number;
+  /** Programs and samples in the active project, before and after a kit merge. */
+  programsBefore: number;
+  programsAfter: number;
+  samplesBefore: number;
+  samplesAfter: number;
+  /** The kit merge must leave the project's arrangement untouched (spec §9.8). */
+  sequencesBefore: number;
+  sequencesAfter: number;
+  tracksBefore: number;
+  tracksAfter: number;
+  songEntriesBefore: number;
+  songEntriesAfter: number;
+  /** Every merged sample's WAV is readable back from OPFS at its recorded path (§9.1). */
+  mergedSamplesReadable: boolean;
+  /** A demo pack opens as a NEW, playable project (spec §9.8). */
+  demoOpenedNewProject: boolean;
+  demoSequences: number;
+  demoSamples: number;
 }
 
 declare global {
@@ -212,6 +239,87 @@ async function packRoundTrip(): Promise<{ imported: boolean; samples: number }> 
 }
 
 /**
+ * Factory content proof (spec §9.8) over the REAL path: the catalogue is fetched over HTTP,
+ * a kit is merged into the live project through actual OPFS writes and SQLite inserts, and
+ * a demo is installed as a new project. The unit suite mocks OPFS and the repositories, so
+ * this is the only place the §13.5 "real OPFS/SAB/worklet path" is exercised for §9.8.
+ */
+async function factoryInstallProof(): Promise<FactoryInstallResult> {
+  const { fetchFactoryCatalogue, installFactoryPack } = await import('@/core/project');
+  const { readFile } = await import('@/core/storage/opfs');
+
+  const catalogue = await fetchFactoryCatalogue();
+  const kits = catalogue.filter((pack) => pack.kind === 'kit');
+  const demos = catalogue.filter((pack) => pack.kind === 'demo');
+  if (kits.length === 0 || demos.length === 0) {
+    throw new Error('factory catalogue is missing a kit or a demo');
+  }
+
+  const before = sampleEditContext();
+  const count = async (projectId: string) => {
+    const ctx = sampleEditContext();
+    const [programs, samples, sequences] = await Promise.all([
+      ctx.repos.programs.listByProject(projectId),
+      ctx.repos.samples.listByProject(projectId),
+      ctx.repos.sequences.listByProject(projectId),
+    ]);
+    let tracks = 0;
+    for (const sequence of sequences.rows) {
+      tracks += (await ctx.repos.tracks.listBySequence(sequence.id)).rows.length;
+    }
+    const songEntries = await ctx.repos.songs.listByProject(projectId);
+    return {
+      programs: programs.rows.length,
+      samples: samples.rows.length,
+      sequences: sequences.rows.length,
+      tracks,
+      songEntries: songEntries.length,
+    };
+  };
+
+  const activeId = before.projectId;
+  const start = await count(activeId);
+  await installFactoryPack(kits[0]!, activeId);
+  const merged = await count(activeId);
+
+  // Every merged sample must actually be on disk at the path its row records (spec §9.1).
+  const ctx = sampleEditContext();
+  const mergedSamples = await ctx.repos.samples.listByProject(activeId);
+  let mergedSamplesReadable = true;
+  for (const row of mergedSamples.rows) {
+    try {
+      const file = await readFile(row.opfs_path);
+      if (file.size === 0) mergedSamplesReadable = false;
+    } catch {
+      mergedSamplesReadable = false;
+    }
+  }
+
+  const demoResult = await installFactoryPack(demos[0]!, activeId);
+  const demo = await count(demoResult.projectId);
+
+  return {
+    catalogueSize: catalogue.length,
+    kits: kits.length,
+    demos: demos.length,
+    programsBefore: start.programs,
+    programsAfter: merged.programs,
+    samplesBefore: start.samples,
+    samplesAfter: merged.samples,
+    sequencesBefore: start.sequences,
+    sequencesAfter: merged.sequences,
+    tracksBefore: start.tracks,
+    tracksAfter: merged.tracks,
+    songEntriesBefore: start.songEntries,
+    songEntriesAfter: merged.songEntries,
+    mergedSamplesReadable,
+    demoOpenedNewProject: demoResult.projectId !== activeId,
+    demoSequences: demo.sequences,
+    demoSamples: demo.samples,
+  };
+}
+
+/**
  * Sample-pipeline proof (spec §12): import a synthetic drum loop (§9.4), chop it by WASM
  * transient detection (§7.5/§8.5.4), and time-stretch it (§5.7.9) — proving the WASM kernels run
  * end to end on the real OPFS/decode path.
@@ -269,5 +377,6 @@ export function installAudioProbe(engine: AudioEngine): void {
     keygroupPitches,
     packRoundTrip,
     samplePipelineProof: () => samplePipelineProof(engine),
+    factoryInstallProof,
   };
 }

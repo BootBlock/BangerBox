@@ -47,7 +47,15 @@ function packSnapshot(): ProjectSnapshot {
       },
     ],
     midiEvents: [
-      { id: 'ev-1', track_id: 'track-1', tick_start: 0, duration_ticks: 96, note: 0, velocity: 100, extra: null },
+      {
+        id: 'ev-1',
+        track_id: 'track-1',
+        tick_start: 0,
+        duration_ticks: 96,
+        note: 0,
+        velocity: 100,
+        extra: null,
+      },
     ],
     automation: [
       {

@@ -5,10 +5,21 @@
 // (`./prng.mjs`), so sounds are independent and a rebuild is byte-identical (§9.8 "Build").
 // "Flavoured" and "-ish" are deliberate: these evoke the character of classic machines
 // without reproducing any recording of one.
-import { bandPass, delay, finalise, highPass, lowPass, metallic, mix, noise, tone, sweepSine } from './synth.mjs';
+import {
+  bandPass,
+  delay,
+  finalise,
+  highPass,
+  lowPass,
+  metallic,
+  mix,
+  noise,
+  tone,
+  sweepSine,
+} from './synth.mjs';
 
 /** Inharmonic square-bank ratios — the metallic source shared by hats and cymbals. */
-const HAT_RATIOS = [1, 1.4471, 1.6170, 1.9265, 2.5028, 2.6637];
+const HAT_RATIOS = [1, 1.4471, 1.617, 1.9265, 2.5028, 2.6637];
 const CYMBAL_RATIOS = [1, 1.3211, 1.5473, 1.8391, 2.1017, 2.4813, 2.9127, 3.3541];
 
 /** A closed/open hat pair from one metallic bank, differing only in decay. */
@@ -73,7 +84,10 @@ const KIT_808 = [
     name: 'Snare',
     tags: ['snare', '808'],
     build: (rng) => {
-      const body = mix([tone({ seconds: 0.16, hz: 186, curve: 1.4 }), 1], [tone({ seconds: 0.13, hz: 331, curve: 1.6 }), 0.6]);
+      const body = mix(
+        [tone({ seconds: 0.16, hz: 186, curve: 1.4 }), 1],
+        [tone({ seconds: 0.13, hz: 331, curve: 1.6 }), 0.6],
+      );
       const snares = highPass(noise({ seconds: 0.25, rng, curve: 1.5 }), 1_400);
       return finalise(mix([body, 0.75], [snares, 0.7]));
     },
@@ -82,7 +96,12 @@ const KIT_808 = [
     name: 'Rim',
     tags: ['rim', 'perc', '808'],
     build: (rng) =>
-      finalise(mix([tone({ seconds: 0.05, hz: 1_700, curve: 3 }), 0.8], [bandPass(noise({ seconds: 0.05, rng, curve: 3.5 }), 2_400, 2), 0.6])),
+      finalise(
+        mix(
+          [tone({ seconds: 0.05, hz: 1_700, curve: 3 }), 0.8],
+          [bandPass(noise({ seconds: 0.05, rng, curve: 3.5 }), 2_400, 2), 0.6],
+        ),
+      ),
   },
   { name: 'Clap', tags: ['clap', '808'], build: (rng) => clap(0.5, rng) },
   { name: 'Closed Hat', tags: ['hat', 'closed', '808'], build: (rng) => hat(0.06, rng, { curve: 2.4 }) },
@@ -101,7 +120,11 @@ const KIT_808 = [
       return finalise(bandPass(mix([a, 0.6], [b, 0.6]), 2_200, 0.8));
     },
   },
-  { name: 'Clave', tags: ['perc', 'clave', '808'], build: () => finalise(tone({ seconds: 0.08, hz: 2_500, curve: 3 })) },
+  {
+    name: 'Clave',
+    tags: ['perc', 'clave', '808'],
+    build: () => finalise(tone({ seconds: 0.08, hz: 2_500, curve: 3 })),
+  },
   {
     name: 'Maracas',
     tags: ['perc', 'shaker', '808'],
@@ -126,7 +149,10 @@ const KIT_909 = [
     name: 'Snare',
     tags: ['snare', '909'],
     build: (rng) => {
-      const body = mix([tone({ seconds: 0.12, hz: 200, curve: 1.8 }), 1], [tone({ seconds: 0.1, hz: 296, curve: 2 }), 0.5]);
+      const body = mix(
+        [tone({ seconds: 0.12, hz: 200, curve: 1.8 }), 1],
+        [tone({ seconds: 0.1, hz: 296, curve: 2 }), 0.5],
+      );
       const snares = highPass(noise({ seconds: 0.25, rng, curve: 1.8 }), 2_000);
       return finalise(mix([body, 0.6], [snares, 0.9]));
     },
@@ -134,13 +160,39 @@ const KIT_909 = [
   {
     name: 'Rim',
     tags: ['rim', 'perc', '909'],
-    build: (rng) => finalise(bandPass(mix([tone({ seconds: 0.04, hz: 1_900, curve: 3.5 }), 0.9], [noise({ seconds: 0.04, rng, curve: 4 }), 0.5]), 3_000, 2.2)),
+    build: (rng) =>
+      finalise(
+        bandPass(
+          mix(
+            [tone({ seconds: 0.04, hz: 1_900, curve: 3.5 }), 0.9],
+            [noise({ seconds: 0.04, rng, curve: 4 }), 0.5],
+          ),
+          3_000,
+          2.2,
+        ),
+      ),
   },
   { name: 'Clap', tags: ['clap', '909'], build: (rng) => clap(0.45, rng, { centreHz: 1_450, q: 1.3 }) },
-  { name: 'Closed Hat', tags: ['hat', 'closed', '909'], build: (rng) => hat(0.05, rng, { baseHz: 370, hp: 8_000, curve: 2.6 }) },
-  { name: 'Open Hat', tags: ['hat', 'open', '909'], build: (rng) => hat(0.4, rng, { baseHz: 370, hp: 8_000, curve: 1 }) },
-  { name: 'Crash', tags: ['cymbal', 'crash', '909'], build: (rng) => cymbal(1.6, rng, { baseHz: 260, hp: 3_800 }) },
-  { name: 'Ride', tags: ['cymbal', 'ride', '909'], build: (rng) => cymbal(1.4, rng, { baseHz: 420, hp: 5_500 }) },
+  {
+    name: 'Closed Hat',
+    tags: ['hat', 'closed', '909'],
+    build: (rng) => hat(0.05, rng, { baseHz: 370, hp: 8_000, curve: 2.6 }),
+  },
+  {
+    name: 'Open Hat',
+    tags: ['hat', 'open', '909'],
+    build: (rng) => hat(0.4, rng, { baseHz: 370, hp: 8_000, curve: 1 }),
+  },
+  {
+    name: 'Crash',
+    tags: ['cymbal', 'crash', '909'],
+    build: (rng) => cymbal(1.6, rng, { baseHz: 260, hp: 3_800 }),
+  },
+  {
+    name: 'Ride',
+    tags: ['cymbal', 'ride', '909'],
+    build: (rng) => cymbal(1.4, rng, { baseHz: 420, hp: 5_500 }),
+  },
   { name: 'Low Tom', tags: ['tom', '909'], build: (rng) => tom(0.45, rng, 100) },
   { name: 'Mid Tom', tags: ['tom', '909'], build: (rng) => tom(0.4, rng, 155) },
   { name: 'High Tom', tags: ['tom', '909'], build: (rng) => tom(0.35, rng, 225) },
@@ -152,7 +204,17 @@ const KIT_909 = [
   {
     name: 'Perc',
     tags: ['perc', '909'],
-    build: (rng) => finalise(bandPass(mix([tone({ seconds: 0.2, hz: 620, curve: 2 }), 0.8], [noise({ seconds: 0.1, rng, curve: 3 }), 0.3]), 1_500, 1.6)),
+    build: (rng) =>
+      finalise(
+        bandPass(
+          mix(
+            [tone({ seconds: 0.2, hz: 620, curve: 2 }), 0.8],
+            [noise({ seconds: 0.1, rng, curve: 3 }), 0.3],
+          ),
+          1_500,
+          1.6,
+        ),
+      ),
   },
 ];
 
@@ -174,7 +236,10 @@ const KIT_ACOUSTIC = [
     name: 'Snare',
     tags: ['snare', 'acoustic'],
     build: (rng) => {
-      const head = mix([tone({ seconds: 0.14, hz: 180, curve: 1.6 }), 1], [tone({ seconds: 0.12, hz: 270, curve: 1.8 }), 0.7]);
+      const head = mix(
+        [tone({ seconds: 0.14, hz: 180, curve: 1.6 }), 1],
+        [tone({ seconds: 0.12, hz: 270, curve: 1.8 }), 0.7],
+      );
       const wires = highPass(noise({ seconds: 0.35, rng, curve: 1.3 }), 1_800);
       const room = bandPass(noise({ seconds: 0.35, rng, curve: 0.9 }), 600, 0.8);
       return finalise(mix([head, 0.6], [wires, 0.8], [room, 0.15]));
@@ -183,12 +248,38 @@ const KIT_ACOUSTIC = [
   {
     name: 'Side Stick',
     tags: ['rim', 'perc', 'acoustic'],
-    build: (rng) => finalise(bandPass(mix([tone({ seconds: 0.06, hz: 1_150, curve: 3 }), 0.9], [noise({ seconds: 0.05, rng, curve: 4 }), 0.5]), 1_800, 1.8)),
+    build: (rng) =>
+      finalise(
+        bandPass(
+          mix(
+            [tone({ seconds: 0.06, hz: 1_150, curve: 3 }), 0.9],
+            [noise({ seconds: 0.05, rng, curve: 4 }), 0.5],
+          ),
+          1_800,
+          1.8,
+        ),
+      ),
   },
-  { name: 'Closed Hat', tags: ['hat', 'closed', 'acoustic'], build: (rng) => hat(0.07, rng, { baseHz: 410, hp: 6_500, curve: 2.2 }) },
-  { name: 'Open Hat', tags: ['hat', 'open', 'acoustic'], build: (rng) => hat(0.45, rng, { baseHz: 410, hp: 6_500, curve: 0.85 }) },
-  { name: 'Ride', tags: ['cymbal', 'ride', 'acoustic'], build: (rng) => cymbal(1.5, rng, { baseHz: 460, hp: 5_000 }) },
-  { name: 'Crash', tags: ['cymbal', 'crash', 'acoustic'], build: (rng) => cymbal(1.8, rng, { baseHz: 230, hp: 3_500 }) },
+  {
+    name: 'Closed Hat',
+    tags: ['hat', 'closed', 'acoustic'],
+    build: (rng) => hat(0.07, rng, { baseHz: 410, hp: 6_500, curve: 2.2 }),
+  },
+  {
+    name: 'Open Hat',
+    tags: ['hat', 'open', 'acoustic'],
+    build: (rng) => hat(0.45, rng, { baseHz: 410, hp: 6_500, curve: 0.85 }),
+  },
+  {
+    name: 'Ride',
+    tags: ['cymbal', 'ride', 'acoustic'],
+    build: (rng) => cymbal(1.5, rng, { baseHz: 460, hp: 5_000 }),
+  },
+  {
+    name: 'Crash',
+    tags: ['cymbal', 'crash', 'acoustic'],
+    build: (rng) => cymbal(1.8, rng, { baseHz: 230, hp: 3_500 }),
+  },
   { name: 'Floor Tom', tags: ['tom', 'acoustic'], build: (rng) => tom(0.6, rng, 82) },
   { name: 'Mid Tom', tags: ['tom', 'acoustic'], build: (rng) => tom(0.5, rng, 125) },
   { name: 'High Tom', tags: ['tom', 'acoustic'], build: (rng) => tom(0.4, rng, 185) },
@@ -209,7 +300,13 @@ const KIT_ACOUSTIC = [
   {
     name: 'Woodblock',
     tags: ['perc', 'woodblock', 'acoustic'],
-    build: () => finalise(mix([tone({ seconds: 0.1, hz: 1_180, curve: 2.6 }), 1], [tone({ seconds: 0.06, hz: 2_360, curve: 3.4 }), 0.3])),
+    build: () =>
+      finalise(
+        mix(
+          [tone({ seconds: 0.1, hz: 1_180, curve: 2.6 }), 1],
+          [tone({ seconds: 0.06, hz: 2_360, curve: 3.4 }), 0.3],
+        ),
+      ),
   },
 ];
 
@@ -218,19 +315,22 @@ export const KITS = [
   {
     id: 'kit-808',
     title: '808 Kit',
-    description: 'Deep swept sub kicks, metallic hats and the familiar cowbell — 808-flavoured, fully synthesised.',
+    description:
+      'Deep swept sub kicks, metallic hats and the familiar cowbell — 808-flavoured, fully synthesised.',
     samples: KIT_808,
   },
   {
     id: 'kit-909',
     title: '909 Kit',
-    description: 'Punchy click-forward kicks, noisy snares and bright cymbals — 909-flavoured, fully synthesised.',
+    description:
+      'Punchy click-forward kicks, noisy snares and bright cymbals — 909-flavoured, fully synthesised.',
     samples: KIT_909,
   },
   {
     id: 'kit-acoustic',
     title: 'Acoustic Kit',
-    description: 'Shell-and-wire drums with room character and a full cymbal set — acoustic-ish, fully synthesised.',
+    description:
+      'Shell-and-wire drums with room character and a full cymbal set — acoustic-ish, fully synthesised.',
     samples: KIT_ACOUSTIC,
   },
 ];
