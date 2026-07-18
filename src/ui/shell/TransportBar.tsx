@@ -10,7 +10,7 @@
 import { useEffect, useRef } from 'react';
 import { useProjectStore, useTransportStore, useUndoStore } from '@/store';
 import { BPM_RANGE, SWING_RANGE } from '@/core/project/schemas';
-import { Knob, SegmentControl, Toggle, ValueReadout, announce } from '@/ui/primitives';
+import { Button, FieldLabel, Knob, SegmentControl, Toggle, ValueReadout, announce } from '@/ui/primitives';
 import {
   IconFullscreenEnter,
   IconFullscreenExit,
@@ -140,7 +140,7 @@ export function TransportBar() {
       </div>
 
       <div className="flex items-center gap-3">
-        <span className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+        <FieldLabel as="span">
           Count-in
           <SegmentControl
             label="Count-in bars"
@@ -150,8 +150,8 @@ export function TransportBar() {
             onChange={(value) => transport().setCountInBars(value)}
             data-testid="transport-count-in"
           />
-        </span>
-        <span className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+        </FieldLabel>
+        <FieldLabel as="span">
           Rec mode
           <SegmentControl
             label="Record mode"
@@ -164,7 +164,7 @@ export function TransportBar() {
             onChange={(value) => transport().setRecordMode(value)}
             data-testid="transport-record-mode"
           />
-        </span>
+        </FieldLabel>
       </div>
 
       <div className="ml-auto flex items-center gap-2">
@@ -185,10 +185,11 @@ export function TransportBar() {
           {modified ? 'Unsaved changes' : 'All changes saved'}
         </span>
 
-        <button
-          type="button"
-          aria-label="Save project now"
+        <Button
+          label="Save project now"
           title="Save now"
+          iconOnly
+          icon={<IconSave size={16} aria-hidden="true" />}
           data-testid="transport-save"
           onClick={() => {
             void useProjectStore
@@ -196,33 +197,25 @@ export function TransportBar() {
               .saveNow()
               .then(() => announce('Project saved'));
           }}
-          className="rounded-bb-sm border border-bb-line bg-bb-raised p-2 text-bb-text transition-colors duration-150 hover:border-bb-accent-strong"
-        >
-          <IconSave size={16} aria-hidden="true" />
-        </button>
+        />
 
-        <button
-          type="button"
-          aria-label={undoLabel ? `Undo ${undoLabel}` : 'Undo'}
-          title={undoLabel ? `Undo ${undoLabel}` : 'Undo'}
+        <Button
+          label={undoLabel ? `Undo ${undoLabel}` : 'Undo'}
+          iconOnly
+          icon={<IconUndo size={16} aria-hidden="true" />}
           disabled={!canUndo}
           data-testid="transport-undo"
           onClick={() => useUndoStore.getState().undo()}
-          className="rounded-bb-sm border border-bb-line bg-bb-raised p-2 text-bb-text transition-colors duration-150 hover:border-bb-accent-strong disabled:opacity-40"
-        >
-          <IconUndo size={16} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          aria-label={redoLabel ? `Redo ${redoLabel}` : 'Redo'}
-          title={redoLabel ? `Redo ${redoLabel}` : 'Redo'}
+        />
+        <Button
+          label={redoLabel ? `Redo ${redoLabel}` : 'Redo'}
+          iconOnly
+          icon={<IconRedo size={16} aria-hidden="true" />}
           disabled={!canRedo}
           data-testid="transport-redo"
           onClick={() => useUndoStore.getState().redo()}
-          className="rounded-bb-sm border border-bb-line bg-bb-raised p-2 text-bb-text transition-colors duration-150 hover:border-bb-accent-strong disabled:opacity-40"
-        >
-          <IconRedo size={16} aria-hidden="true" />
-        </button>
+        />
+
 
         {/* Hidden outright where the browser forbids fullscreen — a soft capability is
             never shown as a dead control (spec §2.1/§3.4). */}

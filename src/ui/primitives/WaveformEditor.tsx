@@ -27,6 +27,7 @@ import {
   zoomView,
   type WaveformView,
 } from '@/core/audio/waveformView';
+import { Button } from './Button';
 import { drawMarkers, drawSelection, drawWaveform, readWaveformTokens } from './waveformDraw';
 
 /** Grab radius for a marker flag, in CSS pixels — a touch-sized target at every zoom level. */
@@ -290,17 +291,20 @@ export function WaveformEditor({
       />
 
       <div className="flex flex-wrap items-center gap-1.5 text-xs text-bb-muted">
-        <EditorButton
+        <Button
+          size="sm"
           label="Zoom in"
           onClick={() => applyZoom(1 / ZOOM_BUTTON_STEP, centreFrame())}
           disabled={totalFrames <= 0}
         />
-        <EditorButton
+        <Button
+          size="sm"
           label="Zoom out"
           onClick={() => applyZoom(ZOOM_BUTTON_STEP, centreFrame())}
           disabled={totalFrames <= 0}
         />
-        <EditorButton
+        <Button
+          size="sm"
           label="Fit"
           onClick={() => {
             view.current = clampView(fullView(totalFrames), totalFrames);
@@ -309,7 +313,8 @@ export function WaveformEditor({
           disabled={totalFrames <= 0}
         />
         {interaction === 'markers' && (
-          <EditorButton
+          <Button
+            size="sm"
             label="Add marker"
             onClick={() => commitMarkers([...liveMarkers.current, Math.round(centreFrame())])}
             disabled={totalFrames <= 0}
@@ -342,7 +347,7 @@ export function WaveformEditor({
               ).toFixed(3)}s`
             : 'Whole sample'}
         </span>
-        {selection && <EditorButton label="Clear selection" onClick={() => onSelectionChange(null)} />}
+        {selection && <Button size="sm" label="Clear selection" onClick={() => onSelectionChange(null)} />}
       </div>
 
       {interaction === 'markers' && markers.length > 0 && (
@@ -362,24 +367,6 @@ export function WaveformEditor({
         </ul>
       )}
     </div>
-  );
-}
-
-interface EditorButtonProps {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-}
-function EditorButton({ label, onClick, disabled = false }: EditorButtonProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-0.5 text-xs text-bb-text disabled:opacity-50"
-    >
-      {label}
-    </button>
   );
 }
 

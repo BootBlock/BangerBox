@@ -14,7 +14,7 @@ import { getAudioEngine } from '@/core/project/session';
 import { useMixerStore } from '@/store';
 import { LEVEL_RANGE } from '@/core/project/schemas';
 import { faderLevelToDb } from '@/core/audio/params/faderLaw';
-import { Fader, MeterCanvas, formatValueText } from './primitives';
+import { Button, Fader, MeterCanvas, formatValueText } from './primitives';
 
 /** The four bundled demo pads the engine proof triggers (spec §12 Phase 3). */
 const DEMO_PADS = [0, 1, 2, 3];
@@ -92,14 +92,11 @@ export function AudioEnginePanel() {
           <MeterCanvas meterId="master" label="Master" />
         </div>
 
-        <button
-          type="button"
+        <Button
+          label="Metronome click"
           data-testid="metronome-click"
           onClick={() => getAudioEngine()?.clickMetronome(true)}
-          className="rounded-bb-sm border border-bb-line px-3 py-2 text-xs font-semibold transition-colors duration-150 hover:bg-bb-raised"
-        >
-          Metronome click
-        </button>
+        />
       </div>
     </section>
   );

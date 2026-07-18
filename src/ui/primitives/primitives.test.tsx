@@ -7,13 +7,16 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { Button } from './Button';
 import { Fader } from './Fader';
+import { FieldLabel } from './FieldLabel';
 import { Knob } from './Knob';
 import { Modal } from './Modal';
 import { Pad } from './Pad';
 import { SegmentControl } from './SegmentControl';
 import { Toast } from './Toast';
 import { Toggle } from './Toggle';
+import { ValueReadout } from './ValueReadout';
 
 describe('Knob (spec §8.2 ARIA + keyboard)', () => {
   it('exposes the full slider ARIA contract with human units', () => {
@@ -192,6 +195,127 @@ describe('Toggle', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
     await user.click(toggle);
     expect(onChange).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('Button (spec §3.6 one chassis, no call-site re-styling)', () => {
+  it('names itself from its label and fires onClick', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(<Button label="Load Sample" onClick={onClick} />);
+    await user.click(screen.getByRole('button', { name: 'Load Sample' }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the label as the accessible name when it is visually hidden', () => {
+    render(<Button label="Delete step" iconOnly variant="danger" icon={<span aria-hidden="true">x</span>} />);
+    const button = screen.getByRole('button', { name: 'Delete step' });
+    expect(button).toHaveAttribute('title', 'Delete step');
+    expect(button).not.toHaveTextContent('Delete step');
+  });
+
+  // Row-scoped buttons ("Audition", "Remove") need a name that distinguishes them when a
+  // screen reader lists the buttons out of context, without changing what is on screen.
+  it('extends the accessible name past the visible label when asked, keeping the label visible', () => {
+    render(<Button label="Audition" accessibleName="Audition Kick.wav" variant="quiet" />);
+    const button = screen.getByRole('button', { name: 'Audition Kick.wav' });
+    // WCAG 2.5.3: the visible text must remain part of the accessible name, so a
+    // speech-input user can activate the button by saying what they see.
+    expect(button).toHaveTextContent('Audition');
+    expect(button.getAttribute('aria-label')).toContain('Audition');
+  });
+
+  it('defaults to type="button" so it never submits a surrounding form by accident', () => {
+    render(<Button label="Clear" />);
+    expect(screen.getByRole('button', { name: 'Clear' })).toHaveAttribute('type', 'button');
+  });
+
+  it('does not fire onClick while disabled', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(<Button label="Export" onClick={onClick} disabled />);
+    await user.click(screen.getByRole('button', { name: 'Export' }));
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  // The drift this primitive exists to stop: disabled buttons used to fade to four
+  // different opacities and identical buttons eased in one mode but snapped in another.
+  it('gives every variant the same disabled treatment and the same token transition', () => {
+    const variants = ['default', 'accent', 'quiet', 'danger'] as const;
+    for (const variant of variants) {
+      const { unmount } = render(<Button label={variant} variant={variant} disabled />);
+      const className = screen.getByRole('button', { name: variant }).className;
+      expect(className).toContain('opacity-40');
+      expect(className).toContain('cursor-not-allowed');
+      expect(className).toContain('transition-colors duration-150 ease-bb-snap');
+      // A disabled button must not advertise a hover affordance it will not honour.
+      expect(className).not.toContain('hover:');
+      unmount();
+    }
+  });
+
+  // The radius lives in the size map alone; naming one in the base chassis too would leave
+  // the winner to stylesheet emission order rather than to the size that was asked for.
+  it('applies exactly one radius per size', () => {
+    const radii = { sm: 'rounded-bb-sm', md: 'rounded-bb-sm', lg: 'rounded-bb-md' } as const;
+    for (const [size, radius] of Object.entries(radii)) {
+      for (const iconOnly of [false, true]) {
+        const { unmount } = render(<Button label="Go" size={size as 'sm' | 'md' | 'lg'} iconOnly={iconOnly} />);
+        const classes = screen.getByRole('button', { name: 'Go' }).className.split(' ');
+        expect(classes.filter((c) => c.startsWith('rounded-'))).toEqual([radius]);
+        unmount();
+      }
+    }
+  });
+
+  it('gives each variant exactly one hover affordance when enabled', () => {
+    const { rerender } = render(<Button label="Act" variant="quiet" />);
+    expect(screen.getByRole('button', { name: 'Act' }).className).toContain('hover:text-bb-text');
+    rerender(<Button label="Act" variant="danger" />);
+    expect(screen.getByRole('button', { name: 'Act' }).className).toContain('hover:text-bb-danger');
+  });
+});
+
+describe('FieldLabel (spec §3.6 one caption chassis)', () => {
+  it('wraps its control so the caption names it without needing an id', () => {
+    render(
+      <FieldLabel>
+        Quantise
+        <input type="text" defaultValue="1/16" />
+      </FieldLabel>,
+    );
+    expect(screen.getByLabelText('Quantise')).toHaveValue('1/16');
+  });
+
+  it('associates by id when the control is not a child', () => {
+    render(
+      <>
+        <FieldLabel htmlFor="bars">Bars</FieldLabel>
+        <input id="bars" type="text" defaultValue="4" />
+      </>,
+    );
+    expect(screen.getByLabelText('Bars')).toHaveValue('4');
+  });
+
+  it('renders a span — not a label — when it names something that is not a control', () => {
+    render(<FieldLabel as="span" data-testid="pads-caption">Pads</FieldLabel>);
+    expect(screen.getByTestId('pads-caption').tagName).toBe('SPAN');
+  });
+
+  // The three drifted copies (gap-1.5, gap-2, and ValueReadout's tracked variant) collapse
+  // into this one chassis; ValueReadout now renders the same element.
+  it('renders one chassis for both element kinds, and ValueReadout reuses it', () => {
+    const { unmount } = render(<FieldLabel data-testid="a">A</FieldLabel>);
+    const labelClass = screen.getByTestId('a').className;
+    unmount();
+    render(
+      <>
+        <FieldLabel as="span" data-testid="b">B</FieldLabel>
+        <ValueReadout label="BPM" value="120" showLabel />
+      </>,
+    );
+    expect(screen.getByTestId('b').className).toBe(labelClass);
+    expect(screen.getByText('BPM').className).toBe(labelClass);
   });
 });
 

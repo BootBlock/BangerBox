@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { CHOKE_GROUP_RANGE, createDefaultPad, type DrumProgram, type Pad } from '@/core/project/schemas';
 import { useProgramStore } from '@/store';
+import { Button } from '@/ui/primitives';
 import { NumberField, SelectField, ToggleField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
 import { LayersEditor } from './LayersEditor';
@@ -91,16 +92,15 @@ export function PadEditor({ program }: { program: DrumProgram }) {
           >
             <div className="mb-2 flex items-center justify-between">
               <h4 className="text-xs font-semibold text-bb-text">Pad {activePad.padIndex + 1}</h4>
-              <button
-                type="button"
+              <Button
+                label="Clear pad"
+                variant="danger"
+                size="sm"
                 onClick={() => {
                   removePad(program.id, activePad.padIndex);
                   setActivePad(null);
                 }}
-                className="rounded-bb-sm border border-bb-line px-2 py-1 text-xs font-semibold hover:bg-bb-raised"
-              >
-                Clear pad
-              </button>
+              />
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <label className="flex flex-col gap-1 text-xs text-bb-muted">

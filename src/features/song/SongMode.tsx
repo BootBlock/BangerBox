@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { useSequenceStore, useTransportStore, useUIStore } from '@/store';
 import { bounceSong } from '@/core/audio/bounceService';
 import { sampleEditContext } from '../sample-edit/sampleContext';
-import { SegmentControl, ValueReadout } from '@/ui/primitives';
+import { Button, SegmentControl, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { IconAdd, IconChevronDown, IconChevronUp, IconRemove } from '@/ui/icons';
 
@@ -113,15 +113,12 @@ export function SongMode() {
               onChange={(mode) => useTransportStore.getState().setPlaybackMode(mode)}
               data-testid="song-playback-mode"
             />
-            <button
-              type="button"
+            <Button
+              label={bouncing ? 'Bouncing…' : 'Bounce song'}
               disabled={bouncing || songEntries.length === 0}
               onClick={handleBounce}
               data-testid="song-bounce"
-              className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs font-semibold transition-colors duration-150 hover:border-bb-accent-strong disabled:opacity-40"
-            >
-              {bouncing ? 'Bouncing…' : 'Bounce song'}
-            </button>
+            />
           </div>
         }
       >
@@ -161,32 +158,32 @@ export function SongMode() {
                     size="sm"
                     onChange={(repeats) => setRepeats(entry.id, repeats)}
                   />
-                  <button
-                    type="button"
-                    aria-label={`Move entry ${index + 1} earlier`}
+                  <Button
+                    label={`Move entry ${index + 1} earlier`}
+                    variant="quiet"
+                    size="sm"
+                    iconOnly
+                    icon={<IconChevronUp size={14} aria-hidden="true" />}
                     disabled={index === 0}
                     onClick={() => moveEntry(index, -1)}
-                    className="rounded-bb-sm border border-bb-line p-1 text-bb-muted transition-colors duration-150 hover:text-bb-text disabled:opacity-30"
-                  >
-                    <IconChevronUp size={14} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move entry ${index + 1} later`}
+                  />
+                  <Button
+                    label={`Move entry ${index + 1} later`}
+                    variant="quiet"
+                    size="sm"
+                    iconOnly
+                    icon={<IconChevronDown size={14} aria-hidden="true" />}
                     disabled={index === songEntries.length - 1}
                     onClick={() => moveEntry(index, 1)}
-                    className="rounded-bb-sm border border-bb-line p-1 text-bb-muted transition-colors duration-150 hover:text-bb-text disabled:opacity-30"
-                  >
-                    <IconChevronDown size={14} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Remove entry ${index + 1}`}
+                  />
+                  <Button
+                    label={`Remove entry ${index + 1}`}
+                    variant="danger"
+                    size="sm"
+                    iconOnly
+                    icon={<IconRemove size={14} aria-hidden="true" />}
                     onClick={() => removeEntry(entry.id)}
-                    className="rounded-bb-sm border border-bb-line p-1 text-bb-muted transition-colors duration-150 hover:text-bb-danger"
-                  >
-                    <IconRemove size={14} aria-hidden="true" />
-                  </button>
+                  />
                 </li>
               );
             })}
@@ -201,15 +198,12 @@ export function SongMode() {
           <ul className="flex flex-wrap gap-2">
             {sequenceList.map((sequence) => (
               <li key={sequence.id}>
-                <button
-                  type="button"
+                <Button
+                  label={sequence.name}
+                  icon={<IconAdd size={14} aria-hidden="true" />}
                   onClick={() => addEntry(sequence.id)}
                   data-testid={`song-add-${sequence.id}`}
-                  className="inline-flex items-center gap-1.5 rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs font-semibold transition-colors duration-150 hover:border-bb-accent-strong"
-                >
-                  <IconAdd size={14} aria-hidden="true" />
-                  {sequence.name}
-                </button>
+                />
               </li>
             ))}
           </ul>

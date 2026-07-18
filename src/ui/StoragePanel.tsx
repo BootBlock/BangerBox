@@ -8,6 +8,7 @@ import {
   requestPersistentStorage,
   type StorageEstimateResult,
 } from '@/core/storage/safeguards';
+import { Button } from './primitives';
 
 /**
  * Storage diagnostics — boots the database worker (OPFS VFS + migrations), requests
@@ -161,13 +162,7 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
             The browser declined persistent storage, so it may evict project data under storage pressure.
             Installing BangerBox as an app usually grants protection.
           </p>
-          <button
-            type="button"
-            onClick={() => setEvictionWarningDismissed(true)}
-            className="shrink-0 rounded-bb-sm border border-bb-line px-2 py-1 font-semibold text-bb-text transition-colors duration-150 hover:bg-bb-surface"
-          >
-            Dismiss
-          </button>
+          <Button label="Dismiss" size="sm" onClick={() => setEvictionWarningDismissed(true)} />
         </div>
       )}
 
@@ -228,15 +223,14 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
         )}
 
         <div className="mt-3 flex items-center gap-3">
-          <button
-            type="button"
+          <Button
+            label={testStatus === 'running' ? 'Running…' : 'Run storage self-test'}
+            variant="accent"
+            size="lg"
             data-testid="storage-self-test-run"
             onClick={() => void runSelfTest()}
             disabled={status !== 'ready' || testStatus === 'running'}
-            className="rounded-bb-md bg-bb-accent px-4 py-2 text-sm font-semibold text-bb-bg transition-colors duration-150 hover:bg-bb-accent-strong disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {testStatus === 'running' ? 'Running…' : 'Run storage self-test'}
-          </button>
+          />
           <span
             data-testid="storage-self-test-status"
             data-status={testStatus}

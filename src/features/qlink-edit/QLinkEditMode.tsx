@@ -38,7 +38,7 @@ import {
   type TransportParam,
 } from '@/core/audio/params/registry';
 import { qLinkModeSchema, type QLinkBinding, type QLinkMode } from '@/core/project/schemas';
-import { Knob, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
+import { Button, FieldLabel, Knob, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { StoragePanel } from '@/ui/StoragePanel';
 import { IconRemove } from '@/ui/icons';
@@ -224,8 +224,8 @@ export function QLinkEditMode() {
             tone={connectionState === 'connected' ? 'accent' : 'muted'}
             data-testid="qlink-connection"
           />
-          <button
-            type="button"
+          <Button
+            label={connectionState === 'connected' ? 'Disconnect' : 'Connect controller'}
             disabled={!bluetoothAvailable || connectionState === 'connecting'}
             onClick={() => {
               if (connectionState === 'connected') void hardwareService().disconnect();
@@ -235,14 +235,11 @@ export function QLinkEditMode() {
               bluetoothAvailable ? undefined : 'Web Bluetooth is unavailable in this browser (spec §2.1).'
             }
             data-testid="qlink-connect"
-            className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs font-semibold text-bb-text transition-colors duration-150 hover:border-bb-accent disabled:opacity-40"
-          >
-            {connectionState === 'connected' ? 'Disconnect' : 'Connect controller'}
-          </button>
+          />
           {deviceName !== null && (
             <ValueReadout label="Device" value={deviceName} showLabel data-testid="qlink-device" />
           )}
-          <span className="flex items-center gap-2 text-[0.625rem] font-semibold text-bb-muted uppercase">
+          <FieldLabel as="span">
             Encoders
             <SegmentControl
               label="Encoder count"
@@ -257,7 +254,7 @@ export function QLinkEditMode() {
               onChange={setEncoderCount}
               data-testid="qlink-encoder-count"
             />
-          </span>
+          </FieldLabel>
           <Knob
             label="Input latency"
             value={inputLatencyMs}
@@ -435,15 +432,15 @@ export function QLinkEditMode() {
                         onChange={(pressed) => setLearningEncoder(pressed ? encoderIndex : null)}
                         data-testid={`qlink-learn-${encoderIndex}`}
                       />
-                      <button
-                        type="button"
-                        aria-label={`Clear binding for encoder ${encoderIndex + 1}`}
+                      <Button
+                        label={`Clear binding for encoder ${encoderIndex + 1}`}
+                        variant="danger"
+                        size="sm"
+                        iconOnly
+                        icon={<IconRemove size={14} aria-hidden="true" />}
                         disabled={!binding}
                         onClick={() => useHardwareStore.getState().removeBinding(encoderIndex)}
-                        className="rounded-bb-sm border border-bb-line p-1 text-bb-muted transition-colors duration-150 hover:text-bb-danger disabled:opacity-30"
-                      >
-                        <IconRemove size={14} aria-hidden="true" />
-                      </button>
+                      />
                     </div>
                   </td>
                 </tr>

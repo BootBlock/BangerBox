@@ -7,6 +7,7 @@
  */
 import { createDefaultDrumProgram, createDefaultKeygroupProgram } from '@/core/project/schemas';
 import { useProgramStore } from '@/store';
+import { Button } from '@/ui/primitives';
 import { ArpControl } from './ArpControl';
 import { KeygroupEditor } from './KeygroupEditor';
 import { PadEditor } from './PadEditor';
@@ -57,20 +58,8 @@ export function ProgramEditPanel() {
             ))}
           </select>
         </label>
-        <button
-          type="button"
-          onClick={() => createProgram('drum')}
-          className="rounded-bb-sm border border-bb-line px-2 py-1 text-xs font-semibold hover:bg-bb-raised"
-        >
-          Add drum
-        </button>
-        <button
-          type="button"
-          onClick={() => createProgram('keygroup')}
-          className="rounded-bb-sm border border-bb-line px-2 py-1 text-xs font-semibold hover:bg-bb-raised"
-        >
-          Add keygroup
-        </button>
+        <Button label="Add drum" size="sm" onClick={() => createProgram('drum')} />
+        <Button label="Add keygroup" size="sm" onClick={() => createProgram('keygroup')} />
       </div>
 
       {active ? (
@@ -85,16 +74,15 @@ export function ProgramEditPanel() {
                 onChange={(event) => renameProgram(active.id, event.target.value)}
               />
             </label>
-            <button
-              type="button"
+            <Button
+              label="Delete program"
+              variant="danger"
+              size="sm"
               onClick={() => {
                 removeProgram(active.id);
                 setActiveProgram(null);
               }}
-              className="rounded-bb-sm border border-bb-line px-2 py-1 text-xs font-semibold hover:bg-bb-raised"
-            >
-              Delete program
-            </button>
+            />
           </div>
 
           {active.type === 'drum' ? <PadEditor program={active} /> : <KeygroupEditor program={active} />}

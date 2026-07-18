@@ -10,6 +10,7 @@ import {
   TUNE_SEMITONES_RANGE,
   type VelocityLayer,
 } from '@/core/project/schemas';
+import { Button } from '@/ui/primitives';
 import { NumberField, ToggleField } from './controls';
 
 export function LayersEditor({
@@ -36,14 +37,13 @@ export function LayersEditor({
             <li key={index} className="rounded-bb-sm border border-bb-line p-2">
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs text-bb-muted">Sample {layer.sampleId.slice(0, 8)}</span>
-                <button
-                  type="button"
-                  aria-label={`Remove layer ${index + 1}`}
+                <Button
+                  label="Remove"
+                  accessibleName={`Remove layer ${index + 1}`}
+                  variant="danger"
+                  size="sm"
                   onClick={() => removeLayer(index)}
-                  className="rounded-bb-sm border border-bb-line px-2 py-0.5 text-xs font-semibold hover:bg-bb-raised"
-                >
-                  Remove
-                </button>
+                />
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <NumberField

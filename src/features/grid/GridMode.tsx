@@ -13,7 +13,7 @@ import { PPQN } from '@/core/constants';
 import { gridTicks, quantiseEvents, type QuantiseGrid } from '@/core/sequencer/quantise';
 import { endUndoGesture, useProgramStore, useSequenceStore, useTransportStore } from '@/store';
 import type { MidiEvent } from '@/core/project/schemas';
-import { Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
+import { Button, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { noteName } from '../pad-perform/scales';
 import { GridCanvas, type GridTool } from './GridCanvas';
@@ -207,7 +207,7 @@ export function GridMode() {
               onChange={setTool}
               data-testid="grid-tool"
             />
-            <span className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+            <FieldLabel as="span">
               Snap
               <SegmentControl
                 label="Grid snap"
@@ -217,21 +217,18 @@ export function GridMode() {
                 onChange={setSnapTicks}
                 data-testid="grid-snap"
               />
-            </span>
-            <button
-              type="button"
+            </FieldLabel>
+            <Button
+              label="Quantise…"
               onClick={() => setQuantiseOpen(true)}
               disabled={events.length === 0}
               data-testid="grid-quantise-open"
-              className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs font-semibold transition-colors duration-150 hover:border-bb-accent-strong disabled:opacity-40"
-            >
-              Quantise…
-            </button>
+            />
           </div>
         }
       >
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+          <FieldLabel>
             Track
             <select
               aria-label="Track to edit"
@@ -247,9 +244,9 @@ export function GridMode() {
                 </option>
               ))}
             </select>
-          </label>
+          </FieldLabel>
 
-          <label className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+          <FieldLabel>
             Automation lane
             <select
               aria-label="Automation lane"
@@ -265,11 +262,11 @@ export function GridMode() {
                 </option>
               ))}
             </select>
-          </label>
+          </FieldLabel>
 
           {/* Groove is applied at schedule time like swing — non-destructive (spec §7.5).
               Templates come from Sample Edit's groove extraction. */}
-          <span className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+          <FieldLabel as="span">
             Groove
             <select
               aria-label="Track groove"
@@ -289,7 +286,7 @@ export function GridMode() {
                 </option>
               ))}
             </select>
-          </span>
+          </FieldLabel>
 
           <ValueReadout label="Notes" value={events.length} showLabel data-testid="grid-note-count" />
           <ValueReadout
@@ -348,14 +345,14 @@ export function GridMode() {
                     >
                       {rowLabel(event.note)} · tick {event.tickStart} · vel {event.velocity}
                     </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete note ${rowLabel(event.note)} at tick ${event.tickStart}`}
+                    <Button
+                      label={`Delete note ${rowLabel(event.note)} at tick ${event.tickStart}`}
+                      variant="danger"
+                      size="sm"
+                      iconOnly
+                      icon={<span aria-hidden="true">✕</span>}
                       onClick={() => handleErase(event.id)}
-                      className="rounded-bb-sm border border-bb-line px-2 py-1 text-bb-muted transition-colors duration-150 hover:text-bb-danger"
-                    >
-                      ✕
-                    </button>
+                    />
                   </li>
                 ))}
             </ul>
@@ -370,21 +367,13 @@ export function GridMode() {
         data-testid="grid-quantise-dialog"
         footer={
           <>
-            <button
-              type="button"
-              onClick={() => setQuantiseOpen(false)}
-              className="rounded-bb-sm border border-bb-line px-3 py-1.5 text-xs text-bb-muted transition-colors duration-150 hover:text-bb-text"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
+            <Button label="Cancel" variant="quiet" onClick={() => setQuantiseOpen(false)} />
+            <Button
+              label="Apply"
+              variant="accent"
               onClick={applyQuantise}
               data-testid="grid-quantise-apply"
-              className="rounded-bb-sm bg-bb-accent px-3 py-1.5 text-xs font-semibold text-bb-bg transition-colors duration-150 hover:bg-bb-accent-strong"
-            >
-              Apply
-            </button>
+            />
           </>
         }
       >
