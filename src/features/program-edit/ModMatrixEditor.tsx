@@ -5,6 +5,7 @@
  * committed by the parent through the program store (spec §3.4, §4.5).
  */
 import { MOD_AMOUNT_RANGE, type ModRoute, type ModSource } from '@/core/project/schemas';
+import { Button } from '@/ui/primitives';
 import { NumberField, SelectField } from './controls';
 
 const SOURCES: readonly { value: ModSource; label: string }[] = [
@@ -49,13 +50,7 @@ export function ModMatrixEditor({
     <section aria-label="Modulation matrix" className="rounded-bb-sm border border-bb-line bg-bb-surface p-3">
       <div className="mb-2 flex items-center justify-between">
         <h4 className="text-xs font-semibold text-bb-text">Mod matrix</h4>
-        <button
-          type="button"
-          onClick={addRoute}
-          className="rounded-bb-sm border border-bb-line px-2 py-1 text-xs font-semibold hover:bg-bb-raised"
-        >
-          Add route
-        </button>
+        <Button label="Add route" size="sm" onClick={addRoute} />
       </div>
       {routes.length === 0 ? (
         <p className="text-xs text-bb-muted">No routes. Add one to modulate a parameter.</p>
@@ -83,14 +78,13 @@ export function ModMatrixEditor({
                 step={0.05}
                 onChange={(amount) => setRoute(index, { amount })}
               />
-              <button
-                type="button"
-                aria-label={`Remove route ${index + 1}`}
+              <Button
+                label="Remove"
+                accessibleName={`Remove route ${index + 1}`}
+                variant="danger"
+                size="sm"
                 onClick={() => removeRoute(index)}
-                className="h-8 rounded-bb-sm border border-bb-line px-2 text-xs font-semibold hover:bg-bb-raised"
-              >
-                Remove
-              </button>
+              />
             </li>
           ))}
         </ul>

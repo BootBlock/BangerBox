@@ -8,7 +8,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import { useProgramStore } from '@/store';
-import { Pad, SegmentControl } from '@/ui/primitives';
+import { FieldLabel, Pad, SegmentControl } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { usePadTrigger } from '@/ui/usePadTrigger';
 import {
@@ -130,7 +130,7 @@ export function PadPerformMode() {
         }
       >
         <div className="flex flex-wrap items-center gap-4">
-          <span className="flex items-center gap-2 text-[0.625rem] font-semibold text-bb-muted uppercase">
+          <FieldLabel as="span">
             Root
             <SegmentControl
               label="Root note"
@@ -140,8 +140,8 @@ export function PadPerformMode() {
               onChange={setPitchClass}
               data-testid="perform-root"
             />
-          </span>
-          <span className="flex items-center gap-2 text-[0.625rem] font-semibold text-bb-muted uppercase">
+          </FieldLabel>
+          <FieldLabel as="span">
             Octave
             <SegmentControl
               label="Octave"
@@ -151,10 +151,10 @@ export function PadPerformMode() {
               onChange={setOctave}
               data-testid="perform-octave"
             />
-          </span>
+          </FieldLabel>
 
           {performMode === 'scale' ? (
-            <label className="flex items-center gap-2 text-[0.625rem] font-semibold text-bb-muted uppercase">
+            <FieldLabel>
               Scale
               <select
                 aria-label="Scale"
@@ -169,9 +169,9 @@ export function PadPerformMode() {
                   </option>
                 ))}
               </select>
-            </label>
+            </FieldLabel>
           ) : (
-            <span className="flex items-center gap-2 text-[0.625rem] font-semibold text-bb-muted uppercase">
+            <FieldLabel as="span">
               Chord set
               <SegmentControl
                 label="Chord set"
@@ -184,7 +184,7 @@ export function PadPerformMode() {
                 onChange={setChordSet}
                 data-testid="perform-chord-set"
               />
-            </span>
+            </FieldLabel>
           )}
         </div>
 

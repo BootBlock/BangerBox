@@ -13,7 +13,7 @@ import { useQLinkFocus } from '@/ui/useQLinkFocus';
 import { EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
 import { insertParamPath } from '@/core/audio/params/registry';
 import type { EffectType } from '@/core/project/schemas';
-import { Knob, Toggle } from '@/ui/primitives';
+import { Button, FieldLabel, Knob, Toggle } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { IconChevronDown, IconChevronUp, IconRemove } from '@/ui/icons';
 
@@ -80,7 +80,7 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
       scroll
       actions={
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+          <FieldLabel>
             Add
             <select
               aria-label={`Add an insert effect to ${channelId}`}
@@ -99,14 +99,8 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                 </option>
               ))}
             </select>
-          </label>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-bb-sm border border-bb-line px-2 py-1 text-xs text-bb-muted transition-colors duration-150 hover:text-bb-text"
-          >
-            Close
-          </button>
+          </FieldLabel>
+          <Button label="Close" variant="quiet" size="sm" onClick={onClose} />
         </div>
       }
     >
@@ -135,32 +129,32 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                     onChange={(enabled) => mixer().setInsertEnabled(channelId, slot.id, enabled)}
                     data-testid={`insert-enabled-${index}`}
                   />
-                  <button
-                    type="button"
-                    aria-label={`Move insert ${index + 1} earlier`}
+                  <Button
+                    label={`Move insert ${index + 1} earlier`}
+                    variant="quiet"
+                    size="sm"
+                    iconOnly
+                    icon={<IconChevronUp size={14} aria-hidden="true" />}
                     disabled={index === 0}
                     onClick={() => moveSlot(index, -1)}
-                    className="rounded-bb-sm border border-bb-line p-1 text-bb-muted transition-colors duration-150 hover:text-bb-text disabled:opacity-30"
-                  >
-                    <IconChevronUp size={14} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move insert ${index + 1} later`}
+                  />
+                  <Button
+                    label={`Move insert ${index + 1} later`}
+                    variant="quiet"
+                    size="sm"
+                    iconOnly
+                    icon={<IconChevronDown size={14} aria-hidden="true" />}
                     disabled={index === inserts.length - 1}
                     onClick={() => moveSlot(index, 1)}
-                    className="rounded-bb-sm border border-bb-line p-1 text-bb-muted transition-colors duration-150 hover:text-bb-text disabled:opacity-30"
-                  >
-                    <IconChevronDown size={14} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Remove insert ${index + 1}`}
+                  />
+                  <Button
+                    label={`Remove insert ${index + 1}`}
+                    variant="danger"
+                    size="sm"
+                    iconOnly
+                    icon={<IconRemove size={14} aria-hidden="true" />}
                     onClick={() => mixer().removeInsert(channelId, slot.id)}
-                    className="rounded-bb-sm border border-bb-line p-1 text-bb-muted transition-colors duration-150 hover:text-bb-danger"
-                  >
-                    <IconRemove size={14} aria-hidden="true" />
-                  </button>
+                  />
                 </div>
 
                 {effectType && (

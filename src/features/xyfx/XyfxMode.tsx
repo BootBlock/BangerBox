@@ -17,7 +17,7 @@ import {
   parseParamTarget,
   targetRange,
 } from '@/core/audio/params/registry';
-import { Toggle, XYSurface } from '@/ui/primitives';
+import { FieldLabel, Toggle, XYSurface } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 
 /** Fallback when a path has no registry range — the surface still stays operable. */
@@ -118,7 +118,7 @@ export function XyfxMode() {
   }, [effectiveX, effectiveY, valueAt]);
 
   const axisPicker = (id: string, label: string, value: string | null, onChange: (path: string) => void) => (
-    <label className="flex items-center gap-2 text-[0.625rem] font-semibold text-bb-muted uppercase">
+    <FieldLabel>
       {label}
       <select
         aria-label={`${label} parameter`}
@@ -134,7 +134,7 @@ export function XyfxMode() {
           </option>
         ))}
       </select>
-    </label>
+    </FieldLabel>
   );
 
   return (

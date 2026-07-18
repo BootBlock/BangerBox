@@ -18,6 +18,7 @@ import {
   type FactoryPack,
 } from '@/core/project';
 import { useProjectStore, useUIStore } from '@/store';
+import { Button } from '@/ui/primitives';
 import { refreshSamples } from '../sample-edit/sampleContext';
 
 /** en-GB size readout (spec §1.3.1 — `Intl`, no formatting library). */
@@ -99,14 +100,7 @@ export function FactorySection() {
       {error !== null && (
         <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-bb-muted">
           <span>{error}</span>
-          <button
-            type="button"
-            data-testid="factory-retry"
-            onClick={retry}
-            className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-0.5"
-          >
-            Retry
-          </button>
+          <Button label="Retry" size="sm" data-testid="factory-retry" onClick={retry} />
         </div>
       )}
 
@@ -133,20 +127,18 @@ export function FactorySection() {
               <span className="shrink-0 text-[0.625rem] text-bb-muted">
                 {cached[pack.id] === true ? 'Cached' : 'Not cached'}
               </span>
-              <button
-                type="button"
-                disabled={installing !== null}
-                data-testid={`factory-install-${pack.id}`}
-                aria-label={
+              <Button
+                label={installing === pack.id ? 'Installing…' : pack.kind === 'kit' ? 'Merge' : 'Open'}
+                accessibleName={
                   pack.kind === 'kit'
                     ? `Merge ${pack.title} into this project`
                     : `Open ${pack.title} as a new project`
                 }
+                size="sm"
+                disabled={installing !== null}
+                data-testid={`factory-install-${pack.id}`}
                 onClick={() => void install(pack)}
-                className="shrink-0 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-0.5 disabled:opacity-50"
-              >
-                {installing === pack.id ? 'Installing…' : pack.kind === 'kit' ? 'Merge' : 'Open'}
-              </button>
+              />
             </li>
           ))}
         </ul>

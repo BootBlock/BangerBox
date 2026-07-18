@@ -13,7 +13,15 @@ import { useMemo, useState } from 'react';
 import { useMixerStore, useProgramStore, useSequenceStore, useTransportStore } from '@/store';
 import { channelLevelPath, channelPanPath, channelSendPath } from '@/core/audio/params/registry';
 import { faderLevelToDb } from '@/core/audio/params/faderLaw';
-import { formatValueText, Fader, Knob, MeterCanvas, SegmentControl, Toggle } from '@/ui/primitives';
+import {
+  formatValueText,
+  Button,
+  Fader,
+  Knob,
+  MeterCanvas,
+  SegmentControl,
+  Toggle,
+} from '@/ui/primitives';
 import { LEVEL_RANGE, PAN_RANGE, SEND_LEVEL_RANGE, type EffectType } from '@/core/project/schemas';
 import { EFFECT_TYPES } from '@/core/project/schemas';
 import { Panel } from '@/ui/shell/Panel';
@@ -204,15 +212,15 @@ export function MixerMode() {
                     </div>
                   )}
 
-                  <button
-                    type="button"
+                  <Button
+                    label={`Inserts (${inserts.filter((slot) => slot.effectType !== null).length})`}
+                    variant="quiet"
+                    size="sm"
+                    block
                     aria-expanded={openInserts === strip.id}
                     onClick={() => setOpenInserts(openInserts === strip.id ? null : strip.id)}
                     data-testid={`mixer-inserts-${strip.id}`}
-                    className="w-full rounded-bb-sm border border-bb-line px-2 py-1 text-[0.625rem] font-semibold text-bb-muted transition-colors duration-150 hover:text-bb-text"
-                  >
-                    Inserts ({inserts.filter((slot) => slot.effectType !== null).length})
-                  </button>
+                  />
                 </section>
               );
             })}

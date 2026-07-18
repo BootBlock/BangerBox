@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type { CapabilityReport, HardCapabilities } from '@/core/platform/capabilities';
 import { LINKS } from '@/core/platform/links';
+import { Button } from './primitives';
 
 /**
  * Blocking capability screen — spec §2.1. Rendered instead of the app when a hard
@@ -87,14 +88,13 @@ export function CapabilityGate({ report }: { report: CapabilityReport }) {
 
         {isolationOnly && (
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
+            <Button
+              label="Reload the page"
+              variant="accent"
+              size="lg"
               data-testid="capability-gate-reload"
               onClick={() => window.location.reload()}
-              className="rounded-bb-md bg-bb-accent px-4 py-2 text-sm font-semibold text-bb-bg transition-colors duration-150 hover:bg-bb-accent-strong"
-            >
-              Reload the page
-            </button>
+            />
             <span className="text-xs text-bb-muted">If this screen comes back after reloading, read on.</span>
           </div>
         )}
@@ -149,14 +149,12 @@ export function CapabilityGate({ report }: { report: CapabilityReport }) {
         </ul>
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
+          <Button
+            label="Copy diagnostics"
+            size="lg"
             data-testid="capability-gate-copy-diagnostics"
             onClick={() => void copyDiagnostics()}
-            className="rounded-bb-md border border-bb-line bg-bb-raised px-3 py-2 text-sm font-semibold text-bb-text transition-colors duration-150 hover:border-bb-accent"
-          >
-            Copy diagnostics
-          </button>
+          />
           <span aria-live="polite" className="text-xs text-bb-muted">
             {copied
               ? 'Copied — paste this into your bug report.'

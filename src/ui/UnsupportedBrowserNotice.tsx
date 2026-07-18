@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { BrowserInfo } from '@/core/platform/capabilities';
 import { LINKS } from '@/core/platform/links';
+import { Button } from './primitives';
 
 const DISMISS_KEY = 'bangerbox-browser-notice-dismissed';
 
@@ -72,14 +73,7 @@ export function UnsupportedBrowserNotice({ browser }: { browser: BrowserInfo }) 
             </a>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={dismiss}
-          data-testid="unsupported-browser-dismiss"
-          className="shrink-0 rounded-bb-sm border border-bb-line px-3 py-1.5 text-xs font-semibold text-bb-text transition-colors duration-150 hover:border-bb-accent"
-        >
-          Got it
-        </button>
+        <Button label="Got it" onClick={dismiss} data-testid="unsupported-browser-dismiss" />
       </div>
     </div>
   );

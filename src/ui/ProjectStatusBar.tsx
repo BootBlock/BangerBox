@@ -6,6 +6,7 @@
  */
 import { useProjectStore } from '@/store/useProjectStore';
 import { useUndoStore } from '@/store/undo';
+import { Button } from './primitives';
 import { useUndoKeyboard } from './useUndoKeyboard';
 
 export function ProjectStatusBar() {
@@ -37,24 +38,21 @@ export function ProjectStatusBar() {
       </div>
 
       <div className="flex items-center gap-2">
-        <button
-          type="button"
+        {/* The visible text stays the bare verb; `accessibleName` adds what is being undone
+            so the name still distinguishes the button out of context (spec §8.2). It is
+            omitted when there is nothing to name, leaving the visible label as the name. */}
+        <Button
+          label="Undo"
+          accessibleName={canUndo && undoLabel ? `Undo ${undoLabel}` : undefined}
           onClick={() => useUndoStore.getState().undo()}
           disabled={!canUndo}
-          aria-label={canUndo && undoLabel ? `Undo ${undoLabel}` : 'Undo'}
-          className="rounded-bb-sm border border-bb-line px-3 py-1 text-xs font-semibold text-bb-text transition-colors duration-150 hover:bg-bb-surface disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Undo
-        </button>
-        <button
-          type="button"
+        />
+        <Button
+          label="Redo"
+          accessibleName={canRedo && redoLabel ? `Redo ${redoLabel}` : undefined}
           onClick={() => useUndoStore.getState().redo()}
           disabled={!canRedo}
-          aria-label={canRedo && redoLabel ? `Redo ${redoLabel}` : 'Redo'}
-          className="rounded-bb-sm border border-bb-line px-3 py-1 text-xs font-semibold text-bb-text transition-colors duration-150 hover:bg-bb-surface disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Redo
-        </button>
+        />
       </div>
     </section>
   );

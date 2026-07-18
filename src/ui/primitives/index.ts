@@ -3,6 +3,8 @@
  * from here, never from a component library (spec §1.3 #10) and never by re-styling a
  * primitive at the call site (spec §3.6).
  */
+export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from './Button';
+export { FieldLabel, type FieldLabelProps } from './FieldLabel';
 export { Pad, type PadProps } from './Pad';
 export { Knob, type KnobProps } from './Knob';
 export { Fader, type FaderProps } from './Fader';

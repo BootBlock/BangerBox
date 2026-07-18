@@ -8,6 +8,7 @@
  * polite LiveRegion carries transport/save announcements instead).
  */
 import type { ReactNode } from 'react';
+import { FieldLabel } from './FieldLabel';
 
 export interface ValueReadoutProps {
   label: string;
@@ -44,7 +45,7 @@ export function ValueReadout({
   return (
     <div className="flex flex-col gap-0.5">
       {showLabel && (
-        <span className="text-[0.625rem] font-semibold tracking-wide text-bb-muted uppercase">{label}</span>
+        <FieldLabel as="span">{label}</FieldLabel>
       )}
       {/* A <span>, deliberately not <output>: `output` carries an implicit `role="status"`,
           which would turn every readout in the app into a live region competing with the

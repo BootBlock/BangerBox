@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getAudioEngine } from '@/core/project';
 import type { Looper } from '@/core/audio/looper';
 import { useProjectStore, useUIStore } from '@/store';
+import { Button } from '@/ui/primitives';
 import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
 
 export function LooperPanel() {
@@ -60,23 +61,16 @@ export function LooperPanel() {
       </p>
       <div className="mt-3">
         {recording ? (
-          <button
-            type="button"
+          // Accent marks the confirming action while a take is in flight, replacing the
+          // ad-hoc `bg-bb-accent/30` fill this button used to carry (spec §3.6).
+          <Button
+            label="Stop & save"
+            variant="accent"
             data-testid="looper-stop"
             onClick={() => void stop()}
-            className="rounded-bb-sm border border-bb-line bg-bb-accent/30 px-4 py-1.5 text-xs font-semibold"
-          >
-            Stop &amp; save
-          </button>
+          />
         ) : (
-          <button
-            type="button"
-            data-testid="looper-record"
-            onClick={start}
-            className="rounded-bb-sm border border-bb-line bg-bb-raised px-4 py-1.5 text-xs font-semibold"
-          >
-            Record
-          </button>
+          <Button label="Record" data-testid="looper-record" onClick={start} />
         )}
       </div>
     </section>

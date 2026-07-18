@@ -25,6 +25,7 @@ import { getPeakPyramid } from '@/core/audio/peakPyramidCache';
 import { importAudioFile } from '@/core/audio/sampleImport';
 import { extractAndBakeGroove } from '@/core/audio/grooveService';
 import { useBrowserStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
+import { Button } from '@/ui/primitives';
 import { SegmentControl } from '@/ui/primitives/SegmentControl';
 import { WaveformEditor } from '@/ui/primitives/WaveformEditor';
 import { auditionSample, refreshSamples, reloadSampleList, sampleEditContext } from './sampleContext';
@@ -221,34 +222,42 @@ export function SampleEditPanel() {
           {selected && (
             <div className="mt-2 space-y-2">
               <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
+                <Button
+                  label="Audition"
+                  variant="quiet"
+                  size="sm"
                   disabled={busy}
-                  className="rounded-bb-sm border border-bb-line px-2 py-1 text-xs disabled:opacity-50"
                   onClick={() => void auditionSample(selected.opfs_path, selected.name)}
-                >
-                  Audition
-                </button>
-                <ToolButton
-                  busy={toolsBlocked}
+                />
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked}
                   label="Normalise"
                   onClick={() => edit('Normalise', (c) => normalise(c))}
                 />
-                <ToolButton busy={toolsBlocked} label="Reverse" onClick={() => edit('Reverse', reverse)} />
-                <ToolButton
-                  busy={toolsBlocked}
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked}
+                  label="Reverse"
+                  onClick={() => edit('Reverse', reverse)}
+                />
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked}
                   label="Fade in"
                   onClick={() => edit('Fade in', (c) => fadeIn(c, msToFrames(fadeMs, selected.sample_rate)))}
                 />
-                <ToolButton
-                  busy={toolsBlocked}
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked}
                   label="Fade out"
                   onClick={() =>
                     edit('Fade out', (c) => fadeOut(c, msToFrames(fadeMs, selected.sample_rate)))
                   }
                 />
-                <ToolButton
-                  busy={toolsBlocked || !selection}
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked || !selection}
                   label="Trim to selection"
                   title={selection ? undefined : 'Drag a selection on the waveform first.'}
                   onClick={() => {
@@ -280,10 +289,11 @@ export function SampleEditPanel() {
                     className="w-16 rounded-bb-sm border border-bb-line bg-bb-raised px-1 py-0.5"
                   />
                 </label>
-                <ToolButton
-                  busy={toolsBlocked}
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked}
                   label="Groove → bake to track"
-                  testId="sample-groove"
+                  data-testid="sample-groove"
                   onClick={() => {
                     const track = Object.values(useSequenceStore.getState().tracks)[0];
                     if (!track) {
@@ -345,10 +355,11 @@ export function SampleEditPanel() {
                     drag to move, alt-click to remove.
                   </span>
                 )}
-                <ToolButton
-                  busy={toolsBlocked || chopBlockedReason !== null}
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked || chopBlockedReason !== null}
                   label="Chop"
-                  testId="sample-chop"
+                  data-testid="sample-chop"
                   title={chopBlockedReason ?? undefined}
                   onClick={() =>
                     void run('Chop', () => chopSampleToNewSamples(selected, chopSpec(), sampleEditContext()))
@@ -381,10 +392,11 @@ export function SampleEditPanel() {
                     className="w-16 rounded-bb-sm border border-bb-line bg-bb-raised px-1 py-0.5"
                   />
                 </label>
-                <ToolButton
-                  busy={toolsBlocked}
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked}
                   label="Time-stretch render"
-                  testId="sample-stretch"
+                  data-testid="sample-stretch"
                   onClick={() =>
                     void run('Time-stretch', () =>
                       stretchSampleToNewSample(
@@ -406,27 +418,4 @@ export function SampleEditPanel() {
 
 function msToFrames(ms: number, sampleRate: number): number {
   return Math.max(1, Math.round((ms / 1000) * sampleRate));
-}
-
-interface ToolButtonProps {
-  label: string;
-  busy: boolean;
-  onClick: () => void;
-  testId?: string;
-  /** Why the action is unavailable, when it is — surfaced on hover and to assistive tech. */
-  title?: string;
-}
-function ToolButton({ label, busy, onClick, testId, title }: ToolButtonProps) {
-  return (
-    <button
-      type="button"
-      disabled={busy}
-      data-testid={testId}
-      title={title}
-      onClick={onClick}
-      className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs disabled:opacity-50"
-    >
-      {label}
-    </button>
-  );
 }

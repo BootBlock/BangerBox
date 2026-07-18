@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { Button } from './primitives';
 import { usePwaUpdate, type PwaUpdateApi } from './usePwaUpdate';
 
 /**
@@ -28,20 +29,8 @@ export function PwaUpdatePrompt({ apiOverride }: { apiOverride?: PwaUpdateApi })
           className="fixed right-4 bottom-4 z-50 flex items-center gap-3 rounded-bb-md border border-bb-line bg-bb-raised px-4 py-3 shadow-bb-raised"
         >
           <p className="text-sm">A new version of BangerBox is ready.</p>
-          <button
-            type="button"
-            onClick={() => void update()}
-            className="rounded-bb-sm bg-bb-accent px-3 py-1.5 text-sm font-semibold text-bb-bg transition-colors duration-150 hover:bg-bb-accent-strong"
-          >
-            Reload to update
-          </button>
-          <button
-            type="button"
-            onClick={() => setSnoozedSeq(updateAvailableSeq)}
-            className="rounded-bb-sm border border-bb-line px-3 py-1.5 text-sm text-bb-muted transition-colors duration-150 hover:text-bb-text"
-          >
-            Not now
-          </button>
+          <Button label="Reload to update" variant="accent" onClick={() => void update()} />
+          <Button label="Not now" variant="quiet" onClick={() => setSnoozedSeq(updateAvailableSeq)} />
         </motion.div>
       )}
     </AnimatePresence>

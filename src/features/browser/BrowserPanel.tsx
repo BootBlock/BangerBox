@@ -12,7 +12,7 @@ import { bounceActiveSequence } from '@/core/audio/bounceService';
 import { importAudioFile } from '@/core/audio/sampleImport';
 import { deleteFile, projectSamplesRoot, readFile } from '@/core/storage/opfs';
 import { BROWSER_INITIAL_PATH, useBrowserStore, useProjectStore, useUIStore } from '@/store';
-import { Toggle } from '@/ui/primitives';
+import { Button, FieldLabel, Toggle } from '@/ui/primitives';
 import {
   auditionSample,
   refreshSamples,
@@ -228,15 +228,12 @@ export function BrowserPanel() {
     // second sr-only "Browser" would just read the mode out twice.
     <div className="flex min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
+        <Button
+          label="Export .mpcweb"
           disabled={busy || !projectId}
           data-testid="project-export"
           onClick={() => void exportProject()}
-          className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs disabled:opacity-50"
-        >
-          Export .mpcweb
-        </button>
+        />
         <label className="cursor-pointer rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs">
           Import .mpcweb…
           <input
@@ -247,15 +244,12 @@ export function BrowserPanel() {
             onChange={importProject}
           />
         </label>
-        <button
-          type="button"
+        <Button
+          label="Bounce sequence"
           disabled={busy || !projectId}
           data-testid="bounce-sequence"
           onClick={() => void bounce()}
-          className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs disabled:opacity-50"
-        >
-          Bounce sequence
-        </button>
+        />
         <label className="cursor-pointer rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs">
           Import sample…
           <input
@@ -266,8 +260,8 @@ export function BrowserPanel() {
             onChange={importSample}
           />
         </label>
-        <button
-          type="button"
+        <Button
+          label="Purge unused samples"
           // Purging judges what is unused from the loaded list, so a failed query would have
           // it delete against a stale or empty picture of the library.
           disabled={busy || samples.length === 0 || samplesError !== null}
@@ -280,17 +274,14 @@ export function BrowserPanel() {
           }
           data-testid="purge-unused"
           onClick={() => void purgeUnused()}
-          className="rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs disabled:opacity-50"
-        >
-          Purge unused samples
-        </button>
+        />
       </div>
 
       {/* Factory content (spec §8.5 item 7, §9.8) — browsed and installed from here. */}
       <FactorySection />
 
       <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 text-[0.625rem] font-semibold text-bb-muted uppercase">
+        <FieldLabel>
           Filter
           <input
             type="search"
@@ -301,7 +292,7 @@ export function BrowserPanel() {
             onChange={(event) => useBrowserStore.getState().setTextFilter(event.target.value)}
             className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs font-normal text-bb-text normal-case"
           />
-        </label>
+        </FieldLabel>
         <Toggle
           label="Favourites only"
           pressed={favouritesOnly}
@@ -381,14 +372,13 @@ export function BrowserPanel() {
               >
                 Assign
               </span>
-              <button
-                type="button"
-                aria-label={`Audition ${row.name}`}
+              <Button
+                label="Audition"
+                accessibleName={`Audition ${row.name}`}
+                variant="quiet"
+                size="sm"
                 onClick={() => void auditionSample(row.opfs_path, row.name)}
-                className="shrink-0 rounded-bb-sm border border-bb-line px-2 py-0.5"
-              >
-                Audition
-              </button>
+              />
             </li>
           ))}
           {/* A failed query must never render as an empty library: telling the user their
