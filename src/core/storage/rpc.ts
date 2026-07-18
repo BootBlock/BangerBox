@@ -131,6 +131,12 @@ export class WorkerDatabaseDriver implements IDatabaseDriver {
   readonly #worker: WorkerLike;
   readonly #pending = new Map<string, PendingCall>();
   #disposed = false;
+  /**
+   * Set when the worker itself dies (`error`/`messageerror`). Rejecting the calls
+   * that were in flight is not enough: the worker is gone, so every *later* call
+   * must be refused too, or it would be posted into the void and never settle.
+   */
+  #failure: DbError | null = null;
 
   constructor(worker?: WorkerLike) {
     // This exact `new Worker(new URL(...), { type: 'module' })` form is what Vite
@@ -179,6 +185,11 @@ export class WorkerDatabaseDriver implements IDatabaseDriver {
 
   async close(): Promise<void> {
     if (this.#disposed) return;
+    // A dead worker will never answer a close request; just tear down locally.
+    if (this.#failure) {
+      this.dispose();
+      return;
+    }
     try {
       await this.#send<null>({ kind: 'close' });
     } finally {
@@ -201,6 +212,7 @@ export class WorkerDatabaseDriver implements IDatabaseDriver {
     if (this.#disposed) {
       return Promise.reject(new DbError('UNKNOWN', 'The database driver has been disposed.'));
     }
+    if (this.#failure) return Promise.reject(this.#failure);
     const id = crypto.randomUUID();
     return new Promise<T>((resolve, reject) => {
       this.#pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
@@ -223,8 +235,13 @@ export class WorkerDatabaseDriver implements IDatabaseDriver {
   };
 
   #handleWorkerFailure = (event: Event): void => {
+    if (this.#failure || this.#disposed) return;
     const detail = event instanceof ErrorEvent && event.message ? event.message : 'unknown worker failure';
-    this.#rejectAll(new DbError('INIT_FAILED', `Database worker error: ${detail}`));
+    this.#failure = new DbError('INIT_FAILED', `Database worker error: ${detail}`);
+    // The worker cannot serve anything after this; stop it rather than leaving a
+    // half-dead thread holding the exclusive OPFS write lock (spec §9.2).
+    this.#worker.terminate();
+    this.#rejectAll(this.#failure);
   };
 
   #rejectAll(error: DbError): void {

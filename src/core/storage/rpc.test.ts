@@ -38,6 +38,19 @@ class FakeWorker implements WorkerLike {
       listener(new MessageEvent('message', { data: envelope }));
     }
   }
+
+  /** Simulate the worker dying — an `error` or `messageerror` event. */
+  fail(type: 'error' | 'messageerror', event: Event = new Event(type)): void {
+    for (const listener of this.#listeners.get(type) ?? []) {
+      listener(event as MessageEvent);
+    }
+  }
+}
+
+/** Resolve to 'HUNG' if `promise` has not settled by the next macrotask tick. */
+function settledOrHung(promise: Promise<unknown>): Promise<unknown> {
+  const hung = new Promise((resolve) => setTimeout(() => resolve('HUNG'), 0));
+  return Promise.race([promise.then(() => 'RESOLVED').catch((err: unknown) => err), hung]);
 }
 
 describe('envelope guards', () => {
@@ -126,6 +139,58 @@ describe('WorkerDatabaseDriver', () => {
     await expect(inFlight).rejects.toBeInstanceOf(DbError);
     expect(worker.terminated).toBe(true);
     await expect(driver.query('SELECT 2')).rejects.toMatchObject({ name: 'DbError' });
+  });
+
+  it('rejects in-flight calls when the worker errors', async () => {
+    const worker = new FakeWorker();
+    const driver = new WorkerDatabaseDriver(worker);
+
+    const inFlight = driver.query('SELECT 1');
+    worker.fail('error', new ErrorEvent('error', { message: 'boom' }));
+
+    await expect(inFlight).rejects.toMatchObject({
+      name: 'DbError',
+      code: 'INIT_FAILED',
+      message: 'Database worker error: boom',
+    });
+    expect(worker.terminated).toBe(true);
+  });
+
+  it('refuses later calls after a worker error instead of hanging', async () => {
+    const worker = new FakeWorker();
+    const driver = new WorkerDatabaseDriver(worker);
+
+    worker.fail('error', new ErrorEvent('error', { message: 'boom' }));
+
+    // The regression: this call used to be posted to a dead worker and never settle.
+    const outcome = await settledOrHung(driver.query('SELECT 2'));
+    expect(outcome).toMatchObject({ name: 'DbError', code: 'INIT_FAILED' });
+    expect(worker.sent).toHaveLength(0);
+  });
+
+  it('treats messageerror as a worker failure too', async () => {
+    const worker = new FakeWorker();
+    const driver = new WorkerDatabaseDriver(worker);
+
+    worker.fail('messageerror');
+
+    const outcome = await settledOrHung(driver.execute('INSERT …'));
+    expect(outcome).toMatchObject({
+      name: 'DbError',
+      code: 'INIT_FAILED',
+      message: 'Database worker error: unknown worker failure',
+    });
+  });
+
+  it('close() after a worker failure tears down without awaiting a reply', async () => {
+    const worker = new FakeWorker();
+    const driver = new WorkerDatabaseDriver(worker);
+
+    worker.fail('error', new ErrorEvent('error', { message: 'boom' }));
+
+    expect(await settledOrHung(driver.close())).toBe('RESOLVED');
+    expect(worker.sent).toHaveLength(0);
+    expect(worker.terminated).toBe(true);
   });
 
   it('close() sends the close request then tears down', async () => {
