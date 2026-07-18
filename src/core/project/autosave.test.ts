@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUTOSAVE_DEBOUNCE_MS } from '@/core/constants';
-import { AutosaveQueue } from './autosave';
+import { AutosaveQueue, UnflushableKeyError } from './autosave';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -97,6 +97,35 @@ describe('AutosaveQueue', () => {
 
     expect(flush).toHaveBeenCalledTimes(2);
     expect(flush.mock.calls[1]![0]).toEqual(['b']);
+  });
+
+  it('never signals idle for a batch the flush could not write (issue #72)', async () => {
+    const onIdle = vi.fn();
+    const onError = vi.fn();
+    const flush = vi.fn(async (keys: readonly string[]) => {
+      throw new UnflushableKeyError(keys, 'no path');
+    });
+    const queue = new AutosaveQueue({ flush, onIdle, onError });
+
+    queue.markDirty('settings:theme');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+
+    expect(onIdle).not.toHaveBeenCalled(); // the unsaved dot must stay up
+    expect(onError).toHaveBeenCalledWith(expect.any(UnflushableKeyError), ['settings:theme']);
+  });
+
+  it('does not retry an unflushable key forever', async () => {
+    const flush = vi.fn(async (keys: readonly string[]) => {
+      throw new UnflushableKeyError(keys, 'no path');
+    });
+    const queue = new AutosaveQueue({ flush, onError: vi.fn() });
+
+    queue.markDirty('settings:theme');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS * 10);
+
+    // A transient failure re-queues and retries; a permanent one is attempted exactly once.
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(queue.hasPending).toBe(false);
   });
 
   it('stops accepting work after dispose', async () => {

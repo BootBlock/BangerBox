@@ -5,6 +5,10 @@
  * automation and song lanes use the repositories' atomic replace so a flush is
  * idempotent and safe to retry (spec §4.4). Keys are ordered by foreign-key dependency
  * so a new sequence lands before its track.
+ *
+ * Resolving is this module's assertion that the batch reached storage — the autosave queue
+ * clears the unsaved dot on it. So a key no path here can write rejects with
+ * `UnflushableKeyError` rather than falling through to a silent success.
  */
 import type {
   ProgramCreate,
@@ -15,6 +19,7 @@ import type {
   TrackPatch,
 } from '@/core/storage/repositories';
 import { useHardwareStore, useMixerStore, useProgramStore, useProjectStore, useSequenceStore } from '@/store';
+import { UnflushableKeyError } from './autosave';
 import { projectPayloadSchema, type ChannelStrip, type MidiEvent, type Sequence } from './schemas';
 
 /** Foreign-key-safe ordering: parents before children (spec §9.3 cascades). */
@@ -29,11 +34,30 @@ const KIND_RANK: Record<string, number> = {
   settings: 7,
 };
 
+/**
+ * Write every dirty key, then report any the flush layer could not handle.
+ *
+ * Unwritable keys do not abort the batch: the keys around them are real work that can and
+ * should land. They are collected and rethrown as one {@link UnflushableKeyError} at the
+ * end so the queue withholds `onIdle` — resolving here would tell the user their work is
+ * saved when part of it was never attempted (spec §4.4).
+ */
 export async function flushDirtyKeys(repositories: Repositories, keys: readonly string[]): Promise<void> {
   const ordered = [...keys].sort(
     (a, b) => (KIND_RANK[a.split(':')[0]!] ?? 99) - (KIND_RANK[b.split(':')[0]!] ?? 99),
   );
-  for (const key of ordered) await flushOne(repositories, key);
+  const unflushable: string[] = [];
+  for (const key of ordered) {
+    try {
+      await flushOne(repositories, key);
+    } catch (error) {
+      if (!(error instanceof UnflushableKeyError)) throw error; // transient: the queue retries the batch
+      unflushable.push(key);
+    }
+  }
+  if (unflushable.length > 0) {
+    throw new UnflushableKeyError(unflushable, 'No autosave path could write these entities');
+  }
 }
 
 async function flushOne(repositories: Repositories, key: string): Promise<void> {
@@ -58,14 +82,18 @@ async function flushOne(repositories: Repositories, key: string): Promise<void> 
     case 'settings':
       return flushSettings(repositories, rest);
     default:
-      return;
+      throw new UnflushableKeyError([key], `Unknown dirty-key kind '${kind}'`);
   }
 }
 
 // --- Project (settings + master/return payload) ----------------------------------
 async function flushProject(repositories: Repositories, id: string): Promise<void> {
   const project = useProjectStore.getState();
-  if (project.projectId !== id) return;
+  // The store has moved on to another project, so it no longer holds this one's state to
+  // write. Nothing can recover the edit here — say so rather than reporting it saved.
+  if (project.projectId !== id) {
+    throw new UnflushableKeyError([`project:${id}`], 'Project is no longer the active project');
+  }
   const channels = useMixerStore.getState().channels;
   const returns: ChannelStrip[] = [0, 1, 2, 3]
     .map((index) => channels[`return:${index}`])
@@ -229,7 +257,11 @@ async function flushSong(repositories: Repositories, projectId: string): Promise
 
 // --- Settings (e.g. per-mode Q-Link bindings — spec §10.3) -----------------------
 async function flushSettings(repositories: Repositories, settingsKey: string): Promise<void> {
-  if (settingsKey.startsWith('qlink:')) {
-    await repositories.settings.set(settingsKey, JSON.stringify(useHardwareStore.getState().qLinkBindings));
+  if (!settingsKey.startsWith('qlink:')) {
+    // Q-Link bindings are the only settings any store marks dirty today. A different
+    // `settings:` key means a new writer shipped without a flush path to match it, and
+    // silently resolving would hide that behind a cleared unsaved dot.
+    throw new UnflushableKeyError([`settings:${settingsKey}`], 'No flush path for this settings key');
   }
+  await repositories.settings.set(settingsKey, JSON.stringify(useHardwareStore.getState().qLinkBindings));
 }
