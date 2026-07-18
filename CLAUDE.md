@@ -25,6 +25,21 @@ git branch -d <short-branch-name>
 files. Never remove a worktree you did not create — another agent may still be
 using it; check commit timestamps and file mtimes before assuming one is idle.
 
+## Close the ticket when the work lands
+
+Work that resolves a GitHub issue is not finished until that issue is closed.
+Once the branch is merged into `main`, close the issue it resolves and reconcile
+its labels so they describe what the change actually turned out to be — add the
+ones that now apply, and remove any the work proved wrong. Issues left open
+behind merged code make it impossible to tell what is still outstanding, and
+stale labels send the next person to the wrong part of the codebase.
+
+Reference the issue number in the commit subject (`… (#92)`) so the ticket and
+the commit can be found from each other.
+
+If the work has no ticket, do not open one just to close it. If it resolves only
+part of a ticket, leave the ticket open and say in a comment what is left.
+
 ## Project
 
 BangerBox is an offline-first, browser-based DAW/sequencer/sampler shipped as an
