@@ -12,6 +12,8 @@ import { useProjectStore, useTransportStore, useUndoStore } from '@/store';
 import { BPM_RANGE, SWING_RANGE } from '@/core/project/schemas';
 import { Knob, SegmentControl, Toggle, ValueReadout, announce } from '@/ui/primitives';
 import {
+  IconFullscreenEnter,
+  IconFullscreenExit,
   IconLoop,
   IconMetronome,
   IconPlay,
@@ -22,6 +24,7 @@ import {
   IconUndo,
 } from '@/ui/icons';
 import { StorageGauge } from './StorageGauge';
+import { useFullscreen } from './useFullscreen';
 
 const COUNT_IN_OPTIONS = [
   { value: 0, label: 'Off' },
@@ -45,6 +48,8 @@ export function TransportBar() {
   const canRedo = useUndoStore((s) => s.canRedo);
   const undoLabel = useUndoStore((s) => s.undoLabel);
   const redoLabel = useUndoStore((s) => s.redoLabel);
+
+  const fullscreen = useFullscreen();
 
   // Announce transport state changes through the single polite region (spec §8.2).
   const previouslyPlaying = useRef(isPlaying);
@@ -218,6 +223,25 @@ export function TransportBar() {
         >
           <IconRedo size={16} aria-hidden="true" />
         </button>
+
+        {/* Hidden outright where the browser forbids fullscreen — a soft capability is
+            never shown as a dead control (spec §2.1/§3.4). */}
+        {fullscreen.available && (
+          <Toggle
+            label={fullscreen.active ? 'Exit fullscreen' : 'Enter fullscreen'}
+            pressed={fullscreen.active}
+            onChange={() => fullscreen.toggle()}
+            icon={
+              fullscreen.active ? (
+                <IconFullscreenExit size={16} aria-hidden="true" />
+              ) : (
+                <IconFullscreenEnter size={16} aria-hidden="true" />
+              )
+            }
+            iconOnly
+            data-testid="transport-fullscreen"
+          />
+        )}
       </div>
     </div>
   );

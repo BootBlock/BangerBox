@@ -46,6 +46,8 @@ export {
   Info as IconInfo,
   Gauge as IconPerf,
   Bluetooth as IconBluetooth,
+  Maximize as IconFullscreenEnter,
+  Minimize as IconFullscreenExit,
 } from 'lucide-react';
 
 export type { LucideIcon } from 'lucide-react';

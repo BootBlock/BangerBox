@@ -68,6 +68,10 @@
     {
       "pattern": "\\bstop-color\\b",
       "reason": "SVG gradient attribute name is platform-fixed"
+    },
+    {
+      "pattern": "\\b(?:Maximize|Minimize) as Icon",
+      "reason": "lucide-react icon export names are third-party-fixed; the BangerBox-facing aliases they are renamed to are British English"
     }
   ]
 }
