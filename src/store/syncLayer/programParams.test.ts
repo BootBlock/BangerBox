@@ -41,14 +41,10 @@ describe('changedPadLeaves (spec §4.3)', () => {
     ]);
   });
 
-  it('emits amp and pan from the pad mixer', () => {
+  it('does not emit amp or pan — the pad’s mixer channel owns those', () => {
     const pad = basePad();
     const changed = { ...pad, mixer: { ...pad.mixer, level: 0.5, pan: -0.5 } };
-    const changes = changedPadLeaves(programWith([pad]), programWith([changed]));
-    expect(changes).toEqual([
-      { targetPath: `program:${PROGRAM_ID}.pad:0.amp`, value: 0.5 },
-      { targetPath: `program:${PROGRAM_ID}.pad:0.pan`, value: -0.5 },
-    ]);
+    expect(changedPadLeaves(programWith([pad]), programWith([changed]))).toEqual([]);
   });
 
   it('does not emit envelope times — an AHDSR applies at note-on (spec §6)', () => {

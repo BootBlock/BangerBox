@@ -163,9 +163,14 @@ describe('per-mode default bindings (spec §10.3)', () => {
     expect(defaultBindingsForMode('screen', context)).toEqual([]);
   });
 
-  it('gives program mode the active program’s macros', () => {
+  it('gives program mode the pad’s wider sound-design surface', () => {
     const paths = defaultBindingsForMode('program', context).map((b) => b.targetParameterPath);
-    expect(paths.every((path) => path.startsWith('program:prog-1.'))).toBe(true);
-    expect(paths.length).toBeGreaterThan(0);
+    expect(paths).toEqual([
+      // Level and pan belong to the pad's mixer channel, not the program payload.
+      'mixer.pad:prog-1:3.level',
+      'mixer.pad:prog-1:3.pan',
+      'program:prog-1.pad:3.filter.cutoff',
+      'program:prog-1.pad:3.filter.resonance',
+    ]);
   });
 });

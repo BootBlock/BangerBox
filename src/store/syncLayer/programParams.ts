@@ -13,8 +13,13 @@ import type { Pad, Program } from '@/core/project/schemas';
 import { useProgramStore } from '../useProgramStore';
 import type { SyncBridge, Unsubscribe } from './bridge';
 
-/** The registered §7.8 leaves whose value is read straight off a §6 pad. */
-const SYNCED_LEAVES = ['filter.cutoff', 'filter.resonance', 'pitch', 'amp', 'pan'] as const;
+/**
+ * The §7.8 leaves that live *inside the voice* and so must be pushed to sounding voices.
+ * `amp` and `pan` are deliberately absent: they belong to the pad's mixer channel (see
+ * `voiceParams.isPerVoiceTarget`), which `useMixerStore` owns and already syncs. Pushing
+ * them from here as well would move the graph while the mixer strip showed the old value.
+ */
+const SYNCED_LEAVES = ['filter.cutoff', 'filter.resonance', 'pitch'] as const;
 
 export interface ParamChange {
   readonly targetPath: string;
@@ -31,10 +36,6 @@ function leafValue(pad: Pad, leaf: (typeof SYNCED_LEAVES)[number]): number {
     // Pad tune is stored per layer but moves as one pad value (spec §5.5).
     case 'pitch':
       return pad.layers[0]?.tuneSemitones ?? 0;
-    case 'amp':
-      return pad.mixer.level;
-    case 'pan':
-      return pad.mixer.pan;
   }
 }
 

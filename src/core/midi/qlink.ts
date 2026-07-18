@@ -11,6 +11,7 @@
 import { clamp, normalisedToValue, valueToNormalised, type ControlRange } from '@/core/math';
 import {
   channelLevelPath,
+  channelPanPath,
   parseParamTarget,
   programParamPath,
   targetRange,
@@ -150,14 +151,19 @@ export function defaultBindingsForMode(mode: QLinkMode, context: QLinkContext): 
         bindingFor(3, programParamPath(programId, padIndex, 'amp.release'), 'program'),
       ]);
 
-    case 'program':
+    case 'program': {
       if (!hasPad) return [];
+      // Level and pan are the pad's *mixer channel* (see `voiceParams.isPerVoiceTarget`),
+      // so they are addressed there — routing them through the program payload instead
+      // would move the graph while the Mixer's pad strip showed a stale value.
+      const padChannel = `pad:${programId}:${padIndex}`;
       return sequence([
-        bindingFor(0, programParamPath(programId, padIndex, 'amp'), 'program'),
-        bindingFor(1, programParamPath(programId, padIndex, 'pan'), 'program'),
+        bindingFor(0, channelLevelPath(padChannel), 'mixer'),
+        bindingFor(1, channelPanPath(padChannel), 'mixer'),
         bindingFor(2, programParamPath(programId, padIndex, 'filter.cutoff'), 'program', 'log'),
         bindingFor(3, programParamPath(programId, padIndex, 'filter.resonance'), 'program'),
       ]);
+    }
 
     case 'project':
       return sequence([
