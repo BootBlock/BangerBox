@@ -15,9 +15,18 @@ updates:
         patterns: ['*']
         update-types: ['minor', 'patch']
     ignore:
-      # Pinned deliberately — jsx-a11y caps at ESLint 9 and typescript-eslint caps at
-      # TS < 6.1. Revisit when those plugins catch up; bumping either breaks the lint run.
+      # Pinned deliberately — eslint-plugin-jsx-a11y caps at ESLint 9, and
+      # typescript-eslint caps at TypeScript < 6.1. Revisit when those plugins catch up;
+      # bumping any of these majors breaks `npm run lint`.
+      #
+      # `@eslint/js` is versioned in lockstep with `eslint` but is a SEPARATE package
+      # name, so it needs its own rule — omitting it let Dependabot open a failing
+      # ESLint 10 PR (#1) even while `eslint` itself was pinned.
       - dependency-name: eslint
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@eslint/js'
+        update-types: ['version-update:semver-major']
+      - dependency-name: typescript-eslint
         update-types: ['version-update:semver-major']
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
