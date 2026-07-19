@@ -46,9 +46,20 @@ async function bootstrap(): Promise<void> {
   );
 
   // Boot the database, open/create the active project, hydrate the stores and register
-  // the sync subscribers (spec §4.4). Fire-and-forget: failures surface as a toast, and
-  // the storage panel independently reports a boot fault (spec §8.1).
-  void startProjectSession();
+  // the sync subscribers (spec §4.4). A boot failure means autosave was never wired, so
+  // the shell would stay fully editable while persisting nothing and reporting "All
+  // changes saved" — replace it with Safe Mode instead (spec §4.4, §8.1). The error
+  // boundary above cannot catch this: the failure lands outside React's render path.
+  void startProjectSession().catch((error: unknown) => {
+    renderScreen(
+      <AppErrorFallback
+        error={error}
+        resetErrorBoundary={() => {
+          window.location.reload();
+        }}
+      />,
+    );
+  });
 }
 
 void bootstrap();

@@ -28,4 +28,10 @@ export {
   type FactoryPack,
   type FactoryPackKind,
 } from './factoryCatalogue';
-export { startProjectSession, stopProjectSession, startAudioEngine, getAudioEngine } from './session';
+export {
+  startProjectSession,
+  stopProjectSession,
+  startAudioEngine,
+  getAudioEngine,
+  ProjectSessionBootError,
+} from './session';
