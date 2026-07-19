@@ -30,7 +30,10 @@ vi.mock('@/core/storage/opfs', async (importOriginal) => {
 });
 
 const checkWriteHeadroom = vi.fn();
-vi.mock('@/core/storage/safeguards', () => ({
+vi.mock('@/core/storage/safeguards', async (importOriginal) => ({
+  // Partial: `StorageHeadroomError` is a real class FactoryStorageError extends, so it has to be
+  // the genuine one — only the estimate probe is stubbed.
+  ...(await importOriginal<typeof import('@/core/storage/safeguards')>()),
   checkWriteHeadroom: (bytes: number) => checkWriteHeadroom(bytes),
 }));
 

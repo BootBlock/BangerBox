@@ -7,6 +7,7 @@
 import { getDatabaseDriver } from '@/core/storage/client';
 import { createRepositories, type Repositories } from '@/core/storage/repositories';
 import { readFile, samplePath, writeFileAtomic } from '@/core/storage/opfs';
+import { assertWriteHeadroom } from '@/core/storage/safeguards';
 import { useProjectStore, useUIStore } from '@/store';
 import { AutosaveQueue, type SaveOutcome } from './autosave';
 import { registerAutosave, unregisterAutosave } from './dirty';
@@ -228,7 +229,8 @@ export async function installUnpackedAsNewProject(
 
   if (options.shareSamples) {
     const plan = await planSharedSamples(snapshot, bytesById, repos);
-    await options.assertHeadroom?.(plan.writes.reduce((sum, write) => sum + write.bytes.byteLength, 0));
+    const shared = plan.writes.reduce((sum, write) => sum + write.bytes.byteLength, 0);
+    await (options.assertHeadroom ?? assertWriteHeadroom)(shared);
     for (const sample of plan.writes) {
       await writeFileAtomic(sample.opfs_path, new Uint8Array(sample.bytes));
       await repos.samples.create({
@@ -249,6 +251,12 @@ export async function installUnpackedAsNewProject(
     await loadProject(projectId);
     return projectId;
   }
+
+  // One check for the whole archive, not one per sample: a partially installed project is worse
+  // than a refused one, so the §9.7 gate is sized on everything about to be written.
+  let required = 0;
+  for (const data of bytesById.values()) required += data.byteLength;
+  await (options.assertHeadroom ?? assertWriteHeadroom)(required);
 
   // Relocate each sample's bytes to its new OPFS path before inserting rows.
   for (const [newId, data] of bytesById) {

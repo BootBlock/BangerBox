@@ -26,7 +26,7 @@
  * Installing is a storage-growing write, so it passes the §9.7 hard stop first — measured
  * against the pack's UNCOMPRESSED sample payload, before any OPFS write (spec §9.8).
  */
-import { checkWriteHeadroom } from '@/core/storage/safeguards';
+import { checkWriteHeadroom, StorageHeadroomError } from '@/core/storage/safeguards';
 import { deleteFile, writeFileAtomic } from '@/core/storage/opfs';
 import type { Repositories } from '@/core/storage/repositories';
 import { programSchema } from './schemas';
@@ -47,11 +47,11 @@ const FACTORY_DIR = 'factory';
  * Thrown when a pack would breach the §9.7 headroom. Carries a distinct type so the UI can
  * offer the Browser-mode purge affordance rather than showing a generic failure (spec §9.8).
  */
-export class FactoryStorageError extends Error {
-  constructor(readonly requiredBytes: number) {
-    super(
-      'Not enough storage space to install this pack. Free space with “Purge unused samples” below, then try again.',
-    );
+export class FactoryStorageError extends StorageHeadroomError {
+  constructor(requiredBytes: number) {
+    super(requiredBytes);
+    this.message =
+      'Not enough storage space to install this pack. Free space with “Purge unused samples” below, then try again.';
     this.name = 'FactoryStorageError';
   }
 }
