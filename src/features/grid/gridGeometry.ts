@@ -4,7 +4,7 @@
  * DOM-free so it is trivially unit-testable (spec §2.5); the canvas component owns the
  * drawing, this owns the maths.
  */
-import type { MidiEvent } from '@/core/project/schemas';
+import type { AutomationPoint, MidiEvent } from '@/core/project/schemas';
 
 /** MIDI note bounds (spec §9.3 `note INTEGER 0..127`). */
 const NOTE_MIN = 0;
@@ -211,6 +211,96 @@ export function eventsInTickSpan(
   return events
     .filter((event) => event.tickStart >= low && event.tickStart <= high)
     .sort((a, b) => a.tickStart - b.tickStart);
+}
+
+/**
+ * Value range an automation lane is drawn against (spec §7.8). A point's `value` is
+ * unbounded in the schema — a lane may hold gains in 0..1, pan in -1..1 or a cutoff in
+ * hertz — so the lane is scaled to what the lane itself contains rather than to a range
+ * assumed from the target path, which would flatten most lanes against an edge.
+ *
+ * A lane whose points all share one value has no range to scale against; it is padded
+ * symmetrically so the flat line draws through the middle instead of dividing by zero.
+ */
+export interface AutomationBounds {
+  readonly min: number;
+  readonly max: number;
+}
+
+const FLAT_LANE_PADDING = 0.5;
+
+export function automationBounds(points: readonly AutomationPoint[]): AutomationBounds {
+  if (points.length === 0) return { min: 0, max: 1 };
+  let min = Infinity;
+  let max = -Infinity;
+  for (const point of points) {
+    if (point.value < min) min = point.value;
+    if (point.value > max) max = point.value;
+  }
+  if (min === max) return { min: min - FLAT_LANE_PADDING, max: max + FLAT_LANE_PADDING };
+  return { min, max };
+}
+
+/**
+ * Automation value → y pixel from the lane's top edge. The lane carries the same 4 px
+ * margin as the velocity lane, so its line never sits flush against either border.
+ */
+export function automationValueToY(value: number, bounds: AutomationBounds, laneHeight: number): number {
+  const travel = laneHeight - 8;
+  const fraction = Math.min(1, Math.max(0, (value - bounds.min) / (bounds.max - bounds.min)));
+  return 4 + (1 - fraction) * travel;
+}
+
+/** How many segments an `exp` span is sampled at — enough to read as a curve, not a chord. */
+const EXP_SEGMENTS = 8;
+
+/**
+ * The automation line as a polyline in lane-local pixels (spec §7.8 curves). Each point's
+ * `curve` describes the span *leaving* it: `step` holds the value until the next point and
+ * jumps there, `linear` runs straight to it, and `exp` is sampled along a squared ease so
+ * the shape is visibly distinct from a straight line rather than merely implied.
+ *
+ * The line is extended flat to the viewport's right edge past the last point, because a
+ * lane's final value stays in force — a line that simply stopped would read as the
+ * automation ending there.
+ */
+export function automationPolyline(
+  points: readonly AutomationPoint[],
+  viewport: GridViewport,
+  bounds: AutomationBounds,
+  laneHeight: number,
+): { x: number; y: number }[] {
+  if (points.length === 0) return [];
+  const ordered = [...points].sort((a, b) => a.tick - b.tick);
+  const y = (value: number) => automationValueToY(value, bounds, laneHeight);
+  const line: { x: number; y: number }[] = [];
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const point = ordered[index]!;
+    const x = tickToX(point.tick, viewport);
+    line.push({ x, y: y(point.value) });
+
+    const next = ordered[index + 1];
+    if (!next) break;
+    const nextX = tickToX(next.tick, viewport);
+    if (point.curve === 'step') {
+      line.push({ x: nextX, y: y(point.value) });
+    } else if (point.curve === 'exp') {
+      for (let step = 1; step < EXP_SEGMENTS; step += 1) {
+        const t = step / EXP_SEGMENTS;
+        line.push({
+          x: x + (nextX - x) * t,
+          y: y(point.value + (next.value - point.value) * t * t),
+        });
+      }
+    }
+  }
+
+  const last = ordered[ordered.length - 1]!;
+  const edgeX = viewport.width;
+  const lastX = tickToX(last.tick, viewport);
+  if (edgeX > lastX) line.push({ x: edgeX, y: y(last.value) });
+  return line;
 }
 
 /**

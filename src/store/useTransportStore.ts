@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { clamp, clampInt } from '@/core/math';
 import { BPM_RANGE, LOOP_TICK_MIN, METRONOME_LEVEL_RANGE, SWING_RANGE } from '@/core/project/schemas';
+import type { ArpConfig } from '@/core/sequencer';
 
 export type RecordMode = 'overdub' | 'replace';
 export type PlaybackMode = 'sequence' | 'song';
@@ -36,6 +37,14 @@ interface TransportState {
   loopStartTick: number; // 960 PPQN
   loopEndTick: number;
   coarsePosition: CoarsePosition;
+  /**
+   * Arpeggiator on/off and its settings (spec §7.3). Live performance state, so it lives
+   * here beside swing and the metronome rather than in the mode that edits it: the arp
+   * keeps running while the user is in Grid or Pad Perform, and its settings have to
+   * outlive Program Edit being unmounted (issue #55).
+   */
+  arpEnabled: boolean;
+  arpConfig: ArpConfig;
 
   play: () => void;
   stop: () => void;
@@ -51,7 +60,18 @@ interface TransportState {
   setPlaybackMode: (mode: PlaybackMode) => void;
   setActiveSequenceId: (id: string | null) => void;
   setCoarsePosition: (position: CoarsePosition) => void;
+  setArpEnabled: (enabled: boolean) => void;
+  /** Patch the arp settings; omitted fields keep their current value (spec §7.3). */
+  setArpConfig: (config: Partial<ArpConfig>) => void;
 }
+
+/** Spec §7.3 defaults: a 1/16 up-arp at half gate over a single octave. */
+const DEFAULT_ARP_CONFIG: ArpConfig = {
+  mode: 'up',
+  octaves: 1,
+  gate: 0.5,
+  division: { value: 16, triplet: false },
+};
 
 export const useTransportStore = create<TransportState>()(
   subscribeWithSelector((set) => ({
@@ -70,6 +90,8 @@ export const useTransportStore = create<TransportState>()(
     loopStartTick: 0,
     loopEndTick: 0,
     coarsePosition: { bar: 1, beat: 1 },
+    arpEnabled: false,
+    arpConfig: DEFAULT_ARP_CONFIG,
 
     play: () => set({ isPlaying: true }),
     // Stopping also disarms recording and returns the readout to the top (spec §4.2).
@@ -99,6 +121,18 @@ export const useTransportStore = create<TransportState>()(
     setRecordMode: (recordMode) => set({ recordMode }),
     setPlaybackMode: (playbackMode) => set({ playbackMode }),
     setActiveSequenceId: (activeSequenceId) => set({ activeSequenceId }),
+    setArpEnabled: (arpEnabled) => set({ arpEnabled }),
+    // Clamped to the §7.3 ranges here rather than at the control, so a value arriving from
+    // anywhere — a Q-Link, a restored session — is as safe as one typed into the field.
+    setArpConfig: (config) =>
+      set((state) => ({
+        arpConfig: {
+          ...state.arpConfig,
+          ...config,
+          ...(config.octaves !== undefined ? { octaves: clampInt(config.octaves, 1, 4) } : {}),
+          ...(config.gate !== undefined ? { gate: clamp(config.gate, 0.05, 1) } : {}),
+        },
+      })),
     setCoarsePosition: (coarsePosition) =>
       set({
         coarsePosition: {

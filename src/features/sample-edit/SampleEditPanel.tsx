@@ -9,7 +9,7 @@
  * is not, which is what makes Trim able to do its actual job (§8.5.4) rather than cutting a
  * fixed fraction of the file.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getAudioEngine } from '@/core/project';
 import type { SampleRow } from '@/core/storage/repositories';
 import { applyToRegion, fadeIn, fadeOut, normalise, reverse, trim } from '@/core/audio/sampleEdit';
@@ -63,6 +63,15 @@ export function SampleEditPanel() {
   /** Why the selected sample's audio could not be read, or null when it read fine. */
   const [waveformError, setWaveformError] = useState<string | null>(null);
   const samplesError = useBrowserStore((state) => state.samplesError);
+  const tracks = useSequenceStore((state) => state.tracks);
+  const [grooveTrackId, setGrooveTrackId] = useState<string | null>(null);
+
+  const grooveTracks = useMemo(() => Object.values(tracks).sort((a, b) => a.position - b.position), [tracks]);
+  /**
+   * The track a bake would target. Falls back to the first rather than to nothing, so the
+   * picker starts on a real track and the label always names where the groove will land.
+   */
+  const grooveTarget = grooveTracks.find((track) => track.id === grooveTrackId) ?? grooveTracks[0];
 
   useEffect(() => {
     void reloadSampleList();
@@ -291,19 +300,37 @@ export function SampleEditPanel() {
                     className="w-16 rounded-bb-sm border border-bb-line bg-bb-raised px-1 py-0.5"
                   />
                 </label>
+                {/* Baking a groove rewrites a specific track's timing, so the track is
+                    chosen rather than assumed — picking `tracks[0]` gave no way to tell
+                    where the groove had landed, let alone to direct it (issue #55). */}
+                <label className="flex items-center gap-1">
+                  Groove track
+                  <select
+                    aria-label="Track to bake the groove into"
+                    value={grooveTarget?.id ?? ''}
+                    disabled={grooveTracks.length === 0}
+                    onChange={(e) => setGrooveTrackId(e.target.value || null)}
+                    data-testid="sample-groove-track"
+                    className="max-w-40 rounded-bb-sm border border-bb-line bg-bb-raised px-1 py-0.5 disabled:opacity-40"
+                  >
+                    {grooveTracks.length === 0 && <option value="">No tracks</option>}
+                    {grooveTracks.map((track) => (
+                      <option key={track.id} value={track.id}>
+                        {track.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <Button
                   size="sm"
-                  disabled={toolsBlocked}
+                  disabled={toolsBlocked || grooveTarget === undefined}
                   label="Groove → bake to track"
+                  title={grooveTarget ? undefined : 'Add a track to bake the groove into.'}
                   data-testid="sample-groove"
                   onClick={() => {
-                    const track = Object.values(useSequenceStore.getState().tracks)[0];
-                    if (!track) {
-                      pushToast('No track to bake the groove into.', 'warning');
-                      return;
-                    }
-                    void run('Groove bake', () =>
-                      extractAndBakeGroove(selected, track.id, useTransportStore.getState().bpm),
+                    if (!grooveTarget) return;
+                    void run(`Groove bake to ${grooveTarget.name}`, () =>
+                      extractAndBakeGroove(selected, grooveTarget.id, useTransportStore.getState().bpm),
                     );
                   }}
                 />
