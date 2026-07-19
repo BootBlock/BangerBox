@@ -189,9 +189,10 @@ export function PadPerformMode() {
         </div>
 
         {activeProgram?.type !== 'keygroup' && (
+          // Spec §8.5.9.
           <p className="mt-3 text-xs text-bb-muted">
-            Notes route to the active program. Select a keygroup program for pitched playing (spec §8.5.9); a
-            drum program will map these notes to its pads.
+            Notes route to the active program. Select a keygroup program for pitched playing; a drum program
+            will map these notes to its pads.
           </p>
         )}
       </Panel>

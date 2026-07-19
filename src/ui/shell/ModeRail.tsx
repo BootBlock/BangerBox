@@ -6,6 +6,28 @@
  * the active indicator is a `motion` shared `layoutId` so it slides between entries rather
  * than cutting (spec §8.3 — shared layout IDs for the mode rail), collapsing to no motion
  * under `prefers-reduced-motion` (spec §8.2).
+ *
+ * ## The app's three selection idioms, and which is which
+ *
+ * "This one is the active one" was being expressed three ways across the modes, so a
+ * screen-reader user heard the same fact described differently depending on where they
+ * were. All three attributes are legitimate; each answers a different question, and the
+ * rule is which question the control is actually asking:
+ *
+ *   `aria-selected` — only inside a role that defines selection: `tab` (this rail),
+ *   `treeitem` (the Browser's folder tree), `option`, `row`. Invalid anywhere else, so it
+ *   never leaks into a plain group of buttons.
+ *
+ *   `aria-pressed` — an independently toggleable control that the user can turn back off:
+ *   a mute, a favourite, a bypass, a held performance pad. If pressing it again cannot
+ *   un-press it, this is the wrong attribute.
+ *
+ *   `aria-current` — one of a set of plain buttons is the one being acted on, and picking
+ *   another moves the mark rather than adding a second: the sequence list, the sample
+ *   list, the pad grid in Pad Edit, the note list in Grid.
+ *
+ * The last group was the drift: those were written as `aria-pressed`, which announces a
+ * list of sixteen pads as fifteen unpressed toggles instead of one current item.
  */
 import { useRef, type KeyboardEvent } from 'react';
 import { motion, useReducedMotion } from 'motion/react';

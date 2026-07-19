@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { CHOKE_GROUP_RANGE, createDefaultPad, type DrumProgram, type Pad } from '@/core/project/schemas';
 import { useProgramStore } from '@/store';
-import { Button } from '@/ui/primitives';
+import { Button, FieldLabel, SegmentControl } from '@/ui/primitives';
 import { NumberField, SelectField, ToggleField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
 import { LayersEditor } from './LayersEditor';
@@ -20,6 +20,12 @@ const PLAYBACK_MODES = [
 ] as const;
 
 const BANK_SIZE = 16;
+
+/** Banks A–H (spec §1.3.1) — the letter is the label, the index is the value. */
+const BANK_OPTIONS = Array.from({ length: 8 }, (_, index) => ({
+  value: index,
+  label: String.fromCharCode(65 + index),
+}));
 
 export function PadEditor({ program }: { program: DrumProgram }) {
   const [bank, setBank] = useState(0);
@@ -43,19 +49,23 @@ export function PadEditor({ program }: { program: DrumProgram }) {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Eight banks, exactly one live: a radio group, which is what SegmentControl is
+          (spec §8.2). Hand-rolled before, with `aria-pressed` — that announces a toggle
+          the user can turn off, and no bank can be turned off. The row wrapper is load
+          bearing: SegmentControl hugs its options, but as a direct child of the column
+          below it would be stretched to the panel width by `align-items: stretch`. */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-bb-muted">Bank</span>
-        {Array.from({ length: 8 }, (_, index) => (
-          <button
-            key={index}
-            type="button"
-            aria-pressed={bank === index}
-            onClick={() => setBank(index)}
-            className={`rounded-bb-sm border border-bb-line px-2 py-1 text-xs font-semibold ${bank === index ? 'bg-bb-accent text-bb-bg' : 'hover:bg-bb-raised'}`}
-          >
-            {String.fromCharCode(65 + index)}
-          </button>
-        ))}
+        <FieldLabel as="span">
+          Bank
+          <SegmentControl
+            label="Bank"
+            value={bank}
+            options={BANK_OPTIONS}
+            size="sm"
+            onChange={setBank}
+            data-testid="pad-bank"
+          />
+        </FieldLabel>
       </div>
 
       <div role="group" aria-label="Pad grid" className="grid grid-cols-8 gap-1">
@@ -68,7 +78,11 @@ export function PadEditor({ program }: { program: DrumProgram }) {
               key={padIndex}
               type="button"
               aria-label={`Pad ${padIndex + 1}${exists ? '' : ' (empty)'}`}
-              aria-pressed={active}
+              // One of the sixteen is the pad being edited — `aria-current`, the app's
+              // idiom for a one-of-many selection (see the note on ModeRail). This read
+              // `aria-pressed`, which describes an independently toggleable control and
+              // made a screen reader announce fifteen pads as "not pressed".
+              aria-current={active}
               onClick={() => selectPad(padIndex)}
               className={`aspect-square rounded-bb-sm border text-bb-micro font-semibold ${
                 active

@@ -38,7 +38,7 @@ import {
   type TransportParam,
 } from '@/core/audio/params/registry';
 import { qLinkModeSchema, type QLinkBinding, type QLinkMode } from '@/core/project/schemas';
-import { Button, FieldLabel, Knob, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
+import { Button, EmptyState, FieldLabel, Knob, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { StoragePanel } from '@/ui/StoragePanel';
 import { IconRemove } from '@/ui/icons';
@@ -231,9 +231,10 @@ export function QLinkEditMode() {
               if (connectionState === 'connected') void hardwareService().disconnect();
               else void connect();
             }}
-            title={
-              bluetoothAvailable ? undefined : 'Web Bluetooth is unavailable in this browser (spec §2.1).'
-            }
+            // Spec §2.1 soft capability. The section number stays here in the comment:
+            // a tooltip is read by someone trying to connect a controller, and a spec
+            // anchor tells them nothing they can act on.
+            title={bluetoothAvailable ? undefined : 'This browser cannot connect Bluetooth devices.'}
             data-testid="qlink-connect"
           />
           {deviceName !== null && (
@@ -272,10 +273,11 @@ export function QLinkEditMode() {
             {connectError}
           </p>
         )}
+        {/* Spec §1.3 #15 — engine requirement, named as browsers rather than as a rule. */}
         {!bluetoothAvailable && (
           <p className="mt-3 text-xs text-bb-muted" data-testid="qlink-no-bluetooth">
-            This browser does not expose Web Bluetooth, so hardware mode is unavailable. BangerBox needs a
-            Chromium browser on desktop-class Windows (spec §1.3 #15).
+            This browser cannot connect Bluetooth devices, so hardware mode is unavailable. Use Chrome or Edge
+            on a Windows desktop or laptop.
           </p>
         )}
         <p className="mt-3 text-xs text-bb-muted" data-testid="qlink-pairing-help">
@@ -283,9 +285,11 @@ export function QLinkEditMode() {
           in Windows Settings → Bluetooth &amp; devices <em>before</em> using Connect here — the
           browser&rsquo;s chooser only lists devices Windows has already paired.
         </p>
+        {/* Spec §10.2 — the anchor stays in the comment; a player reading this wants to
+            know what the offset does, not where it is written down. */}
         <p className="mt-2 text-xs text-bb-muted">
           Bindings are stored per Q-Link mode. The input latency offset is subtracted from incoming hardware
-          timestamps when recording (spec §10.2).
+          timestamps when recording.
         </p>
       </Panel>
 
@@ -455,9 +459,10 @@ export function QLinkEditMode() {
           </p>
         )}
         {choices.length === 0 && (
-          <p className="mt-3 text-xs text-bb-muted">
-            No automatable parameters yet — start the audio engine to build the mixer graph.
-          </p>
+          <EmptyState
+            message="No automatable parameters yet."
+            hint="Start the audio engine from Main to build the mixer graph."
+          />
         )}
       </Panel>
     </div>

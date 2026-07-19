@@ -25,7 +25,7 @@ import { getPeakPyramid } from '@/core/audio/peakPyramidCache';
 import { importAudioFile } from '@/core/audio/sampleImport';
 import { extractAndBakeGroove } from '@/core/audio/grooveService';
 import { useBrowserStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
-import { Button } from '@/ui/primitives';
+import { Button, EmptyState } from '@/ui/primitives';
 import { SegmentControl } from '@/ui/primitives/SegmentControl';
 import { WaveformEditor } from '@/ui/primitives/WaveformEditor';
 import { auditionSample, refreshSamples, reloadSampleList, sampleEditContext } from './sampleContext';
@@ -197,7 +197,7 @@ export function SampleEditPanel() {
             </li>
           )}
           {samplesError === null && samples.length === 0 && (
-            <li className="px-2 py-2 text-xs text-bb-muted">No samples yet.</li>
+            <EmptyState as="li" message="No samples yet." hint="Import one with the button above." />
           )}
         </ul>
 

@@ -8,6 +8,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from './Button';
+import { EmptyState } from './EmptyState';
 import { Fader } from './Fader';
 import { FieldLabel } from './FieldLabel';
 import { Knob } from './Knob';
@@ -339,6 +340,45 @@ describe('FieldLabel (spec §3.6 one caption chassis)', () => {
     );
     expect(screen.getByTestId('b').className).toBe(labelClass);
     expect(screen.getByText('BPM').className).toBe(labelClass);
+  });
+});
+
+describe('EmptyState (spec §3.6 one empty-state voice)', () => {
+  it('renders the description alone when there is no next step to name', () => {
+    render(<EmptyState message="No layers yet." data-testid="empty" />);
+    expect(screen.getByTestId('empty')).toHaveTextContent('No layers yet.');
+  });
+
+  // The voice the props exist to enforce: guidance never replaces the description, it
+  // follows it. Before this primitive, three modes rendered only the instruction.
+  it('puts the hint after the description rather than in place of it', () => {
+    render(
+      <EmptyState message="No inserts on this channel yet." hint="Add one from the slot picker above." />,
+    );
+    expect(
+      screen.getByText('No inserts on this channel yet. Add one from the slot picker above.'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders a list item when it sits inside the list it describes', () => {
+    render(
+      <ul>
+        <EmptyState as="li" message="No samples yet." data-testid="empty" />
+      </ul>,
+    );
+    expect(screen.getByTestId('empty').tagName).toBe('LI');
+  });
+
+  it('renders the same chassis for both element kinds', () => {
+    const { unmount } = render(<EmptyState message="A" data-testid="a" />);
+    const paragraphClass = screen.getByTestId('a').className;
+    unmount();
+    render(
+      <ul>
+        <EmptyState as="li" message="B" data-testid="b" />
+      </ul>,
+    );
+    expect(screen.getByTestId('b').className).toBe(paragraphClass);
   });
 });
 

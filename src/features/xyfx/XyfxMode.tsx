@@ -17,7 +17,7 @@ import {
   parseParamTarget,
   targetRange,
 } from '@/core/audio/params/registry';
-import { FieldLabel, Toggle, XYSurface } from '@/ui/primitives';
+import { EmptyState, FieldLabel, Toggle, XYSurface } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 
 /** Fallback when a path has no registry range — the surface still stays operable. */
@@ -161,9 +161,10 @@ export function XyfxMode() {
 
       <Panel title="XY surface" fill>
         {choices.length === 0 ? (
-          <p className="text-xs text-bb-muted">
-            No automatable parameters yet — start the audio engine to build the mixer graph.
-          </p>
+          <EmptyState
+            message="No automatable parameters yet."
+            hint="Start the audio engine from Main to build the mixer graph."
+          />
         ) : (
           <div data-testid="xyfx-surface-wrapper" className="flex min-h-0 flex-1 flex-col">
             <XYSurface

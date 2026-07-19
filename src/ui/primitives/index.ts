@@ -5,6 +5,7 @@
  */
 export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from './Button';
 export { FieldLabel, type FieldLabelProps } from './FieldLabel';
+export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { Pad, type PadProps } from './Pad';
 export { Knob, type KnobProps } from './Knob';
 export { Fader, type FaderProps } from './Fader';

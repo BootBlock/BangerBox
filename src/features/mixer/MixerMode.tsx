@@ -13,7 +13,16 @@ import { useMemo, useState } from 'react';
 import { useMixerStore, useProgramStore, useSequenceStore, useTransportStore } from '@/store';
 import { channelLevelPath, channelPanPath, channelSendPath } from '@/core/audio/params/registry';
 import { faderLevelToDb } from '@/core/audio/params/faderLaw';
-import { formatValueText, Button, Fader, Knob, MeterCanvas, SegmentControl, Toggle } from '@/ui/primitives';
+import {
+  formatValueText,
+  Button,
+  EmptyState,
+  Fader,
+  Knob,
+  MeterCanvas,
+  SegmentControl,
+  Toggle,
+} from '@/ui/primitives';
 import { LEVEL_RANGE, PAN_RANGE, SEND_LEVEL_RANGE, type EffectType } from '@/core/project/schemas';
 import { EFFECT_TYPES } from '@/core/project/schemas';
 import { Panel } from '@/ui/shell/Panel';
@@ -93,7 +102,8 @@ export function MixerMode() {
           <div className="flex items-center gap-3">
             <span
               className="text-bb-micro text-bb-muted"
-              title="Total insert latency on the master chain, compensated on parallel dry paths (spec §5.7.3)"
+              // Spec §5.7.3.
+              title="Total insert latency on the master chain, compensated on parallel dry paths"
               data-testid="mixer-pdc"
             >
               Master PDC: {masterPdcSamples} samples ({((masterPdcSamples / sampleRate) * 1000).toFixed(2)}{' '}
@@ -111,11 +121,16 @@ export function MixerMode() {
         }
       >
         {strips.length === 0 ? (
-          <p className="text-xs text-bb-muted">
-            {tab === 'pads'
-              ? 'Select a drum program with assigned pads to mix its pads.'
-              : 'No channels in this group yet.'}
-          </p>
+          // The pads tab is empty for a reason the user can act on — the wrong program is
+          // selected — so it says what is empty first, then what to do about it.
+          tab === 'pads' ? (
+            <EmptyState
+              message="No pad channels yet."
+              hint="Select a drum program with assigned pads to mix its pads."
+            />
+          ) : (
+            <EmptyState message="No channels in this group yet." />
+          )
         ) : (
           <div className="flex gap-3 overflow-x-auto overscroll-contain pb-2">
             {strips.map((strip) => {

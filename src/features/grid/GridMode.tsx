@@ -13,7 +13,8 @@ import { PPQN } from '@/core/constants';
 import { gridTicks, quantiseEvents, type QuantiseGrid } from '@/core/sequencer/quantise';
 import { endUndoGesture, useProgramStore, useSequenceStore, useTransportStore, useUndoStore } from '@/store';
 import type { MidiEvent } from '@/core/project/schemas';
-import { Button, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
+import { IconRemove } from '@/ui/icons';
+import { Button, EmptyState, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { noteName } from '../pad-perform/scales';
 import { GridCanvas, type GridTool } from './GridCanvas';
@@ -360,7 +361,7 @@ export function GridMode() {
         {/* Keyboard/screen-reader path to the same edits the canvas performs (spec §8.2). */}
         <Panel title="Notes" scroll>
           {events.length === 0 ? (
-            <p className="text-xs text-bb-muted">No notes on this track yet.</p>
+            <EmptyState message="No notes on this track yet." hint="Draw one on the grid above." />
           ) : (
             <ul className="flex flex-col gap-1">
               {[...events]
@@ -369,7 +370,9 @@ export function GridMode() {
                   <li key={event.id} className="flex items-center gap-2 text-xs">
                     <button
                       type="button"
-                      aria-pressed={selectedIds.includes(event.id)}
+                      // Selecting a note picks one of the list, so `aria-current`, not the
+                      // `aria-pressed` of a toggle this used to carry (see ModeRail).
+                      aria-current={selectedIds.includes(event.id)}
                       onClick={() => setSelectedIds([event.id])}
                       className={`flex-1 truncate rounded-bb-sm border px-2 py-1 text-left transition-colors duration-150 ${
                         selectedIds.includes(event.id)
@@ -384,7 +387,7 @@ export function GridMode() {
                       variant="danger"
                       size="sm"
                       iconOnly
-                      icon={<span aria-hidden="true">✕</span>}
+                      icon={<IconRemove size={14} aria-hidden="true" />}
                       onClick={() => handleErase(event.id)}
                     />
                   </li>

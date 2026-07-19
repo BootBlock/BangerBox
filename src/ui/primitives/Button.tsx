@@ -18,6 +18,24 @@
  * Press feedback is the shared `whileTap` spring (spec §8.3), so every button in the app
  * depresses identically — the colour transition below was previously the whole of a
  * button's response to being pressed, which reads as a state change rather than as contact.
+ *
+ * ## Deleting
+ *
+ * Removal had grown four presentations across the modes — an `IconRemove` button, a text
+ * "Remove", a text "Clear pad"/"Delete program", and a bare `✕` — so the same act looked
+ * like a different act in each mode. Two treatments, chosen by what is being destroyed:
+ *
+ *   Removing one row from a list — a song entry, an insert, a layer, a mod route, a note,
+ *   a chop marker — is `variant="danger" size="sm" iconOnly` with `IconRemove`, and a
+ *   `label` naming the specific row ("Remove layer 2"), because a row of identical icon
+ *   buttons is only distinguishable by its accessible name.
+ *
+ *   Destroying the whole object the panel is editing — "Clear pad", "Delete program" — is
+ *   `variant="danger"` with its text label kept, sitting in that panel's header. The verb
+ *   differs on purpose: "clear" empties a slot that remains, "delete" removes the thing.
+ *
+ * Neither confirms; undo is the safety net, and every one of these pushes an undo entry.
+ * Whether that is enough is #54's question, not this chassis's.
  */
 import type { MouseEvent, ReactNode } from 'react';
 import { motion, useReducedMotion } from 'motion/react';

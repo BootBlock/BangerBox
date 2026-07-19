@@ -10,7 +10,8 @@ import {
   TUNE_SEMITONES_RANGE,
   type VelocityLayer,
 } from '@/core/project/schemas';
-import { Button } from '@/ui/primitives';
+import { Button, EmptyState } from '@/ui/primitives';
+import { IconRemove } from '@/ui/icons';
 import { NumberField, ToggleField } from './controls';
 
 export function LayersEditor({
@@ -28,7 +29,7 @@ export function LayersEditor({
     <section aria-label="Velocity layers" className="rounded-bb-sm border border-bb-line bg-bb-surface p-3">
       <h4 className="mb-2 text-xs font-semibold text-bb-text">Velocity layers</h4>
       {layers.length === 0 ? (
-        <p className="text-xs text-bb-muted">No layers yet — assign a sample by dragging from the Browser.</p>
+        <EmptyState message="No layers yet." />
       ) : (
         <ul className="flex flex-col gap-3">
           {layers.map((layer, index) => (
@@ -36,10 +37,11 @@ export function LayersEditor({
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs text-bb-muted">Sample {layer.sampleId.slice(0, 8)}</span>
                 <Button
-                  label="Remove"
-                  accessibleName={`Remove layer ${index + 1}`}
+                  label={`Remove layer ${index + 1}`}
                   variant="danger"
                   size="sm"
+                  iconOnly
+                  icon={<IconRemove size={14} aria-hidden="true" />}
                   onClick={() => removeLayer(index)}
                 />
               </div>

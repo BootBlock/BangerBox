@@ -6,6 +6,7 @@
  */
 import { MOD_AMOUNT_RANGE, type ModRoute, type ModSource } from '@/core/project/schemas';
 import { Button } from '@/ui/primitives';
+import { IconRemove } from '@/ui/icons';
 import { NumberField, SelectField } from './controls';
 
 const SOURCES: readonly { value: ModSource; label: string }[] = [
@@ -79,10 +80,11 @@ export function ModMatrixEditor({
                 onChange={(amount) => setRoute(index, { amount })}
               />
               <Button
-                label="Remove"
-                accessibleName={`Remove route ${index + 1}`}
+                label={`Remove route ${index + 1}`}
                 variant="danger"
                 size="sm"
+                iconOnly
+                icon={<IconRemove size={14} aria-hidden="true" />}
                 onClick={() => removeRoute(index)}
               />
             </li>

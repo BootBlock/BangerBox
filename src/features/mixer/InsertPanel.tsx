@@ -13,7 +13,7 @@ import { useQLinkFocus } from '@/ui/useQLinkFocus';
 import { EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
 import { insertParamPath } from '@/core/audio/params/registry';
 import type { EffectType } from '@/core/project/schemas';
-import { Button, FieldLabel, Knob, Toggle } from '@/ui/primitives';
+import { Button, EmptyState, FieldLabel, Knob, Toggle } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { IconChevronDown, IconChevronUp, IconRemove } from '@/ui/icons';
 
@@ -105,7 +105,7 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
       }
     >
       {inserts.length === 0 ? (
-        <p className="text-xs text-bb-muted">No inserts on this channel yet.</p>
+        <EmptyState message="No inserts on this channel yet." hint="Add one from the slot picker above." />
       ) : (
         <ol className="flex flex-col gap-2">
           {inserts.map((slot, index) => {
