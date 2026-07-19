@@ -37,6 +37,20 @@ function teardownAutosave(): void {
   }
 }
 
+/**
+ * Flush the outgoing project's queue, then tear it down (spec §4.4: flush "before project
+ * switch/export"). Ordered before {@link hydrateStores} because the flush writes from the
+ * store state, which still holds the outgoing project until hydration replaces it.
+ *
+ * `dispose()` alone drops the dirty set without writing it, so anything edited inside the
+ * debounce window is lost — and silently, because a dropped set never reaches `onIdle` while
+ * hydration goes on to call `setModified(false)`, clearing the one dot that represents it.
+ */
+async function flushAndTeardownAutosave(): Promise<void> {
+  await queue?.flushNow();
+  teardownAutosave();
+}
+
 async function newProject(name = 'New Project'): Promise<string> {
   const repos = getRepositories();
   const project = await repos.projects.create({ name });
@@ -81,7 +95,7 @@ async function newProject(name = 'New Project'): Promise<string> {
 }
 
 async function loadProject(id: string): Promise<void> {
-  teardownAutosave();
+  await flushAndTeardownAutosave();
   const repos = getRepositories();
   await hydrateStores(repos, id);
 
@@ -251,6 +265,5 @@ export async function loadOrCreateActiveProject(): Promise<string> {
 
 /** Flush and tear down the active project's autosave (Safe Mode / shutdown). */
 export async function closeActiveProject(): Promise<void> {
-  await queue?.flushNow();
-  teardownAutosave();
+  await flushAndTeardownAutosave();
 }
