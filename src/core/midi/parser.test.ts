@@ -156,10 +156,22 @@ describe('timestamp reconstruction (spec §10.1)', () => {
     // latest wrap gave the fourth message 158 ms — 90 ms *behind* the third, i.e. in the past.
     const data = new Uint8Array([
       header(0),
-      stamp(100), 0x90, 60, 100,
-      stamp(10), 0x90, 61, 100,
-      stamp(120), 0x90, 62, 100,
-      stamp(30), 0x90, 63, 100,
+      stamp(100),
+      0x90,
+      60,
+      100,
+      stamp(10),
+      0x90,
+      61,
+      100,
+      stamp(120),
+      0x90,
+      62,
+      100,
+      stamp(30),
+      0x90,
+      63,
+      100,
     ]);
     const stamps = parser.parse(data, 5000).map((message) => message.timestampMs);
     expect(stamps).toHaveLength(4);
