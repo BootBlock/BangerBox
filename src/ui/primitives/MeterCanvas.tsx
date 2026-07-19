@@ -2,7 +2,8 @@
  * MeterCanvas — spec §5.8 / §8.4. A DPR-aware canvas VU meter that reads its slot from
  * the shared meter loop ({@link meterScope}) and paints peak + rms with client-side
  * peak-hold and clip-latch. No React state drives the animation — the draw callback and
- * peak-hold live in refs, so re-renders are zero (spec §3.3). Presented to assistive tech
+ * peak-hold live in refs, so re-renders are zero (spec §3.3). Per §8.4 it resizes via
+ * `ResizeObserver` and skips painting while scrolled out of view. Presented to assistive tech
  * as a `meter` with a throttled `aria-valuenow` (spec §8.2).
  */
 import { useEffect, useRef } from 'react';
@@ -47,10 +48,24 @@ export function MeterCanvas({ meterId, label, className }: MeterCanvasProps) {
       canvas.height = Math.max(1, Math.round(rect.height * dpr));
     };
     resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas);
+
+    // Offscreen-culled idle state (spec §8.4). The shared loop keeps ticking for the meters
+    // that *are* on screen, so a scrolled-away strip simply paints nothing: Mixer's pads tab
+    // gives every assigned pad a meter inside a horizontal scroller, where only a handful are
+    // ever in view. The loop resumes painting on the next frame after it scrolls back.
+    let visible = true;
+    const intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        visible = entries.some((entry) => entry.isIntersecting);
+      },
+      { threshold: 0 },
+    );
+    intersectionObserver.observe(canvas);
 
     const draw = (reading: MeterReading) => {
+      if (!visible) return;
       const peak = Math.max(reading.peakL, reading.peakR);
       const rms = Math.max(reading.rmsL, reading.rmsR);
       peakHold.current = Math.max(peak, peakHold.current - PEAK_HOLD_DECAY);
@@ -78,7 +93,8 @@ export function MeterCanvas({ meterId, label, className }: MeterCanvasProps) {
     const unsubscribe = meterScope.subscribe(meterId, draw);
     return () => {
       unsubscribe();
-      observer.disconnect();
+      resizeObserver.disconnect();
+      intersectionObserver.disconnect();
     };
   }, [meterId]);
 
