@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { fakeStorageApi } from '@/test/fakes/storagePanelApi';
 import { StoragePanel } from './StoragePanel';
 
-describe('StoragePanel (Phase 1 shell)', () => {
+describe('StoragePanel (spec §11.4 storage self-test)', () => {
   it('boots through the seam and shows diagnostics', async () => {
     render(<StoragePanel apiOverride={fakeStorageApi()} />);
     expect(screen.getByTestId('storage-panel-status')).toHaveAttribute('data-status', 'booting');

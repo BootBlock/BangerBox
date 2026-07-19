@@ -1,8 +1,8 @@
 /**
  * Arpeggiator performance control (spec §7.3, §8.5.5). A small live control that drives the
  * running scheduler's arpeggiator directly (`engine.scheduler.setArpeggiator`) — the arp is
- * a worker-side performance feature shared with note repeat (spec §7.3). The full Pad
- * Perform surface is Phase 7; this proves the arp is wired end to end (spec §3.4).
+ * a worker-side performance feature shared with note repeat (spec §7.3). This is the arp's
+ * settings surface; Pad Perform mode (§8.5.9) plays into the same running arpeggiator.
  */
 import { useEffect, useState } from 'react';
 import { getAudioEngine } from '@/core/project';

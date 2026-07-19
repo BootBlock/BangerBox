@@ -17,7 +17,7 @@ describe('effect parameter defaults (spec §5.7)', () => {
     }
   });
 
-  it('ships the Phase 6 worklet effects with ranged params (spec §5.7)', () => {
+  it('ships the worklet effects with ranged params (spec §5.7)', () => {
     const limiter = defaultEffectParams('limiter');
     expect(limiter.ceiling).toBeGreaterThanOrEqual(-6);
     expect(limiter.ceiling).toBeLessThanOrEqual(0);

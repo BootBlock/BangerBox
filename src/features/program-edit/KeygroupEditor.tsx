@@ -2,7 +2,7 @@
  * Keygroup-program editor (spec §8.5.5, §6). Edits the program-scope sound-design surface a
  * keygroup shares (amp envelope, filter, mod matrix) plus the keygroup-specific voice
  * settings (polyphony, glide, pitch-bend range) and its key/velocity zones. Zone sample
- * assignment is via the Browser (Phase 6, spec §8.5.7). Commits go through the program store
+ * assignment is via the Browser (spec §8.5.7). Commits go through the program store
  * as undoable edits (spec §4.5).
  */
 import {
@@ -81,7 +81,7 @@ export function KeygroupEditor({ program }: { program: KeygroupProgram }) {
       <section aria-label="Key zones" className="rounded-bb-sm border border-bb-line bg-bb-surface p-3">
         <h4 className="mb-2 text-xs font-semibold text-bb-text">Key zones</h4>
         {program.zones.length === 0 ? (
-          <p className="text-xs text-bb-muted">No zones yet — assign a sample from the Browser (Phase 6).</p>
+          <p className="text-xs text-bb-muted">No zones yet — assign a sample from the Browser.</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {program.zones.map((zone, index) => (

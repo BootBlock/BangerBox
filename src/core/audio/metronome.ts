@@ -1,9 +1,9 @@
 /**
  * Metronome — spec §5.9. A tiny pre-rendered click (no network asset) with an accented
  * beat-1 variant, routed through its own level gain into the monitor bus so it is never
- * coloured by the master inserts (spec §5.2, §5.9). The sequencer worker will call
- * {@link Metronome.click} per scheduled tick in Phase 4 (§7.7 count-in); here the buffers
- * and routing are built and the level is live. The click waveform is a pure function so
+ * coloured by the master inserts (spec §5.2, §5.9). The engine calls {@link Metronome.click}
+ * per scheduled tick as it dispatches the scheduler's batches (§7.7 count-in); this class
+ * owns the buffers, the routing and the level. The click waveform is a pure function so
  * its shape is unit-testable (spec §11.1).
  */
 import { METRONOME_LEVEL_RANGE } from '@/core/project/schemas';

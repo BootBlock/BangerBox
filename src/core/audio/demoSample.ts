@@ -1,9 +1,9 @@
 /**
  * Bundled demo sample — a ~0.2 s 440 Hz pluck (16-bit mono WAV) embedded as base64 so it
  * is precached with the app JS and available offline (the SW precache glob does not
- * include `.wav`, spec §2.3.5). It seeds the real OPFS → decode → voice path for the
- * Phase 3 audible proof (spec §12; smoke §11.4) before the sample-import pipeline exists
- * (Phase 6). Not a shipped feature — only the test UI and browser smoke use it.
+ * include `.wav`, spec §2.3.5). It seeds the real OPFS → decode → voice path so the audible
+ * proof (smoke §11.4) needs no imported sample. Not a shipped feature — only the test UI
+ * and the browser smoke use it.
  */
 import { fileExists, samplePath, writeFileAtomic } from '@/core/storage/opfs';
 

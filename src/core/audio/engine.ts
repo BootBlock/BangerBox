@@ -1,7 +1,7 @@
 /**
  * AudioEngine — the audio core orchestrator (spec §5, §7). Owns the single AudioContext's
  * graph (§5.2), the voice pool (§5.4), the meter registry + taps (§5.8), the metronome and
- * preview channel (§5.9), the sample cache (§9.4), and — new in Phase 4 — the sequencer
+ * preview channel (§5.9), the sample cache (§9.4), the sequencer
  * {@link SchedulerClient} (§7.1) plus the dispatcher that realises its scheduled batches on
  * the graph (§7.1.4) and the playhead pump that reads the scheduler SAB each frame (§7.1.4).
  * Construction builds the (silent) graph synchronously; {@link initialise} loads the worklet
@@ -32,7 +32,7 @@ import { resolvedVoiceToTrigger, resolveVoice, type ResolvedVoice } from './prog
 import { SampleCache } from './sampleCache';
 import { VoicePool } from './voicePool';
 
-/** Identity of the Phase 3 demo pad/track used by the test UI + smoke (not shipped). */
+/** Identity of the demo pad/track used by the test UI + smoke (not shipped). */
 const DEMO_PROGRAM_ID = 'phase3-demo';
 const DEMO_TRACK_ID = 'phase3-demo';
 const DEMO_PAD_INDEX = 0;
@@ -58,7 +58,7 @@ export class AudioEngine {
   private readonly programBuffers = new Map<string, AudioBuffer>();
   /** Pad/program channels whose §6 mixer has been pushed to the graph (apply once). */
   private readonly channelMixerApplied = new Set<string>();
-  /** Preloaded demo sample the scheduler dispatch triggers per note (Phase 4 instrument). */
+  /** Preloaded demo sample the scheduler dispatch triggers per note (the demo instrument). */
   private demoBuffer: AudioBuffer | null = null;
   private playheadRaf: number | null = null;
   private lastCoarseAt = 0;
@@ -193,7 +193,7 @@ export class AudioEngine {
     return looper;
   }
 
-  /** Sound one metronome click now (test UI); the scheduler drives this in Phase 4. */
+  /** Sound one metronome click now (test UI); in playback the dispatcher drives the click. */
   clickMetronome(accented = true): void {
     this.metronome.click(this.context.currentTime, accented);
   }
@@ -270,8 +270,8 @@ export class AudioEngine {
         }
         return;
       case 'noteOff':
-        // Sequenced note lifetime is carried by `durationSec` on the noteOn (Phase 4 demo);
-        // explicit note-off dispatch arrives with keygroup sustain in Phase 5.
+        // Sequenced note lifetime is carried by `durationSec` on the noteOn, so the voice
+        // releases itself; there is nothing an explicit note-off dispatch would add here.
         return;
     }
   }
@@ -279,7 +279,7 @@ export class AudioEngine {
   /**
    * Trigger one scheduled note (spec §7.1.4) by resolving the track's program → pad/zone →
    * layer into a real voice (spec §6, {@link resolveVoice}). Tracks with no program (or a
-   * note that resolves to nothing, e.g. the Phase 4 demo track) fall back to the bundled
+   * note that resolves to nothing, e.g. the demo track) fall back to the bundled
    * demo sample so the record-then-playback smoke stays audible (spec §12).
    */
   private triggerScheduledNote(event: ScheduledEvent): void {
@@ -334,8 +334,8 @@ export class AudioEngine {
 
   /**
    * The pad/program channel for a resolved voice, created under the track group and — on
-   * first use — seeded with the §6 pad mixer (level/pan/sends). Live pad-mixer editing to
-   * the graph is Mixer-mode work (Phase 7); here the stored §6 values are made audible.
+   * first use — seeded with the §6 pad mixer (level/pan/sends). Live pad-mixer editing goes
+   * through Mixer mode and the sync layer; here the stored §6 values are made audible.
    */
   private ensureProgramChannel(trackId: string, resolved: ResolvedVoice): ChannelHandle {
     const track = this.graph.ensureTrackChannel(trackId);
@@ -350,7 +350,7 @@ export class AudioEngine {
     return pad;
   }
 
-  /** The Phase 4 demo instrument: one demo pad channel per (track, note) — the smoke path. */
+  /** The demo instrument: one demo pad channel per (track, note) — the smoke path. */
   private triggerFallbackDemo(event: ScheduledEvent): void {
     if (!this.demoBuffer || event.trackId === undefined || event.note === undefined) return;
     this.scheduledNotes++;

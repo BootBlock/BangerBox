@@ -17,8 +17,8 @@ import { Button } from './primitives';
  * the worker AND an atomic OPFS file round-trip. The browser smoke drives this control
  * (spec §11.4, a Phase 1 exit criterion that stays green).
  *
- * From Phase 7 it lives inside Main mode's Storage section (spec §8.5.1 "storage usage")
- * rather than floating as a standalone diagnostic panel.
+ * It lives inside Main mode's Storage section (spec §8.5.1 "storage usage") rather than
+ * floating as a standalone diagnostic panel.
  */
 
 export interface StoragePanelApi {

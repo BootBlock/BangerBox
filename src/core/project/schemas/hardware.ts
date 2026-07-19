@@ -1,7 +1,7 @@
 /**
  * Q-Link binding schema (spec §10.3). Bindings persist per mode in `app_settings`
- * (spec §10.3); the schema guards them on read. The BLE runtime itself arrives in
- * Phase 8 — Phase 2 owns only the persisted binding shape and the store that holds it.
+ * (spec §10.3); the schema guards them on read. This module owns only the persisted
+ * binding shape — the BLE runtime that acts on a binding lives in `core/midi` (spec §10.4).
  */
 import { z } from 'zod';
 import { rangedInt } from './primitives';

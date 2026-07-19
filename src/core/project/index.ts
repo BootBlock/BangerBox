@@ -1,6 +1,6 @@
 /**
- * Project layer barrel (spec §2.5 `core/project` — autosave, load/hydrate; `.mpcweb`
- * pack/unpack arrives in Phase 6).
+ * Project layer barrel (spec §2.5 `core/project` — autosave, load/hydrate, `.mpcweb`
+ * pack/unpack).
  */
 export { AutosaveQueue } from './autosave';
 export { registerAutosave, unregisterAutosave, markDirty, dirtyKey } from './dirty';

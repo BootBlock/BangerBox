@@ -1,7 +1,7 @@
 /**
  * Mixer channel-strip schemas (spec §4.2). A ChannelStrip is the persisted state of
  * one mixer lane (pad within the active program, track, return, or master); the audio
- * nodes it drives are built by the sync layer (spec §4.3) in Phase 3.
+ * nodes it drives are built by the sync layer (spec §4.3).
  */
 import { z } from 'zod';
 import { effectTypeSchema } from './primitives';

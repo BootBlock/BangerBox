@@ -1,10 +1,13 @@
 /**
  * The sync-layer graph bridge (spec §4.3). The sync layer is the ONLY code allowed to
  * touch the audio graph in response to state (spec §3.1); it does so through this
- * interface. Phase 2 shipped the skeleton — subscribers registered and diffing — against
- * a no-op bridge; Phase 3 implements the bridge over the real audio graph (spec §5),
- * applying `AudioParam` ramps. Transport methods stay effectively no-op for audio until
- * the scheduler worker arrives (Phase 4, spec §7.1.3).
+ * interface. `core/audio/audioBridge` implements it over the real audio graph (spec §5),
+ * applying `AudioParam` ramps; {@link noopBridge} is the inert implementation tests and
+ * headless callers use.
+ *
+ * The transport and mode hooks are part of the interface but do nothing in the audio
+ * bridge: the scheduler worker owns transport (spec §7.1.3) and `core/midi` owns Q-Link
+ * mode, so those subscribers exist to keep the §4.3 surface complete, not to make sound.
  */
 import type { InsertSlotState } from '@/core/project/schemas';
 

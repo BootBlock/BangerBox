@@ -1,7 +1,7 @@
 /**
  * Velocity-layer editor for a drum pad (spec §6, §8.5.5). Lists the pad's velocity layers
  * with editable velocity range, tune and gain; sample assignment is done by dragging from
- * the Browser (Phase 6, spec §8.5.7), so this edits the layers a pad already has. Every
+ * the Browser (spec §8.5.7), so this edits the layers a pad already has. Every
  * change is committed by the parent through the program store (spec §3.4, §4.5).
  */
 import {
@@ -28,9 +28,7 @@ export function LayersEditor({
     <section aria-label="Velocity layers" className="rounded-bb-sm border border-bb-line bg-bb-surface p-3">
       <h4 className="mb-2 text-xs font-semibold text-bb-text">Velocity layers</h4>
       {layers.length === 0 ? (
-        <p className="text-xs text-bb-muted">
-          No layers yet — assign a sample by dragging from the Browser (Phase 6).
-        </p>
+        <p className="text-xs text-bb-muted">No layers yet — assign a sample by dragging from the Browser.</p>
       ) : (
         <ul className="flex flex-col gap-3">
           {layers.map((layer, index) => (

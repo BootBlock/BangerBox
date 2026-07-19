@@ -2,7 +2,7 @@
  * useBrowserStore — Browser-mode navigation and audition state (spec §4.2, §8.5.7).
  * A view/cache store over SQLite-backed sample queries: current OPFS path, cached
  * results, tag/text filters, favourites and preview state. Runtime only (never
- * undoable); the query-backed Browser UI and favourite persistence land in Phase 6.
+ * undoable) — the durable side of a favourite lives on the sample row, not here.
  */
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';

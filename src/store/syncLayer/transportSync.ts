@@ -1,6 +1,7 @@
 /**
  * Transport sync subscriber (spec §4.3). Narrow selectors (spec §3.3) forward
- * transport changes; Phase 4 routes these to the scheduler worker (spec §7.1.3).
+ * transport changes to the bridge. The audio graph has nothing to do with them — the
+ * scheduler worker owns transport (spec §7.1.3) and is driven by the engine directly.
  */
 import { useTransportStore } from '../useTransportStore';
 import { combineUnsubscribers, type SyncBridge, type Unsubscribe } from './bridge';

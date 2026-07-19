@@ -3,8 +3,8 @@
  * `AudioBufferSourceNode` → amp-envelope `GainNode` → (optional) filter `BiquadFilterNode`
  * feeding a pad channel input (spec §5.2 stages 1–2, 5). Owns per-pad playback modes
  * (poly / mono / oneShot), choke groups, and voice stealing with a short fade — never a
- * hard cut/click (spec §5.4). Phase 5 enriches the voice with the §6 sound-design surface:
- * per-voice filter + filter envelope, pitch envelope, and LFOs / static mod-matrix offsets
+ * hard cut/click (spec §5.4). Each voice carries the §6 sound-design surface: per-voice
+ * filter + filter envelope, pitch envelope, and LFOs / static mod-matrix offsets
  * (spec §6). Allocation policy is the pure {@link selectStealVictim}/{@link
  * selectChokeVictims} (spec §11.1); this class wires and tears down nodes (spec §3.2).
  */

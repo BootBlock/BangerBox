@@ -3,7 +3,7 @@
  * audio nodes live here (spec §4.2) — the sync layer builds them (spec §4.3). Program
  * and pad edits are undoable (spec §4.5 "program parameter commits", "pad assignment")
  * and mark the owning program dirty for autosave (spec §4.4). The generic
- * {@link updateProgram} carries the deep §6 editing surface that Phase 5 builds upon.
+ * {@link updateProgram} carries the deep §6 editing surface Program Edit mode drives.
  */
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';

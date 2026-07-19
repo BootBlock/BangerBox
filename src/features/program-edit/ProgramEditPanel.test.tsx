@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useProgramStore } from '@/store';
 import { ProgramEditPanel } from './ProgramEditPanel';
 
-describe('ProgramEditPanel (spec §8.5.5, functional Phase 5)', () => {
+describe('ProgramEditPanel (spec §8.5.5)', () => {
   beforeEach(() => {
     useProgramStore.setState({ programs: {}, activeProgramId: null, activePadId: null });
   });

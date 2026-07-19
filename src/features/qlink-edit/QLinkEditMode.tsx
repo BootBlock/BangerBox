@@ -181,8 +181,8 @@ export function QLinkEditMode() {
     const existing = bindingFor(encoderIndex);
     useHardwareStore.getState().upsertBinding({
       encoderIndex,
-      // Until the BLE transport lands (Phase 8), the CC defaults to the encoder index;
-      // the learn flow overwrites it with the real CC when hardware turns a knob.
+      // With no controller attached the CC defaults to the encoder index; the learn flow
+      // overwrites it with the real CC when hardware turns a knob.
       // A CC learned from the controller wins; otherwise the default block (spec §10.3).
       cc: existing?.cc ?? ccMappingFor(encoderIndex) ?? DEFAULT_QLINK_CC_BASE + encoderIndex,
       targetStore: storeForPath(path),

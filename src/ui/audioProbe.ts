@@ -1,7 +1,7 @@
 /**
  * Audio probe — the DOM-reachable test seam the Playwright smoke drives (spec §11.4).
  * It exposes read-only introspection (master meter peak, live voice count, playhead), the
- * offline effect renders (§11.2), and the Phase 4 record-then-playback proof (§12 exit) —
+ * offline effect renders (§11.2), and the record-then-playback proof (§12 exit) —
  * all surfaces that have no other browser-observable handle. Installed only once the engine
  * has started from a user gesture. Harmless in production: it drives the same stores and
  * scheduler the UI does.

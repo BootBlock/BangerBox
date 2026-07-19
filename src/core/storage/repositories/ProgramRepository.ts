@@ -2,7 +2,7 @@
  * Program persistence (spec §9.2, §9.3 `programs`).
  *
  * Payloads are opaque JSON here; the §6 DrumProgram/KeygroupProgram Zod schemas
- * validate them at hydration (spec §4.4, Phase 2+).
+ * validate them at hydration (spec §4.4).
  */
 import { DbError } from '../errors';
 import { BaseRepository } from './base';

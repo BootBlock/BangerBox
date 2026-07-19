@@ -4,7 +4,7 @@
  *
  * Notes leave through the shared dual-path trigger (spec §7.6), so a performance here is
  * auditioned immediately and captured by the scheduler when recording — the same path the
- * BLE controller will use in Phase 8, not a parallel one.
+ * BLE controller uses (spec §10.4), not a parallel one.
  */
 import { useCallback, useRef, useState } from 'react';
 import { useProgramStore } from '@/store';

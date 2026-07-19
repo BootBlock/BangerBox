@@ -4,10 +4,10 @@
  * the real OPFS sample path (§5.4), a metronome click (§5.9), the master fader wired
  * store → sync → graph (§4.3), and a live master meter (§5.8).
  *
- * The autoplay start gate moved to {@link StartGate} in Phase 7 (spec §5.1), so this panel
- * only ever renders with a running engine behind it. It lives in Main mode's diagnostics
- * beside the storage self-test. Transport controls are NOT duplicated here — the shell's
- * persistent TransportBar (spec §8.1) superseded the Phase 4 stub.
+ * The autoplay start gate is {@link StartGate}'s job (spec §5.1), so this panel only ever
+ * renders with a running engine behind it. It lives in Main mode's diagnostics beside the
+ * storage self-test. Transport controls are NOT duplicated here — the shell's persistent
+ * TransportBar owns them (spec §8.1).
  */
 import { useEffect, useState } from 'react';
 import { getAudioEngine } from '@/core/project/session';

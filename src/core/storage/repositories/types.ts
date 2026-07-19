@@ -2,8 +2,8 @@
  * Repository row and pagination types (spec §9.2, §9.3).
  *
  * Row interfaces mirror the binding §9.3 DDL column-for-column (snake_case —
- * these are raw table rows; the camelCase domain mapping happens in the Phase 2
- * store hydration layer).
+ * these are raw table rows; the camelCase domain mapping happens in the store
+ * hydration layer, spec §4.4).
  */
 
 export interface PageParams {
