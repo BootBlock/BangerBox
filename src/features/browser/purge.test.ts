@@ -56,6 +56,15 @@ describe('findUnusedSamples (spec §8.5.7)', () => {
     expect(unused.map((row) => row.id)).toEqual(['orphan']);
   });
 
+  it('refuses to judge project samples with no project open', async () => {
+    // `listByProject('')` resolves to an empty set rather than failing, which reads as
+    // "no program references anything" — every sample would be reported unused.
+    await expect(findUnusedSamples([sample('kick')], repos, 'project', '')).rejects.toThrow(
+      /no project is open/i,
+    );
+    expect(listByProject).not.toHaveBeenCalled();
+  });
+
   it('treats a sample referenced anywhere in a payload as used', async () => {
     // Ids appear in nested pad layers, not at a fixed path — matching the serialised payload
     // keeps a future reference site from silently falling outside the check.
