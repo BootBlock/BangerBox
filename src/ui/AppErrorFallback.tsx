@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { FallbackProps } from 'react-error-boundary';
-import { projectService } from '@/core/project';
+import { projectService, ProjectSessionBootError } from '@/core/project';
 import { disposeDatabase, getDatabaseDriver } from '@/core/storage/client';
 import { purgeAllStorage } from '@/core/storage/opfs';
 
@@ -29,6 +29,9 @@ function downloadBytes(bytes: Uint8Array, filename: string): void {
 
 export function AppErrorFallback({ error }: FallbackProps) {
   const message = error instanceof Error ? error.message : String(error);
+  // A boot failure is not a crash — the session never started, so say so plainly
+  // rather than implying a healthy project is sitting behind this screen (spec §4.4).
+  const bootFailure = error instanceof ProjectSessionBootError;
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [resetStage, setResetStage] = useState<ResetStage>('idle');
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -94,13 +97,17 @@ export function AppErrorFallback({ error }: FallbackProps) {
     <main role="alert" className="flex min-h-dvh items-center justify-center p-6">
       <div className="w-full max-w-xl rounded-bb-lg border border-bb-line bg-bb-surface p-8 shadow-bb-raised">
         <p className="text-sm font-semibold tracking-widest text-bb-danger uppercase">Safe Mode</p>
-        <h1 className="mt-1 text-2xl font-bold">BangerBox hit an unexpected error</h1>
+        <h1 className="mt-1 text-2xl font-bold">
+          {bootFailure ? 'BangerBox could not open your project' : 'BangerBox hit an unexpected error'}
+        </h1>
         <p className="mt-3 rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-2 font-mono text-xs text-bb-muted">
           {message}
         </p>
 
         <p className="mt-4 text-sm leading-relaxed text-bb-muted">
-          Your data is still on this device. Rescue it, or reset if the problem persists after reloading.
+          {bootFailure
+            ? 'Editing is blocked because nothing would be saved. Try rescuing your data below, or reset if reloading does not help.'
+            : 'Your data is still on this device. Rescue it, or reset if the problem persists after reloading.'}
         </p>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">

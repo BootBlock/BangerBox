@@ -2,14 +2,19 @@
  * Project session bootstrap (spec §4.4). Run once at app start (after the capability
  * gate and multi-tab guard): boot the database, open or create the active project and
  * hydrate the stores, then register the store→graph sync subscribers (spec §4.3) and
- * an autosave flush on tab-hide (spec §4.4). A failure surfaces as a toast, never a
- * white screen (spec §8.1) — the storage panel independently reports the boot fault.
+ * an autosave flush on tab-hide (spec §4.4).
+ *
+ * A failure throws {@link ProjectSessionBootError} for the caller to escalate to Safe
+ * Mode (spec §8.1) — never a white screen, and never a dismissible toast over a shell
+ * that looks healthy. Without the autosave queue this boot registers, `markDirty()` is
+ * a no-op, the unsaved dot reads "All changes saved" forever and `saveNow()` resolves
+ * without writing anything, so carrying on would silently discard the user's work.
  */
 import { bootDatabase } from '@/core/storage/client';
 import { disposeHardwareService } from '@/core/midi/hardwareService';
 import { AudioEngine } from '@/core/audio/engine';
 import { createAudioContext, resumeAudioContext } from '@/core/audio/context';
-import { useProjectStore, useUIStore } from '@/store';
+import { useProjectStore } from '@/store';
 import { registerSyncSubscribers, type Unsubscribe } from '@/store/syncLayer';
 import { subscribeSequencerSync } from '@/store/syncLayer/sequencerSync';
 import { installProjectService, loadOrCreateActiveProject, projectService } from './projectService';
@@ -20,6 +25,21 @@ let sequencerSyncDispose: Unsubscribe | null = null;
 let unloadGuardDispose: Unsubscribe | null = null;
 let visibilityHandler: (() => void) | null = null;
 let audioEngine: AudioEngine | null = null;
+
+/**
+ * Thrown when the project session cannot boot, so nothing the user does will persist
+ * (spec §4.4). The caller renders Safe Mode (spec §8.1) rather than leaving an
+ * editable-but-amnesiac shell up.
+ */
+export class ProjectSessionBootError extends Error {
+  constructor(cause: unknown) {
+    super(
+      'BangerBox could not open your project — storage may be unavailable. Nothing you change will be saved.',
+      { cause },
+    );
+    this.name = 'ProjectSessionBootError';
+  }
+}
 
 export async function startProjectSession(): Promise<void> {
   installProjectService();
@@ -32,10 +52,11 @@ export async function startProjectSession(): Promise<void> {
     };
     document.addEventListener('visibilitychange', visibilityHandler);
     unloadGuardDispose = installUnloadGuard();
-  } catch {
-    useUIStore
-      .getState()
-      .pushToast('BangerBox could not open your project — storage may be unavailable.', 'error');
+  } catch (cause) {
+    // Drop anything that did register before the failure, so no half-wired session
+    // survives behind Safe Mode (spec §4.4).
+    stopProjectSession();
+    throw new ProjectSessionBootError(cause);
   }
 }
 
