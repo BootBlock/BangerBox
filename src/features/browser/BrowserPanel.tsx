@@ -11,8 +11,9 @@ import { getActiveRepositories, getAudioEngine, projectService } from '@/core/pr
 import { bounceActiveSequence } from '@/core/audio/bounceService';
 import { importAudioFile } from '@/core/audio/sampleImport';
 import { deleteFile, projectSamplesRoot, readFile } from '@/core/storage/opfs';
+import type { SampleRow } from '@/core/storage/repositories';
 import { BROWSER_INITIAL_PATH, useBrowserStore, useProjectStore, useUIStore } from '@/store';
-import { Button, FieldLabel, Toggle } from '@/ui/primitives';
+import { Button, FieldLabel, Modal, Toggle } from '@/ui/primitives';
 import {
   auditionSample,
   refreshSamples,
@@ -51,6 +52,12 @@ export function BrowserPanel() {
   const projectId = useProjectStore((state) => state.projectId);
   const pushToast = useUIStore((state) => state.pushToast);
   const [busy, setBusy] = useState(false);
+  /**
+   * The samples the purge would delete, held between the review pass and the confirmation
+   * (spec §8.5.7). `null` means no purge is being confirmed; a non-empty array opens the
+   * dialog. Holding the rows — not just a count — is what lets the dialog name them.
+   */
+  const [purgeCandidates, setPurgeCandidates] = useState<SampleRow[] | null>(null);
 
   const browsingGlobal = isGlobalLibraryPath(currentPath);
   const locationLabel = browsingGlobal ? 'global library' : 'project';
@@ -192,30 +199,68 @@ export function BrowserPanel() {
   };
 
   /**
-   * Delete samples no program payload references (spec §8.5.7 purge unused).
+   * Work out what "Purge unused samples" would delete, and show it for confirmation
+   * (spec §8.5.7, §8.1 double confirmation for a destructive action).
    *
    * The reference set depends on WHERE the sample lives (spec §9.1). A project-scoped sample is
    * judged against its own project's programs. A global-library sample is shared — factory
    * content de-duplicates into it (§9.8), so a kit's audio may be the very sample another
    * project's demo plays — and is judged against EVERY program in the database. Asking the
    * narrower question about a shared sample would delete audio still in use elsewhere.
+   *
+   * This half only reads. Deletion happens in `confirmPurge`, against the very list the
+   * dialog showed — recomputing it there would delete something the user never saw.
    */
-  const purgeUnused = async () => {
+  const reviewPurge = async () => {
     setBusy(true);
     try {
-      const repos = getActiveRepositories();
       const unused = await findUnusedSamples(
         samples,
-        repos,
+        getActiveRepositories(),
         browsingGlobal ? 'global' : 'project',
         projectId,
       );
-      for (const sample of unused) {
-        await deleteFile(sample.opfs_path);
-        await repos.samples.remove(sample.id);
+      // Nothing to confirm, so asking would be pure ceremony.
+      if (unused.length === 0) {
+        pushToast(`No unused samples in the ${locationLabel}.`, 'info');
+        return;
       }
+      setPurgeCandidates(unused);
+    } catch (error) {
+      // A reference set that could not be read must delete nothing: an empty answer is
+      // indistinguishable from "every sample is unused" (spec §5.1).
+      pushToast(error instanceof Error ? error.message : 'Could not work out what is unused.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Delete the reviewed samples — irreversible, and outside the undo stack (spec §8.5.7). */
+  const confirmPurge = async () => {
+    if (!purgeCandidates) return;
+    setBusy(true);
+    try {
+      const repos = getActiveRepositories();
+      let deleted = 0;
+      const failed: string[] = [];
+      for (const sample of purgeCandidates) {
+        try {
+          await deleteFile(sample.opfs_path);
+          await repos.samples.remove(sample.id);
+          deleted += 1;
+        } catch {
+          // One unreadable file must not strand the rest of the purge half-done, with the
+          // audio gone but its rows still listed.
+          failed.push(sample.name);
+        }
+      }
+      setPurgeCandidates(null);
       await refreshSamples();
-      pushToast(`Purged ${unused.length} unused sample${unused.length === 1 ? '' : 's'}.`, 'success');
+      if (failed.length > 0) {
+        pushToast(`Purged ${deleted}; could not delete ${failed.join(', ')}.`, 'warning');
+      } else {
+        pushToast(`Purged ${deleted} unused sample${deleted === 1 ? '' : 's'}.`, 'success');
+      }
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Purge failed.', 'error');
     } finally {
@@ -261,10 +306,14 @@ export function BrowserPanel() {
           />
         </label>
         <Button
-          label="Purge unused samples"
+          // The trailing ellipsis promises the review step, matching Safe Mode's
+          // "Hard reset…" (spec §8.1) — this button no longer deletes on its own.
+          label="Purge unused samples…"
+          variant="danger"
           // Purging judges what is unused from the loaded list, so a failed query would have
-          // it delete against a stale or empty picture of the library.
-          disabled={busy || samples.length === 0 || samplesError !== null}
+          // it delete against a stale or empty picture of the library. Without an open project
+          // there are no programs to judge against, which would mark everything unused.
+          disabled={busy || samples.length === 0 || samplesError !== null || (!browsingGlobal && !projectId)}
           title={
             samplesError !== null
               ? 'Unavailable while the sample list cannot be read.'
@@ -273,7 +322,7 @@ export function BrowserPanel() {
                 : 'Deletes samples this project does not use.'
           }
           data-testid="purge-unused"
-          onClick={() => void purgeUnused()}
+          onClick={() => void reviewPurge()}
         />
       </div>
 
@@ -396,6 +445,59 @@ export function BrowserPanel() {
           )}
         </ul>
       </div>
+
+      {/* Purge confirmation (spec §8.5.7, §8.1). The list is the point: this deletes audio
+          permanently and outside the undo stack, so the user gets to read the names first. */}
+      <Modal
+        open={purgeCandidates !== null}
+        title={`Delete ${purgeCandidates?.length ?? 0} unused sample${purgeCandidates?.length === 1 ? '' : 's'}?`}
+        onClose={() => setPurgeCandidates(null)}
+        data-testid="purge-confirm-dialog"
+        footer={
+          <>
+            <Button label="Cancel" variant="quiet" disabled={busy} onClick={() => setPurgeCandidates(null)} />
+            <Button
+              label={`Delete ${purgeCandidates?.length ?? 0} permanently`}
+              variant="danger"
+              disabled={busy}
+              data-testid="purge-confirm"
+              onClick={() => void confirmPurge()}
+            />
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-xs leading-relaxed text-bb-muted">
+            {browsingGlobal
+              ? 'No project in this database references these global-library samples.'
+              : 'No program in this project references these samples.'}{' '}
+            Deleting them erases the audio from this device. This cannot be undone, and Undo will not bring it
+            back — export a .mpcweb backup first if you are unsure.
+          </p>
+          <ul
+            aria-label="Samples to be deleted"
+            className="max-h-64 overflow-auto overscroll-contain rounded-bb-sm border border-bb-line"
+          >
+            {purgeCandidates?.map((row) => (
+              <li
+                key={row.id}
+                className="flex items-center gap-2 border-b border-bb-line px-2 py-1.5 text-xs last:border-b-0"
+              >
+                <span className="flex-1 truncate">{row.name}</span>
+                {/* Auditioning from the dialog is the cheapest way to answer "wait, what is
+                    that one?" without cancelling out of the confirmation. */}
+                <Button
+                  label="Audition"
+                  accessibleName={`Audition ${row.name}`}
+                  variant="quiet"
+                  size="sm"
+                  onClick={() => void auditionSample(row.opfs_path, row.name)}
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Modal>
     </div>
   );
 }
