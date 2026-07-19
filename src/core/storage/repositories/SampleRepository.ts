@@ -6,6 +6,7 @@
  */
 import { DbError } from '../errors';
 import { BaseRepository } from './base';
+import type { SqlStatement } from '../driver';
 import type { Page, PageParams, SampleRow } from './types';
 
 export interface SampleCreate {
@@ -20,14 +21,16 @@ export interface SampleCreate {
   readonly root_note?: number;
 }
 
+const INSERT_SQL = `INSERT INTO samples (id, project_id, name, opfs_path, frames, sample_rate, channels, root_note, created_at)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`;
+
 export class SampleRepository extends BaseRepository {
-  async create(input: SampleCreate): Promise<SampleRow> {
-    const id = input.id ?? crypto.randomUUID();
-    await this.driver.execute(
-      `INSERT INTO samples (id, project_id, name, opfs_path, frames, sample_rate, channels, root_note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      [
-        id,
+  /** The insert as an unexecuted statement, for cross-table batches (see ProjectRepository). */
+  insertStatement(input: SampleCreate & { readonly id: string }): SqlStatement {
+    return {
+      sql: INSERT_SQL,
+      params: [
+        input.id,
         input.project_id ?? null,
         input.name,
         input.opfs_path,
@@ -37,7 +40,13 @@ export class SampleRepository extends BaseRepository {
         input.root_note ?? 60,
         Date.now(),
       ],
-    );
+    };
+  }
+
+  async create(input: SampleCreate): Promise<SampleRow> {
+    const id = input.id ?? crypto.randomUUID();
+    const { sql, params } = this.insertStatement({ ...input, id });
+    await this.driver.execute(sql, params);
     return this.require(id);
   }
 

@@ -14,17 +14,29 @@ import type { ProjectSnapshot } from './mpcweb';
 
 vi.mock('@/core/storage/client', () => ({ getDatabaseDriver: () => ({}) }));
 
+/**
+ * Records the sample row the installer asks to be inserted. The restore builds statements and
+ * hands the whole batch to the driver in one transaction (spec §9.6), so the row is captured
+ * where it is BUILT — there is no per-row `create` call left to spy on.
+ */
 const sampleCreate = vi.fn();
+const stmt = { sql: '', params: [] };
 vi.mock('@/core/storage/repositories', () => ({
   createRepositories: () => ({
-    projects: { create: vi.fn(async ({ name }: { name: string }) => ({ id: 'p', name })) },
-    programs: { create: vi.fn() },
-    sequences: { create: vi.fn() },
-    tracks: { create: vi.fn() },
-    midiEvents: { insertMany: vi.fn() },
-    automation: { insertMany: vi.fn() },
-    samples: { create: sampleCreate },
-    songs: { replaceForProject: vi.fn() },
+    driver: { transaction: vi.fn() },
+    projects: { insertStatement: vi.fn(() => stmt) },
+    programs: { insertStatement: vi.fn(() => stmt) },
+    sequences: { insertStatement: vi.fn(() => stmt) },
+    tracks: { insertStatement: vi.fn(() => stmt) },
+    midiEvents: { insertStatements: vi.fn(() => []) },
+    automation: { insertStatements: vi.fn(() => []) },
+    samples: {
+      insertStatement: (row: unknown) => {
+        sampleCreate(row);
+        return stmt;
+      },
+    },
+    songs: { replaceStatements: vi.fn(() => []) },
   }),
 }));
 

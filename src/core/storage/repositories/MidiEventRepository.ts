@@ -37,6 +37,11 @@ function insertStatement(event: MidiEventCreate): SqlStatement {
 }
 
 export class MidiEventRepository extends BaseRepository {
+  /** The inserts as unexecuted statements, for cross-table batches (see ProjectRepository). */
+  insertStatements(events: readonly MidiEventCreate[]): SqlStatement[] {
+    return events.map(insertStatement);
+  }
+
   /** Insert a batch atomically (one recording pass = one batch = one undo entry). */
   async insertMany(events: readonly MidiEventCreate[]): Promise<void> {
     if (events.length === 0) return;

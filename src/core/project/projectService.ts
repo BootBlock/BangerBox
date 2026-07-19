@@ -6,7 +6,7 @@
  */
 import { getDatabaseDriver } from '@/core/storage/client';
 import { createRepositories, type Repositories } from '@/core/storage/repositories';
-import { readFile, samplePath, writeFileAtomic } from '@/core/storage/opfs';
+import { deleteFile, readFile, samplePath, writeFileAtomic } from '@/core/storage/opfs';
 import { useProjectStore, useUIStore } from '@/store';
 import { AutosaveQueue, type SaveOutcome } from './autosave';
 import { registerAutosave, unregisterAutosave } from './dirty';
@@ -147,9 +147,9 @@ async function exportMpcweb(): Promise<Blob> {
 
 /**
  * Import a `.mpcweb` archive as a new project (spec §9.6): unpack + validate in the worker, remap
- * every UUID so it never collides, write the samples to OPFS under the new ids, insert the rows
- * transactionally-ordered, and open the imported project. A mid-way failure leaves no partial
- * project because the new project id is only opened after all writes complete.
+ * every UUID so it never collides, write the samples to OPFS under the new ids, insert every row
+ * in one transaction, and open the imported project. A mid-way failure leaves no partial project
+ * and no orphaned audio — see {@link installUnpackedAsNewProject}.
  */
 async function importMpcweb(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -202,6 +202,29 @@ function withDerivedSamplePaths(snapshot: ProjectSnapshot, projectId: string): P
 }
 
 /**
+ * Delete the OPFS files an aborted install had already written (spec §9.6 transactionality).
+ *
+ * The rows are the driver's problem — one transaction, rolled back — but the audio is not:
+ * each `writeFileAtomic` is atomic on its own and there is no transaction spanning the set, so
+ * a failure part-way through leaves WAVs that no row references. Nothing can reclaim those
+ * later: "Purge unused samples" works from program payloads, and the programs were never
+ * inserted, so the bytes would sit in the user's quota permanently and invisibly.
+ *
+ * Best-effort per file, as the §9.8 kit-merge unwind is and for the same reason: one failed
+ * delete must not abort the rest and degrade "no orphaned files" into "none up to the first
+ * error". The install's original failure is what the caller sees.
+ */
+async function deleteWrittenSamples(paths: readonly string[]): Promise<void> {
+  for (const path of paths) {
+    try {
+      await deleteFile(path);
+    } catch {
+      // Already absent, or OPFS is the thing that failed — nothing more to do here.
+    }
+  }
+}
+
+/**
  * Install an already-unpacked `.mpcweb` payload as a NEW project and open it (spec §9.6).
  *
  * Shared by the user import above and the factory `demo` install (spec §9.8), which is why
@@ -209,6 +232,12 @@ function withDerivedSamplePaths(snapshot: ProjectSnapshot, projectId: string): P
  * the same unpack → Zod-validate → UUID-remap → OPFS-write → row-insert path as a user
  * import", so there is one path here, not two. `options` varies that one path where factory
  * content legitimately differs from a user's, rather than forking it.
+ *
+ * Transactional in both halves (spec §9.6 "a failure mid-way leaves no partial project"):
+ * every row goes in through a single {@link restoreSnapshot} transaction, and the OPFS writes —
+ * which no transaction covers — are recorded and deleted on failure by
+ * {@link deleteWrittenSamples}. The audio is written first so that, when the rows do commit,
+ * every path they name already exists.
  */
 export async function installUnpackedAsNewProject(
   unpacked: UnpackedProject,
@@ -226,37 +255,54 @@ export async function installUnpackedAsNewProject(
     if (newId) bytesById.set(newId, data);
   }
 
-  if (options.shareSamples) {
-    const plan = await planSharedSamples(snapshot, bytesById, repos);
-    await options.assertHeadroom?.(plan.writes.reduce((sum, write) => sum + write.bytes.byteLength, 0));
-    for (const sample of plan.writes) {
-      await writeFileAtomic(sample.opfs_path, new Uint8Array(sample.bytes));
-      await repos.samples.create({
-        id: sample.id,
-        // NULL project id IS the global-library encoding (spec §9.3).
-        project_id: null,
-        name: sample.name,
-        opfs_path: sample.opfs_path,
-        frames: sample.frames,
-        sample_rate: sample.sample_rate,
-        channels: sample.channels,
-        root_note: sample.root_note,
-      });
+  // Every file written so far, so a failure anywhere below can take them back with it.
+  const writtenPaths: string[] = [];
+
+  try {
+    if (options.shareSamples) {
+      const plan = await planSharedSamples(snapshot, bytesById, repos);
+      await options.assertHeadroom?.(plan.writes.reduce((sum, write) => sum + write.bytes.byteLength, 0));
+      for (const sample of plan.writes) {
+        await writeFileAtomic(sample.opfs_path, new Uint8Array(sample.bytes));
+        writtenPaths.push(sample.opfs_path);
+      }
+      // The global sample rows ride along in the restore's transaction rather than going in
+      // first: committed separately, a later failure would strand rows pointing at deleted
+      // files. `plan.snapshot` carries no sample rows of its own — they are global now, and
+      // its programs already point at whichever stored copy won.
+      await restoreSnapshot(
+        repos,
+        plan.snapshot,
+        plan.writes.map((sample) =>
+          repos.samples.insertStatement({
+            id: sample.id,
+            // NULL project id IS the global-library encoding (spec §9.3).
+            project_id: null,
+            name: sample.name,
+            opfs_path: sample.opfs_path,
+            frames: sample.frames,
+            sample_rate: sample.sample_rate,
+            channels: sample.channels,
+            root_note: sample.root_note,
+          }),
+        ),
+      );
+    } else {
+      // Relocate each sample's bytes to its new OPFS path before inserting rows.
+      for (const [newId, data] of bytesById) {
+        const path = samplePath(projectId, newId);
+        // Copy into a fresh ArrayBuffer-backed view (the OPFS stream API rejects shared buffers).
+        await writeFileAtomic(path, new Uint8Array(data));
+        writtenPaths.push(path);
+      }
+
+      await restoreSnapshot(repos, snapshot);
     }
-    // `plan.snapshot` carries no sample rows — they are global now, and its programs already
-    // point at whichever stored copy won.
-    await restoreSnapshot(repos, plan.snapshot);
-    await loadProject(projectId);
-    return projectId;
+  } catch (error) {
+    await deleteWrittenSamples(writtenPaths);
+    throw error;
   }
 
-  // Relocate each sample's bytes to its new OPFS path before inserting rows.
-  for (const [newId, data] of bytesById) {
-    // Copy into a fresh ArrayBuffer-backed view (the OPFS stream API rejects shared buffers).
-    await writeFileAtomic(samplePath(projectId, newId), new Uint8Array(data));
-  }
-
-  await restoreSnapshot(repos, snapshot);
   await loadProject(projectId);
   return projectId;
 }

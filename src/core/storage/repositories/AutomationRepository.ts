@@ -34,6 +34,11 @@ function insertStatement(point: AutomationPointCreate): SqlStatement {
 }
 
 export class AutomationRepository extends BaseRepository {
+  /** The inserts as unexecuted statements, for cross-table batches (see ProjectRepository). */
+  insertStatements(points: readonly AutomationPointCreate[]): SqlStatement[] {
+    return points.map(insertStatement);
+  }
+
   /** Insert a batch atomically (one recorded gesture = one batch). */
   async insertMany(points: readonly AutomationPointCreate[]): Promise<void> {
     if (points.length === 0) return;
