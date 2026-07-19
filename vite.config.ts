@@ -123,6 +123,10 @@ export default defineConfig({
     environment: 'happy-dom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    // Build the gitignored DSP kernel .wasm artefacts once, in the main process, before any
+    // worker starts — building them lazily from the test helper had every kernel test file
+    // racing to spawn its own `asc` run over the same output paths.
+    globalSetup: ['./src/test/buildKernels.ts'],
     css: false,
     // worker_threads pool: on Node 25 the default forks pool hits a cold-start spawn
     // race that fails whole runs.
