@@ -12,7 +12,7 @@ import { useMemo, useState } from 'react';
 import { PPQN } from '@/core/constants';
 import { gridTicks, quantiseEvents, type QuantiseGrid } from '@/core/sequencer/quantise';
 import { endUndoGesture, useProgramStore, useSequenceStore, useTransportStore, useUndoStore } from '@/store';
-import type { MidiEvent } from '@/core/project/schemas';
+import type { AutomationPoint, MidiEvent } from '@/core/project/schemas';
 import { IconRemove } from '@/ui/icons';
 import { Button, EmptyState, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
@@ -43,6 +43,19 @@ const DEFAULT_DRAW_DURATION = PPQN / 4;
  * rather than thirty (issue #43).
  */
 const ZOOM_BUTTON_STEP = 1.5;
+
+/**
+ * Value span of an automation lane, phrased for the accessible readout (spec §8.2). The
+ * raw span, not {@link automationBounds} — that pads a flat lane so the drawn line has
+ * somewhere to sit, and reading the padding back out would misreport the values.
+ */
+function laneRangeText(points: readonly AutomationPoint[]): string {
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const round = (value: number) => Number(value.toFixed(3));
+  return min === max ? `flat at ${round(min)}` : `${round(min)} to ${round(max)}`;
+}
 
 export function GridMode() {
   const activeSequenceId = useTransportStore((s) => s.activeSequenceId);
@@ -92,14 +105,41 @@ export function GridMode() {
     return noteName;
   }, [program]);
 
-  /** Automation lanes registered for this track/sequence (spec §7.8 keyed lanes). */
-  const automationLanes = useMemo(
-    () =>
-      Object.keys(automation).filter(
-        (key) => trackId !== null && (key.includes(`track:${trackId}`) || key.includes(':')),
-      ),
-    [automation, trackId],
-  );
+  /**
+   * Automation lanes owned by the selected track (spec §7.8 keyed lanes, §8.5.2 "per-track
+   * automation lane selector"). Lane keys are `${scope}:${ownerId}:${targetPath}`, so this
+   * is a prefix match on the track's own scope and id — matching on `:` alone would admit
+   * every lane in the project, including other tracks' and the sequence's.
+   */
+  const automationLanes = useMemo(() => {
+    if (trackId === null) return [];
+    const prefix = `track:${trackId}:`;
+    return (
+      Object.keys(automation)
+        // A lane with no points has nothing to show; offering it would be another control
+        // whose selection changes nothing on screen.
+        .filter((key) => key.startsWith(prefix) && (automation[key]?.length ?? 0) > 0)
+        .sort()
+    );
+  }, [automation, trackId]);
+
+  /**
+   * The chosen lane, narrowed to one the selected track actually owns. Switching track
+   * leaves the previous track's key in state; resolving it anyway would draw one track's
+   * automation over another's notes, so it falls back to "None" instead — and because the
+   * select reads this rather than the raw state, it shows None to match.
+   */
+  const activeLane = automationLanes.includes(automationLane) ? automationLane : '';
+
+  /**
+   * The lane the canvas draws, or null for none. The target path alone labels it — the
+   * scope and owner are already fixed by the track selector beside it.
+   */
+  const selectedLane = useMemo(() => {
+    const points = activeLane ? automation[activeLane] : undefined;
+    if (!points) return null;
+    return { label: activeLane.slice(`track:${trackId}:`.length), points };
+  }, [automation, activeLane, trackId]);
 
   const sequence = () => useSequenceStore.getState();
 
@@ -252,19 +292,33 @@ export function GridMode() {
             Automation lane
             <select
               aria-label="Automation lane"
-              value={automationLane}
+              value={activeLane}
+              disabled={automationLanes.length === 0}
               onChange={(event) => setAutomationLane(event.target.value)}
               data-testid="grid-automation-lane"
-              className="max-w-56 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs font-normal text-bb-text normal-case"
+              className="max-w-56 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs font-normal text-bb-text normal-case disabled:opacity-40"
             >
-              <option value="">None</option>
+              <option value="">{automationLanes.length === 0 ? 'No lanes' : 'None'}</option>
               {automationLanes.map((lane) => (
                 <option key={lane} value={lane}>
-                  {lane}
+                  {lane.slice(`track:${trackId}:`.length)}
                 </option>
               ))}
             </select>
           </FieldLabel>
+
+          {/* The lane is drawn on the canvas, which is aria-hidden, so its shape also
+              needs saying in text (spec §8.2). */}
+          {selectedLane !== null && (
+            <ValueReadout
+              label="Lane"
+              value={`${selectedLane.points.length} point${
+                selectedLane.points.length === 1 ? '' : 's'
+              }, ${laneRangeText(selectedLane.points)}`}
+              showLabel
+              data-testid="grid-automation-summary"
+            />
+          )}
 
           {/* Groove is applied at schedule time like swing — non-destructive (spec §7.5).
               Templates come from Sample Edit's groove extraction. */}
@@ -341,6 +395,7 @@ export function GridMode() {
               snapTicks={snapTicks}
               defaultDurationTicks={DEFAULT_DRAW_DURATION}
               rowLabel={rowLabel}
+              automation={selectedLane}
               selectedIds={selectedIds}
               onSelect={setSelectedIds}
               onDraw={handleDraw}

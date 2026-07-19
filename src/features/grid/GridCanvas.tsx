@@ -12,12 +12,15 @@
  * sequence store, so every edit is undoable (spec §4.5) — the canvas holds no note state.
  */
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import type { MidiEvent } from '@/core/project/schemas';
+import type { AutomationPoint, MidiEvent } from '@/core/project/schemas';
 import { PPQN } from '@/core/constants';
 import { getAudioEngine } from '@/core/project/session';
 import { secondsToTicks } from '@/core/sequencer/ppqn';
 import { useTransportStore } from '@/store';
 import {
+  automationBounds,
+  automationPolyline,
+  automationValueToY,
   cellsAlongSegment,
   eventAtCell,
   eventAtPoint,
@@ -39,6 +42,13 @@ import {
 /** Height of the velocity lane strip beneath the note grid (spec §8.5.2 velocity lane). */
 const VELOCITY_LANE_HEIGHT = 64;
 
+/**
+ * Height of the automation lane drawn beneath the velocity lane when one is selected
+ * (spec §8.5.2 per-track automation lane selector). Shorter than the velocity lane: it is
+ * a read-out of the lane's shape, not a drag target, so it costs the notes less room.
+ */
+const AUTOMATION_LANE_HEIGHT = 48;
+
 export type GridTool = 'draw' | 'erase' | 'select';
 
 export interface GridCanvasProps {
@@ -51,6 +61,12 @@ export interface GridCanvasProps {
   defaultDurationTicks: number;
   /** Row labels shown at the left — pad names for drums, note names for keygroups. */
   rowLabel: (note: number) => string;
+  /**
+   * The automation lane to draw beneath the velocity lane, or null for none (spec §8.5.2,
+   * §7.8). Read-only: the selector picks which lane is visible, and the lane's points are
+   * shown against the same timeline as the notes so their shape can be read in context.
+   */
+  automation: { readonly label: string; readonly points: readonly AutomationPoint[] } | null;
   selectedIds: readonly string[];
   onSelect: (ids: readonly string[]) => void;
   /** `coalesceKey` is set while dragging, so the whole gesture is one undo entry. */
@@ -114,6 +130,7 @@ export function GridCanvas({
   snapTicks,
   defaultDurationTicks,
   rowLabel,
+  automation,
   selectedIds,
   onSelect,
   onDraw,
@@ -129,11 +146,11 @@ export function GridCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   /** Live props for the rAF loop — reading these avoids restarting the loop per render. */
-  const latest = useRef({ events, viewport, selectedIds, rowLabel });
+  const latest = useRef({ events, viewport, selectedIds, rowLabel, automation });
   // Synced in a layout effect rather than during render: mutating a ref mid-render is
   // unsafe under concurrent rendering, and the effect still lands before the next frame.
   useLayoutEffect(() => {
-    latest.current = { events, viewport, selectedIds, rowLabel };
+    latest.current = { events, viewport, selectedIds, rowLabel, automation };
   });
   const visible = useRef(true);
 
@@ -181,10 +198,17 @@ export function GridCanvas({
       frame = requestAnimationFrame(draw);
       if (!visible.current) return;
 
-      const { events: liveEvents, viewport: box, selectedIds: selection, rowLabel: label } = latest.current;
+      const {
+        events: liveEvents,
+        viewport: box,
+        selectedIds: selection,
+        rowLabel: label,
+        automation: lane,
+      } = latest.current;
       const cssWidth = canvas.width / dpr;
       const cssHeight = canvas.height / dpr;
-      const gridHeight = Math.max(0, cssHeight - VELOCITY_LANE_HEIGHT);
+      const laneHeight = lane ? AUTOMATION_LANE_HEIGHT : 0;
+      const gridHeight = Math.max(0, cssHeight - VELOCITY_LANE_HEIGHT - laneHeight);
       const view: GridViewport = { ...box, width: cssWidth - LABEL_GUTTER_PX, height: gridHeight };
 
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -273,6 +297,57 @@ export function GridCanvas({
         const height = (event.velocity / MAX_VELOCITY) * (VELOCITY_LANE_HEIGHT - 8);
         context.fillStyle = selection.includes(event.id) ? colours.accentStrong : colours.accent;
         context.fillRect(x, gridHeight + VELOCITY_LANE_HEIGHT - 4 - height, 3, height);
+      }
+
+      // --- Automation lane (spec §7.8, §8.5.2) --------------------------------------
+      if (lane) {
+        const laneTop = gridHeight + VELOCITY_LANE_HEIGHT;
+        context.fillStyle = colours.surface;
+        context.fillRect(0, laneTop, cssWidth, laneHeight);
+        context.strokeStyle = colours.line;
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(0, laneTop + 0.5);
+        context.lineTo(cssWidth, laneTop + 0.5);
+        context.stroke();
+
+        const bounds = automationBounds(lane.points);
+        context.fillStyle = colours.muted;
+        context.font = '10px ui-sans-serif, system-ui, sans-serif';
+        context.fillText(lane.label, 4, laneTop + laneHeight / 2, LABEL_GUTTER_PX - 8);
+
+        // Clip to the lane so the line cannot bleed into the velocity lane above, and to
+        // the gutter so it never runs under the lane's own label.
+        context.save();
+        context.beginPath();
+        context.rect(LABEL_GUTTER_PX, laneTop, cssWidth - LABEL_GUTTER_PX, laneHeight);
+        context.clip();
+
+        const line = automationPolyline(lane.points, view, bounds, laneHeight);
+        if (line.length > 0) {
+          context.strokeStyle = colours.focus;
+          context.lineWidth = 1.5;
+          context.beginPath();
+          line.forEach((sample, index) => {
+            const x = LABEL_GUTTER_PX + sample.x;
+            const y = laneTop + sample.y;
+            if (index === 0) context.moveTo(x, y);
+            else context.lineTo(x, y);
+          });
+          context.stroke();
+
+          // Breakpoints are marked so a lane of two points is not mistaken for a ramp
+          // drawn between somewhere and somewhere else.
+          context.fillStyle = colours.focus;
+          for (const point of lane.points) {
+            const x = LABEL_GUTTER_PX + tickToX(point.tick, view);
+            const y = laneTop + automationValueToY(point.value, bounds, laneHeight);
+            context.beginPath();
+            context.arc(x, y, 2.5, 0, Math.PI * 2);
+            context.fill();
+          }
+        }
+        context.restore();
       }
 
       // --- Playhead (spec §7.1.4 — SAB tick, latency-compensated) -------------------
@@ -430,13 +505,19 @@ export function GridCanvas({
     window.addEventListener('pointercancel', end);
   };
 
+  /**
+   * How much of the canvas the lanes below the note grid take. The automation lane only
+   * exists while one is selected, so the note grid reclaims its height when it is not.
+   */
+  const lanesHeight = () => VELOCITY_LANE_HEIGHT + (automation ? AUTOMATION_LANE_HEIGHT : 0);
+
   /** Canvas-relative pointer position, with the label gutter removed from x. */
   const pointFrom = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     return {
       x: event.clientX - rect.left - LABEL_GUTTER_PX,
       y: event.clientY - rect.top,
-      gridHeight: rect.height - VELOCITY_LANE_HEIGHT,
+      gridHeight: rect.height - lanesHeight(),
       width: rect.width - LABEL_GUTTER_PX,
     };
   };
@@ -467,8 +548,8 @@ export function GridCanvas({
     const move = (moveEvent: globalThis.PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
       const next = { x: moveEvent.clientX - rect.left - LABEL_GUTTER_PX, y: moveEvent.clientY - rect.top };
-      // Painting stays in the note grid; the velocity lane below is a different gesture.
-      if (next.y >= rect.height - VELOCITY_LANE_HEIGHT) return;
+      // Painting stays in the note grid; the lanes below are a different gesture.
+      if (next.y >= rect.height - lanesHeight()) return;
       for (const cell of cellsAlongSegment(previous, next, view, snapTicks)) {
         visitOnce(cell.note, cell.tick);
       }
@@ -507,6 +588,11 @@ export function GridCanvas({
     const point = pointFrom(pointerEvent);
     const view: GridViewport = { ...viewport, width: point.width, height: point.gridHeight };
 
+    // --- Automation lane: a read-out, not a drag target — a press on it does nothing
+    // rather than falling through to the velocity lane above it and pinning a note to
+    // velocity 1 (spec §8.5.2).
+    if (automation && point.y >= point.gridHeight + VELOCITY_LANE_HEIGHT) return;
+
     // --- Velocity lane: drag a note's velocity (spec §8.5.2 velocity lane) -----------
     if (point.y >= point.gridHeight) {
       // Bars are 3 px wide, so the press grabs the nearest bar within a small window.
@@ -530,7 +616,7 @@ export function GridCanvas({
       const move = (moveEvent: globalThis.PointerEvent) => {
         const rect = canvas.getBoundingClientRect();
         const moveTick = xToTick(moveEvent.clientX - rect.left - LABEL_GUTTER_PX, view);
-        const laneY = moveEvent.clientY - rect.top - (rect.height - VELOCITY_LANE_HEIGHT);
+        const laneY = moveEvent.clientY - rect.top - (rect.height - lanesHeight());
         // Every bar the segment swept takes the pointer's current height, so dragging
         // sideways shapes a run of notes in one gesture. Reading live events keeps notes
         // drawn mid-gesture visible; the anchor covers a purely vertical drag, where the

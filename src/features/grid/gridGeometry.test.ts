@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { AutomationPoint } from '@/core/project/schemas';
 import {
+  automationBounds,
+  automationPolyline,
+  automationValueToY,
   cellsAlongSegment,
   eventAtCell,
   eventAtPoint,
@@ -245,5 +249,88 @@ describe('gridGeometry — velocity lane dragging', () => {
     expect(eventsInTickSpan(bars, 0, 119).map((event) => event.id)).toEqual(['a']);
     // A stationary (purely vertical) drag sweeps nothing; the anchor covers that case.
     expect(eventsInTickSpan(bars, 130, 130)).toEqual([]);
+  });
+});
+
+describe('gridGeometry — automation lane (spec §7.8, §8.5.2)', () => {
+  const point = (tick: number, value: number, curve: AutomationPoint['curve']): AutomationPoint => ({
+    id: `p${tick}`,
+    scope: 'track',
+    ownerId: 't1',
+    targetPath: 'volume',
+    tick,
+    value,
+    curve,
+  });
+
+  it('scales to the values the lane actually holds, not an assumed range', () => {
+    // A cutoff lane in hertz would flatten against the top of a 0..1 lane.
+    expect(automationBounds([point(0, 200, 'linear'), point(960, 8000, 'linear')])).toEqual({
+      min: 200,
+      max: 8000,
+    });
+  });
+
+  it('pads a flat lane so it draws down the middle rather than dividing by zero', () => {
+    const bounds = automationBounds([point(0, 0.5, 'linear'), point(960, 0.5, 'linear')]);
+    expect(bounds.max).toBeGreaterThan(bounds.min);
+    expect(automationValueToY(0.5, bounds, 48)).toBeCloseTo(4 + 40 / 2);
+  });
+
+  it('maps the value range across the lane, inset by the 4 px margin', () => {
+    const bounds = { min: 0, max: 1 };
+    expect(automationValueToY(1, bounds, 48)).toBe(4);
+    expect(automationValueToY(0, bounds, 48)).toBe(44);
+    // Values outside the bounds clamp rather than drawing off the strip.
+    expect(automationValueToY(2, bounds, 48)).toBe(4);
+    expect(automationValueToY(-1, bounds, 48)).toBe(44);
+  });
+
+  it('holds a step span flat until it jumps at the next point', () => {
+    const points = [point(0, 0, 'step'), point(400, 1, 'step')];
+    const line = automationPolyline(points, viewport, { min: 0, max: 1 }, 48);
+    // The held span shares the first point's y at the second point's x.
+    expect(line[0]).toEqual({ x: 0, y: 44 });
+    expect(line[1]).toEqual({ x: 100, y: 44 });
+    expect(line[2]).toEqual({ x: 100, y: 4 });
+  });
+
+  it('runs a linear span straight between its two points', () => {
+    const line = automationPolyline(
+      [point(0, 0, 'linear'), point(400, 1, 'linear')],
+      viewport,
+      { min: 0, max: 1 },
+      48,
+    );
+    // No intermediate samples: two points and the flat tail past the last one.
+    expect(line.slice(0, 2)).toEqual([
+      { x: 0, y: 44 },
+      { x: 100, y: 4 },
+    ]);
+  });
+
+  it('samples an exp span so it is visibly a curve, not a straight line', () => {
+    const line = automationPolyline(
+      [point(0, 0, 'exp'), point(400, 1, 'exp')],
+      viewport,
+      { min: 0, max: 1 },
+      48,
+    );
+    const midpoint = line.find((sample) => sample.x === 50);
+    const straight = automationValueToY(0.5, { min: 0, max: 1 }, 48);
+    // A squared ease sits below the straight line at the halfway mark (larger y = lower).
+    expect(midpoint!.y).toBeGreaterThan(straight);
+  });
+
+  it("extends the last point's value to the right edge, since it stays in force", () => {
+    const line = automationPolyline([point(0, 1, 'linear')], viewport, { min: 0, max: 1 }, 48);
+    expect(line).toEqual([
+      { x: 0, y: 4 },
+      { x: viewport.width, y: 4 },
+    ]);
+  });
+
+  it('draws nothing for an empty lane', () => {
+    expect(automationPolyline([], viewport, { min: 0, max: 1 }, 48)).toEqual([]);
   });
 });
