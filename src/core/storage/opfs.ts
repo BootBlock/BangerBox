@@ -184,9 +184,21 @@ export async function readFile(path: string): Promise<File> {
   return handle.getFile();
 }
 
-/** Delete a file; missing files resolve silently (idempotent). */
+/**
+ * Delete a file; missing files resolve silently (idempotent).
+ *
+ * Deletion is the one operation here with no undo, so it refuses any path outside the two
+ * roots the app owns content in — `/projects/…` and `/global_library/…`. `splitOpfsPath`
+ * already blocks traversal out of the origin, but not a path that stays inside it and names
+ * `/bangerbox.sqlite3`: the SQLite VFS's own file, whose loss takes every project with it.
+ * No caller has ever wanted to delete anything else, so nothing legitimate is refused.
+ */
 export async function deleteFile(path: string): Promise<void> {
   const segments = splitOpfsPath(path);
+  const root = `/${segments[0]!}`;
+  if (segments.length < 2 || (root !== '/projects' && root !== GLOBAL_LIBRARY_ROOT)) {
+    throw new Error(`Refusing to delete outside the app's content roots: "${path}"`);
+  }
   const fileName = segments[segments.length - 1]!;
   try {
     const directory = await resolveDirectory(segments.slice(0, -1), false);

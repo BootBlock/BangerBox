@@ -177,7 +177,12 @@ export interface RemapResult {
  * Remap every UUID in a snapshot to a fresh one (spec §9.6 "remap all UUIDs on collision"). Ids
  * are globally-unique 36-char strings, so replacing each old id with its new id across the whole
  * serialised snapshot rewrites every reference at once — foreign keys, mixer JSON channel ids,
- * program-payload sample ids, automation target-path ids, and sample OPFS paths — consistently.
+ * program-payload sample ids and automation target-path ids — consistently.
+ *
+ * Sample `opfs_path` values are NOT the exception they look like. They may contain old ids and
+ * so get rewritten here too, but the import does not rely on that: the installer re-derives
+ * every sample path from the new ids, because a path arriving in an archive is untrusted input
+ * (see `withDerivedSamplePaths` in `projectService.ts`).
  */
 export function remapSnapshot(snapshot: ProjectSnapshot): RemapResult {
   const ids = collectIds(snapshot);

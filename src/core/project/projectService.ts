@@ -11,7 +11,7 @@ import { useProjectStore, useUIStore } from '@/store';
 import { AutosaveQueue, type SaveOutcome } from './autosave';
 import { registerAutosave, unregisterAutosave } from './dirty';
 import { hydrateStores } from './hydrate';
-import { remapSnapshot } from './mpcweb';
+import { remapSnapshot, type ProjectSnapshot } from './mpcweb';
 import { packMpcwebInWorker, unpackMpcwebInWorker } from './packClient';
 import type { UnpackedProject } from './mpcwebZip';
 import { flushDirtyKeys } from './persist';
@@ -176,6 +176,32 @@ export interface InstallOptions {
 }
 
 /**
+ * Re-derive every sample row's storage location from the ids this install just generated,
+ * discarding whatever the archive claimed (spec §9.1, §9.6).
+ *
+ * An archive is untrusted input: `opfs_path` and `project_id` arrive from a file the user was
+ * given, and both are consumed as authority later — `opfs_path` by the Browser's purge
+ * (`deleteFile`) and by every read, `project_id` by the project/global split. A crafted file
+ * naming `/bangerbox.sqlite3` would aim a purge at the whole database, and `project_id: null`
+ * would smuggle the user's imported audio into the shared global library.
+ *
+ * Nothing is lost by ignoring them: the bytes are written to `samplePath(projectId, newId)`
+ * regardless, so the imported path was only ever right by coincidence. Deriving it here makes
+ * the row agree with the file by construction, which is why this is not a validation step —
+ * there is no longer anything to validate.
+ */
+function withDerivedSamplePaths(snapshot: ProjectSnapshot, projectId: string): ProjectSnapshot {
+  return {
+    ...snapshot,
+    samples: snapshot.samples.map((sample) => ({
+      ...sample,
+      project_id: projectId,
+      opfs_path: samplePath(projectId, sample.id),
+    })),
+  };
+}
+
+/**
  * Install an already-unpacked `.mpcweb` payload as a NEW project and open it (spec §9.6).
  *
  * Shared by the user import above and the factory `demo` install (spec §9.8), which is why
@@ -188,7 +214,9 @@ export async function installUnpackedAsNewProject(
   unpacked: UnpackedProject,
   options: InstallOptions = {},
 ): Promise<string> {
-  const { snapshot, projectId, sampleIdMap } = remapSnapshot(unpacked.snapshot);
+  const remapped = remapSnapshot(unpacked.snapshot);
+  const { projectId, sampleIdMap } = remapped;
+  const snapshot = withDerivedSamplePaths(remapped.snapshot, projectId);
   const repos = getRepositories();
 
   // Re-key the packed bytes onto the remapped ids the rows now carry.
