@@ -12,7 +12,6 @@ import {
   tickToX,
   TOUCH_RESIZE_HANDLE_PX,
   velocityAtLaneY,
-  visibleRows,
   xToTick,
   type GridViewport,
 } from './gridGeometry';
@@ -67,14 +66,6 @@ describe('gridGeometry — note ↔ row', () => {
     expect(noteToRow(71, viewport)).toBe(1);
     expect(rowToNote(1, viewport)).toBe(71);
     expect(rowToNote(12, viewport)).toBe(60);
-  });
-
-  it('lists exactly the rows the viewport can show', () => {
-    // 400 px tall / 20 px rows = 20 rows.
-    const rows = visibleRows(viewport);
-    expect(rows).toHaveLength(20);
-    expect(rows[0]).toBe(72);
-    expect(rows[19]).toBe(53);
   });
 
   it('clamps notes to the MIDI range', () => {

@@ -14,8 +14,8 @@ const HEADER_BYTES = HEADER_INTS * 4;
 const FLOAT_COUNT = 1;
 
 /** Transport flag bits packed into the header (spec §7.1.4). */
-export const PLAYHEAD_FLAG_PLAYING = 1 << 0;
-export const PLAYHEAD_FLAG_RECORDING = 1 << 1;
+const PLAYHEAD_FLAG_PLAYING = 1 << 0;
+const PLAYHEAD_FLAG_RECORDING = 1 << 1;
 
 /** Allocate the single playhead SAB (spec §7.1.4). */
 export function createPlayheadSab(): SharedArrayBuffer {

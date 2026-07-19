@@ -39,6 +39,7 @@ import {
   biquadFilterType,
   lfoOscillator,
   staticModulation,
+  FILTER_ENV_OCTAVES,
   FILTER_MOD_OCTAVES,
   PITCH_MOD_CENTS,
 } from './voiceModulation';
@@ -422,7 +423,7 @@ export class VoicePool {
   private scheduleFilterEnvelope(filter: BiquadFilterNode, spec: VoiceTriggerSpec, now: number): void {
     const envDepth = spec.filter?.envDepth ?? 0;
     if (!spec.filterEnv || envDepth === 0) return;
-    const depthCents = envDepth * FILTER_MOD_OCTAVES * 1200;
+    const depthCents = envDepth * FILTER_ENV_OCTAVES * 1200;
     scheduleModEnvelope(filter.detune, 0, depthCents, spec.filterEnv, now);
   }
 

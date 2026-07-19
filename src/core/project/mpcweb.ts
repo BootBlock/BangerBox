@@ -10,10 +10,10 @@ import { z } from 'zod';
 import { bitDepthSchema } from './schemas/primitives';
 
 /** Current interchange format version (spec §9.6 manifest.formatVersion). */
-export const MPCWEB_FORMAT_VERSION = 1;
+const MPCWEB_FORMAT_VERSION = 1;
 
 // --- manifest.json (spec §9.6) ---------------------------------------------------
-export const mpcwebManifestSchema = z.object({
+const mpcwebManifestSchema = z.object({
   format: z.literal('mpcweb'),
   formatVersion: z.number().int(),
   appVersion: z.string(),
@@ -100,7 +100,7 @@ const songEntryRowSchema = z.object({
   repeats: z.number(),
 });
 
-export const projectSnapshotSchema = z.object({
+const projectSnapshotSchema = z.object({
   version: z.number().int(),
   project: projectRowSchema,
   sequences: z.array(sequenceRowSchema),

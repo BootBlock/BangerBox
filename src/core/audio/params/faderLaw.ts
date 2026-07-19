@@ -14,7 +14,7 @@ import { LEVEL_RANGE } from '@/core/project/schemas';
 /** dB at the top of the fader (level = `LEVEL_RANGE[1]` = 1.2) — spec §8.5.6. */
 export const FADER_MAX_DB = 6;
 /** Unity-gain fader position (0 dB). Matches the neutral strip default (spec §4.2). */
-export const FADER_UNITY_LEVEL = 1;
+const FADER_UNITY_LEVEL = 1;
 /** Perceptual floor: the lowest audible dB before the fader snaps to true silence. */
 export const FADER_FLOOR_DB = -60;
 

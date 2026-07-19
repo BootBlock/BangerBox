@@ -3,11 +3,12 @@
  * rail renders from it, the content area mounts from it, and `useUIStore.activeMode`
  * selects between them; there is no router (spec §1.3 #9).
  *
- * Order here is the order in §8.5 and the order of `MODES` in `useUIStore`, so the rail
- * reads as the spec lists them. Ids match the `src/features/*` directory names (spec §2.5).
+ * Order comes from `MODES` in `useUIStore`, which is the §8.5 order — the rail cannot
+ * drift out of step with it, and `Record<Mode, …>` makes omitting a mode a type error.
+ * Ids match the `src/features/*` directory names (spec §2.5).
  */
 import type { ComponentType } from 'react';
-import type { Mode } from '@/store';
+import { MODES, type Mode } from '@/store';
 import type { LucideIcon } from '@/ui/icons';
 import {
   IconBrowser,
@@ -46,38 +47,41 @@ export interface ModeDefinition {
   readonly Component: ComponentType;
 }
 
-export const MODE_DEFINITIONS: readonly ModeDefinition[] = [
-  { id: 'main', label: 'Main', title: 'Main', icon: IconMain, Component: MainMode },
-  { id: 'grid', label: 'Grid', title: 'Grid / Piano Roll', icon: IconGrid, Component: GridMode },
-  { id: 'muting', label: 'Mute', title: 'Track & Pad Mute', icon: IconMute, Component: MutingMode },
-  {
-    id: 'sample-edit',
+/** Everything about a mode except its id, which the `MODES` key supplies. */
+const MODE_TABLE: Readonly<Record<Mode, Omit<ModeDefinition, 'id'>>> = {
+  main: { label: 'Main', title: 'Main', icon: IconMain, Component: MainMode },
+  grid: { label: 'Grid', title: 'Grid / Piano Roll', icon: IconGrid, Component: GridMode },
+  muting: { label: 'Mute', title: 'Track & Pad Mute', icon: IconMute, Component: MutingMode },
+  'sample-edit': {
     label: 'Sample',
     title: 'Sample Edit',
     icon: IconSampleEdit,
     Component: SampleEditMode,
   },
-  {
-    id: 'program-edit',
+  'program-edit': {
     label: 'Program',
     title: 'Program Edit',
     icon: IconProgramEdit,
     Component: ProgramEditMode,
   },
-  { id: 'mixer', label: 'Mixer', title: 'Mixer', icon: IconMixer, Component: MixerMode },
-  { id: 'browser', label: 'Browser', title: 'Browser', icon: IconBrowser, Component: BrowserMode },
-  { id: 'looper', label: 'Looper', title: 'Looper', icon: IconLooper, Component: LooperMode },
-  {
-    id: 'pad-perform',
+  mixer: { label: 'Mixer', title: 'Mixer', icon: IconMixer, Component: MixerMode },
+  browser: { label: 'Browser', title: 'Browser', icon: IconBrowser, Component: BrowserMode },
+  looper: { label: 'Looper', title: 'Looper', icon: IconLooper, Component: LooperMode },
+  'pad-perform': {
     label: 'Perform',
     title: 'Pad Perform',
     icon: IconPadPerform,
     Component: PadPerformMode,
   },
-  { id: 'xyfx', label: 'XYFX', title: 'XYFX', icon: IconXyfx, Component: XyfxMode },
-  { id: 'qlink-edit', label: 'Q-Link', title: 'Q-Link Edit', icon: IconQLink, Component: QLinkEditMode },
-  { id: 'song', label: 'Song', title: 'Song', icon: IconSong, Component: SongMode },
-];
+  xyfx: { label: 'XYFX', title: 'XYFX', icon: IconXyfx, Component: XyfxMode },
+  'qlink-edit': { label: 'Q-Link', title: 'Q-Link Edit', icon: IconQLink, Component: QLinkEditMode },
+  song: { label: 'Song', title: 'Song', icon: IconSong, Component: SongMode },
+};
+
+export const MODE_DEFINITIONS: readonly ModeDefinition[] = MODES.map((id) => ({
+  id,
+  ...MODE_TABLE[id],
+}));
 
 /** Look up a mode definition; falls back to Main so an unknown id can never blank the UI. */
 export function modeDefinition(id: Mode): ModeDefinition {

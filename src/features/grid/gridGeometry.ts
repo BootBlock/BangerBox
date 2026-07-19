@@ -11,7 +11,7 @@ const NOTE_MIN = 0;
 const NOTE_MAX = 127;
 
 /** Width in pixels of an event's resize handle at its right edge (spec §8.5.2 resize). */
-export const RESIZE_HANDLE_PX = 6;
+const RESIZE_HANDLE_PX = 6;
 
 /**
  * The same handle for a finger. A fingertip contact patch is roughly 8–10 mm, so the 6 px
@@ -110,12 +110,6 @@ export function cellsAlongSegment(
     cells.push(cell);
   }
   return cells;
-}
-
-/** The MIDI notes the viewport can currently display, top row first. */
-export function visibleRows(viewport: GridViewport): number[] {
-  const count = Math.ceil(viewport.height / viewport.rowHeight);
-  return Array.from({ length: count }, (_, row) => rowToNote(row, viewport));
 }
 
 /** True when the point falls inside the event's rectangle. */

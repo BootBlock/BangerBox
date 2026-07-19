@@ -47,7 +47,7 @@ export const MOD_AMOUNT_RANGE: Range = [-1, 1];
 export const LFO_PHASE_RANGE: Range = [0, 1];
 export const LFO_RATE_RANGE: Range = [0.01, 100];
 export const ENVELOPE_LEVEL_RANGE: Range = [0, 1];
-export const ENVELOPE_TIME_MS_MIN = 0;
+const ENVELOPE_TIME_MS_MIN = 0;
 /**
  * Bounded envelope time for *control surfaces* that need a travel span — the Q-Link
  * amp attack/release encoders (spec §10.3). Stored envelopes are only floored at

@@ -15,7 +15,7 @@ import {
 } from './factory';
 
 /** Number of global send/return channels (spec §1.3.1). */
-export const RETURN_COUNT = 4;
+const RETURN_COUNT = 4;
 
 export class MixerGraph {
   readonly master: ChannelHandle;

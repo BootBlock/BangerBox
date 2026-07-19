@@ -30,7 +30,7 @@ import {
 } from './ranges';
 
 // --- Envelopes (spec §6 AhdsrEnvelope) -------------------------------------------
-export const ahdsrEnvelopeSchema = z.object({
+const ahdsrEnvelopeSchema = z.object({
   attack: nonNegative,
   hold: nonNegative,
   decay: nonNegative,
@@ -40,7 +40,7 @@ export const ahdsrEnvelopeSchema = z.object({
 });
 export type AhdsrEnvelope = z.infer<typeof ahdsrEnvelopeSchema>;
 
-export const envelopesSchema = z.object({
+const envelopesSchema = z.object({
   amp: ahdsrEnvelopeSchema,
   pitch: ahdsrEnvelopeSchema,
   filter: ahdsrEnvelopeSchema,
@@ -48,7 +48,7 @@ export const envelopesSchema = z.object({
 export type Envelopes = z.infer<typeof envelopesSchema>;
 
 // --- LFOs (spec §6 LfoConfig) ----------------------------------------------------
-export const lfoConfigSchema = z.object({
+const lfoConfigSchema = z.object({
   rate: ranged(LFO_RATE_RANGE),
   sync: z.union([z.literal('free'), noteDivisionSchema]),
   shape: z.enum(['sine', 'triangle', 'sawUp', 'sawDown', 'square', 'sampleHold', 'drift']),
@@ -58,7 +58,7 @@ export const lfoConfigSchema = z.object({
 export type LfoConfig = z.infer<typeof lfoConfigSchema>;
 
 // --- Modulation matrix (spec §6 ModSource/ModTarget/ModRoute) ---------------------
-export const modSourceSchema = z.enum([
+const modSourceSchema = z.enum([
   'lfo1',
   'lfo2',
   'ampEnv',
@@ -88,7 +88,7 @@ function isModTarget(value: string): value is ModTarget {
   return (FIXED_MOD_TARGETS as readonly string[]).includes(value) || INSERT_TARGET_PATTERN.test(value);
 }
 
-export const modTargetSchema = z
+const modTargetSchema = z
   .string()
   .refine(isModTarget, 'Unknown modulation target') as unknown as z.ZodType<ModTarget>;
 
@@ -100,7 +100,7 @@ export const modRouteSchema = z.object({
 export type ModRoute = z.infer<typeof modRouteSchema>;
 
 // --- Velocity layers (spec §6 VelocityLayer) -------------------------------------
-export const velocityLayerSchema = z.object({
+const velocityLayerSchema = z.object({
   sampleId: z.string(),
   velocityStart: rangedInt([0, 127]),
   velocityEnd: rangedInt([0, 127]),
@@ -114,7 +114,7 @@ export const velocityLayerSchema = z.object({
 export type VelocityLayer = z.infer<typeof velocityLayerSchema>;
 
 // --- Filter + pad mixer sub-objects ----------------------------------------------
-export const padFilterSchema = z.object({
+const padFilterSchema = z.object({
   type: z.enum(['lp', 'hp', 'bp', 'off']),
   cutoff: ranged(FILTER_CUTOFF_RANGE),
   resonance: ranged(FILTER_RESONANCE_RANGE),
@@ -147,7 +147,7 @@ export const padSchema = z.object({
 export type Pad = z.infer<typeof padSchema>;
 
 // --- Programs (spec §6 DrumProgram / KeygroupProgram) ----------------------------
-export const drumProgramSchema = z.object({
+const drumProgramSchema = z.object({
   id: z.string(),
   name: z.string(),
   type: z.literal('drum'),
@@ -155,7 +155,7 @@ export const drumProgramSchema = z.object({
 });
 export type DrumProgram = z.infer<typeof drumProgramSchema>;
 
-export const keygroupZoneSchema = z.object({
+const keygroupZoneSchema = z.object({
   sampleId: z.string(),
   rootNote: rangedInt(ROOT_NOTE_RANGE),
   lowNote: rangedInt(NOTE_RANGE),
@@ -167,7 +167,7 @@ export const keygroupZoneSchema = z.object({
 });
 export type KeygroupZone = z.infer<typeof keygroupZoneSchema>;
 
-export const keygroupProgramSchema = z.object({
+const keygroupProgramSchema = z.object({
   id: z.string(),
   name: z.string(),
   type: z.literal('keygroup'),

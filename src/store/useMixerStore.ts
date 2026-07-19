@@ -177,7 +177,7 @@ function writeScalar(strip: ChannelStrip, field: ScalarField, value: number): Ch
 }
 
 /** Map a channel id to the entity whose persistence owns its strip (spec §5.2, §9.3). */
-export function mixerChannelDirtyKey(channelId: string): string {
+function mixerChannelDirtyKey(channelId: string): string {
   if (channelId.startsWith('track:')) return dirtyKey.track(channelId.slice('track:'.length));
   if (channelId.startsWith('pad:')) return dirtyKey.program(channelId.split(':')[1] ?? '');
   // master + returns persist in the project payload (spec §9.3 projects.payload).

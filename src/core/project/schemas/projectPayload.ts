@@ -17,8 +17,3 @@ export const projectPayloadSchema = z
   })
   .loose();
 export type ProjectPayload = z.infer<typeof projectPayloadSchema>;
-
-/** The empty payload — a fresh project persists its master strip on first autosave. */
-export function createDefaultProjectPayload(): ProjectPayload {
-  return {};
-}

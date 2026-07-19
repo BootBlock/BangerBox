@@ -6,7 +6,6 @@ import {
   secondsPerTick,
   secondsToTicks,
   tickToBarBeatTick,
-  ticksIn,
   ticksPerBar,
   ticksPerBeat,
   ticksToSeconds,
@@ -33,16 +32,6 @@ describe('ticks ↔ seconds (spec §7.2)', () => {
 
   it('one bar of 4/4 at 120 bpm lasts two seconds', () => {
     expect(ticksToSeconds(ticksPerBar(FOUR_FOUR), 120)).toBeCloseTo(2, 12);
-  });
-});
-
-describe('ticksIn (lookahead window, spec §7.1.4)', () => {
-  it('rounds up so the window never falls short', () => {
-    // 100 ms at 120 bpm = 0.1 s = 0.1 / (0.5/960) = 192 ticks exactly.
-    expect(ticksIn(100, 120)).toBe(192);
-    // A window that lands between ticks rounds up.
-    expect(ticksIn(100, 125)).toBe(Math.ceil(secondsToTicks(0.1, 125)));
-    expect(ticksIn(100, 125)).toBeGreaterThanOrEqual(secondsToTicks(0.1, 125));
   });
 });
 

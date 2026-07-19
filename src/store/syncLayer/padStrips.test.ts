@@ -4,7 +4,7 @@
  * graph. Pure, so the mapping is testable without a program store or an audio context.
  */
 import { describe, expect, it } from 'vitest';
-import { createDefaultPad } from '@/store/useProgramStore';
+import { createDefaultPad } from '@/core/project/schemas';
 import { padStripsForProgram } from './padStrips';
 import type { DrumProgram, KeygroupProgram } from '@/core/project/schemas';
 

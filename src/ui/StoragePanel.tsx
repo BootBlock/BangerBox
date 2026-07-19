@@ -29,7 +29,7 @@ export interface StoragePanelApi {
 }
 
 /** Production implementation over the real worker driver, repositories, and OPFS. */
-export const storagePanelBrowserApi: StoragePanelApi = {
+const storagePanelBrowserApi: StoragePanelApi = {
   boot: bootDatabase,
   requestPersist: requestPersistentStorage,
   estimate: estimateStorage,

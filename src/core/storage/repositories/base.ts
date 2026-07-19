@@ -11,7 +11,7 @@ import type { Page, PageParams } from './types';
 
 /** Browser-facing queries page at 200 rows — unpaginated unbounded reads are forbidden (spec §9.2). */
 export const MAX_PAGE_SIZE = 200;
-export const DEFAULT_PAGE_SIZE = 200;
+const DEFAULT_PAGE_SIZE = 200;
 
 export abstract class BaseRepository {
   protected readonly driver: IDatabaseDriver;

@@ -35,7 +35,7 @@ export async function estimateStorage(): Promise<StorageEstimateResult> {
   }
 }
 
-export async function isStoragePersisted(): Promise<boolean> {
+async function isStoragePersisted(): Promise<boolean> {
   if (typeof navigator.storage?.persisted !== 'function') return false;
   try {
     return await navigator.storage.persisted();

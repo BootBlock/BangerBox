@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ModRoute } from '@/core/project/schemas';
-import { evaluateModMatrix, MOD_SOURCE_POLARITY, routesForSource, type ModSourceValues } from './modMatrix';
+import { evaluateModMatrix, routesForSource, type ModSourceValues } from './modMatrix';
 
 type Sources = ModSourceValues;
 
@@ -71,14 +71,5 @@ describe('routesForSource (spec §6)', () => {
     expect(routesForSource(routes, 'lfo1')).toHaveLength(2);
     expect(routesForSource(routes, 'lfo2')).toHaveLength(1);
     expect(routesForSource(routes, 'velocity')).toHaveLength(0);
-  });
-});
-
-describe('MOD_SOURCE_POLARITY (spec §6)', () => {
-  it('marks LFOs and random bipolar, the rest unipolar', () => {
-    expect(MOD_SOURCE_POLARITY.lfo1).toBe('bipolar');
-    expect(MOD_SOURCE_POLARITY.random).toBe('bipolar');
-    expect(MOD_SOURCE_POLARITY.velocity).toBe('unipolar');
-    expect(MOD_SOURCE_POLARITY.ampEnv).toBe('unipolar');
   });
 });

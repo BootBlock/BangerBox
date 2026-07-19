@@ -55,15 +55,15 @@ section references such as §8.5.7 point into it.
 
 ## Commands
 
-| Task            | Command                                        |
-| --------------- | ---------------------------------------------- |
-| Dev server      | `npm run dev`                                  |
-| Unit tests      | `npm test`                                     |
-| Type check      | `npm run type-check`                           |
-| Lint            | `npm run lint`                                 |
-| Formatting      | `npm run format:check` / `npm run format`      |
-| Repo invariants | `npm run verify` (deps, language, stub checks) |
-| Browser smoke   | `npm run test:e2e` (hardcodes port 5199)       |
+| Task            | Command                                           |
+| --------------- | ------------------------------------------------- |
+| Dev server      | `npm run dev`                                     |
+| Unit tests      | `npm test`                                        |
+| Type check      | `npm run type-check`                              |
+| Lint            | `npm run lint`                                    |
+| Formatting      | `npm run format:check` / `npm run format`         |
+| Repo invariants | `npm run verify` (deps, language, stubs, orphans) |
+| Browser smoke   | `npm run test:e2e` (hardcodes port 5199)          |
 
 Run the full gate before committing: `type-check`, `lint`, `test`, `format:check`
 and `verify`.
@@ -74,14 +74,10 @@ unformatted code reaches `main` silently and the next branch inherits the drift.
 
 ### What `npm run verify` does and does not cover
 
-`verify` is exactly three scripts: `check:deps` (the dependency surface matches
-the closed §2.2 matrix), `check:lang` (no American spellings outside the
-allowlist) and `check:stubs` (no open `STUB(phase-N)` tags, and no phase
-deferrals written as prose).
-
-§3.4 orphan-proofing now has a script behind it too — `npm run check:orphans` —
-but it is **not yet in the `verify` chain**, because it currently reports 138
-findings and those have not been triaged. Run it directly.
+`verify` is four scripts: `check:deps` (the dependency surface matches the
+closed §2.2 matrix), `check:lang` (no American spellings outside the allowlist),
+`check:stubs` (no open `STUB(phase-N)` tags, and no phase deferrals written as
+prose) and `check:orphans` (§3.4 orphan-proofing).
 
 `check:orphans` parses `src` with the TypeScript compiler API and fails on any
 runtime export that no non-test module imports. It uses the compiler rather than
@@ -95,6 +91,21 @@ tested is the case §3.4 exists to catch. Genuinely defensible ones go in
 `scripts/check-orphans.allowlist.json` with a reason, in the same shape as the
 `check-lang` and `check-stubs` allowlists; a stale entry there also fails the
 gate, so the allowlist cannot quietly drift out of date.
+
+Two kinds of entry are defensible, and the reason string has to say which. The
+first is a pure helper its own module calls internally, exported so a test can
+reach the arithmetic directly instead of through a rendered component or a live
+audio graph — name the internal caller, so the claim can be checked. The second
+is a finished implementation no UI reaches yet, where an open issue already
+tracks the gap — cite it, and expect the entry to go when that issue closes.
+Reaching for the allowlist for any other reason means the export is the
+speculative kind §3.4 exists to catch: delete it, or wire it up.
+
+One trap when reading the report: the `(imported only by tests)` annotation is
+computed per declaring module, so a symbol a test imports **through a barrel**
+is recorded against the barrel and shows up unannotated, looking like it is
+referenced nowhere at all. The finding is still correct; only the label is
+misleading. Grep the name across `src` before concluding something is dead.
 
 What it still cannot see: `export type` and `export interface` are skipped
 deliberately, because a type has no runtime existence and flagging types would
