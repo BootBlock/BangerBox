@@ -8,6 +8,7 @@
 import type { BitDepth } from '@/core/project/schemas';
 import type { Repositories, SampleRow } from '@/core/storage/repositories';
 import { globalLibraryPath, samplePath, writeFileStreamed } from '@/core/storage/opfs';
+import { assertWriteHeadroom } from '@/core/storage/safeguards';
 import type { WavEncodeRequest, WavEncodeResponse } from './wavEncode.worker';
 
 // --- pure standardisation helpers (spec §9.4 step 3) -----------------------------
@@ -132,6 +133,11 @@ export async function saveChannelsAsSample(
   const sampleId = crypto.randomUUID();
   const global = ctx.scope === 'global';
   const path = global ? globalLibraryPath(sampleId) : samplePath(ctx.projectId, sampleId);
+  // The §9.7 hard stop, on the encoded size rather than the source file's: this is what actually
+  // lands in OPFS. Checked here — after encoding, before the write — so every caller of this
+  // shared path (import, Looper take, destructive edit, resample-to-pad) is covered by one gate,
+  // and a refusal costs only the in-memory encode (spec §9.4 step 6).
+  await assertWriteHeadroom(bytes.byteLength);
   // Fresh ArrayBuffer-backed view — the OPFS stream API rejects shared-buffer views.
   // Sample payloads are the large writes the worker sync-access-handle path exists for
   // (spec §9.1); the view is transferred there, and nothing below reads it again.
@@ -166,8 +172,8 @@ async function resampleIfNeeded(buffer: AudioBuffer, targetRate: number): Promis
 /**
  * Import one decoded AudioBuffer into the project (spec §9.4 steps 3–5): standardise → encode →
  * write to OPFS → insert the samples row with inferred tags. Returns the new sample row. The
- * caller decodes via `audioContext.decodeAudioData` (spec §9.4 step 2) and handles the quota
- * headroom check (spec §9.7) before invoking this.
+ * caller decodes via `audioContext.decodeAudioData` (spec §9.4 step 2); the quota headroom check
+ * (spec §9.7) is applied by {@link saveChannelsAsSample} below, so callers need not repeat it.
  */
 export async function importDecodedSample(
   buffer: AudioBuffer,

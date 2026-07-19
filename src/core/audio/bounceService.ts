@@ -15,6 +15,7 @@
 import { PPQN } from '@/core/constants';
 import type { Repositories } from '@/core/storage/repositories';
 import { bouncePath, readFile, samplePath, writeFileStreamed } from '@/core/storage/opfs';
+import { assertWriteHeadroom } from '@/core/storage/safeguards';
 import type { BitDepth, Sequence } from '@/core/project/schemas';
 import { useProgramStore, useSequenceStore, useTransportStore } from '@/store';
 import { resolveVoice, resolvedVoiceToTrigger } from './programVoice';
@@ -139,6 +140,9 @@ function channelsOf(rendered: AudioBuffer): Float32Array[] {
 async function writeBounce(rendered: AudioBuffer, name: string, ctx: BounceContext): Promise<string> {
   const bytes = await encodeWavInWorker(channelsOf(rendered), ctx.projectSampleRate, ctx.projectBitDepth);
   const path = bouncePath(ctx.projectId, name);
+  // A song bounce is the largest single write the app makes; refuse it before committing bytes
+  // rather than letting a long render die on a raw QuotaExceededError (spec §9.7).
+  await assertWriteHeadroom(bytes.byteLength, 'this bounce');
   await writeFileStreamed(path, new Uint8Array(bytes));
   return path;
 }

@@ -70,3 +70,30 @@ export async function checkWriteHeadroom(additionalBytes: number): Promise<Headr
   const projected = (estimate.usage + Math.max(0, additionalBytes)) / estimate.quota;
   return { ...estimate, allowed: projected <= QUOTA_HARD_STOP_RATIO };
 }
+
+/**
+ * Thrown when a storage-growing write would breach the §9.7 hard stop. Carries a distinct type
+ * so callers can tell a graceful refusal apart from a genuine write failure, and a message that
+ * routes the user to the Browser's purge tools rather than dead-ending on "failed".
+ */
+export class StorageHeadroomError extends Error {
+  constructor(
+    readonly requiredBytes: number,
+    what = 'this audio',
+  ) {
+    super(
+      `Not enough storage space to save ${what}. Free space with “Purge unused samples” in the Browser, then try again.`,
+    );
+    this.name = 'StorageHeadroomError';
+  }
+}
+
+/**
+ * The §9.7 hard stop as a guard: refuse the write BEFORE a byte is committed, so a refusal
+ * leaves nothing half-written behind (spec §9.4 step 6). Every path that grows storage — sample
+ * import, bounce, Looper take, destructive edit, `.mpcweb` install — funnels through this.
+ */
+export async function assertWriteHeadroom(requiredBytes: number, what?: string): Promise<void> {
+  const headroom = await checkWriteHeadroom(requiredBytes);
+  if (!headroom.allowed) throw new StorageHeadroomError(requiredBytes, what);
+}
