@@ -15,8 +15,9 @@
 // Requires a Pages-base production build:
 //   BANGERBOX_BASE=/BangerBox/ npm run build && node scripts/gate-smoke.mjs
 //
-// Not run in CI: like its sibling smokes it drives the system-installed Edge
-// (`channel: 'msedge'`, spec §1.3 #13) rather than downloading a browser.
+// Runs in CI on the windows-latest runner (`.github/workflows/tests.yml`, #15): like its
+// sibling smokes it drives the system-installed Edge (`channel: 'msedge'`, spec §1.3 #13)
+// rather than downloading a browser, and only that image ships Edge.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
