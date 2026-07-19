@@ -92,7 +92,7 @@ export function MixerMode() {
         actions={
           <div className="flex items-center gap-3">
             <span
-              className="text-[0.625rem] text-bb-muted"
+              className="text-bb-micro text-bb-muted"
               title="Total insert latency on the master chain, compensated on parallel dry paths (spec §5.7.3)"
               data-testid="mixer-pdc"
             >
@@ -134,7 +134,7 @@ export function MixerMode() {
                   data-testid={`mixer-strip-${strip.id}`}
                   className="flex w-32 shrink-0 flex-col items-center gap-2 rounded-bb-md border border-bb-line bg-bb-raised p-2"
                 >
-                  <h4 className="w-full truncate text-center text-[0.625rem] font-bold text-bb-text">
+                  <h4 className="w-full truncate text-center text-bb-micro font-bold text-bb-text">
                     {strip.name}
                   </h4>
 

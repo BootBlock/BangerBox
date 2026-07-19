@@ -8,7 +8,7 @@
  * Both axes expose ARIA slider semantics through a paired hidden control, so the surface
  * is fully operable and readable without a pointer (spec §8.2).
  */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { clamp01 } from '@/core/math';
 import { formatValueText, normalisedToValue, valueToNormalised, type ControlRange } from './controlMaths';
 import { useContinuousControl } from './useContinuousControl';
@@ -30,6 +30,12 @@ export interface XYSurfaceProps {
   onTransient: (xValue: number, yValue: number) => void;
   /** Gesture end. With latch off, the caller returns the axes to their resting values. */
   onCommit: (xValue: number, yValue: number) => void;
+  /**
+   * Gesture start, by *either* modality — pointer press, or the first key that moves an
+   * axis. Latch is decided against the values the axes rested at when this fires, so it
+   * must not be tied to pointer input alone (spec §8.2 keyboard/pointer equivalence).
+   */
+  onGestureStart?: () => void;
   disabled?: boolean;
   /**
    * Fill the height available instead of holding a 16:10 box — for the full-screen XYFX
@@ -44,6 +50,7 @@ export function XYSurface({
   y,
   onTransient,
   onCommit,
+  onGestureStart,
   disabled = false,
   fill = false,
   'data-testid': testId,
@@ -176,6 +183,10 @@ export function XYSurface({
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (disabled) return;
     event.preventDefault();
+    // Close any open keyboard gesture first, so the pointer gesture's resting values are
+    // captured from the restored position rather than mid-keyboard-move.
+    endKeyboardGesture();
+    onGestureStart?.();
     const element = event.currentTarget;
     element.setPointerCapture(event.pointerId);
     trail.current = [];
@@ -200,18 +211,57 @@ export function XYSurface({
 
   // Keyboard operation runs through the shared control engine, one slider per axis, so the
   // surface is usable without a pointer (spec §8.2 full keyboard operation).
+  //
+  // A pointer gesture has an obvious span — press to release — and latch is resolved at the
+  // end of it. Keyboard input has no release, so the axis sliders synthesise one: the first
+  // arrow/Home/End press opens the gesture, further presses move the axes *transiently*, and
+  // the gesture closes when focus leaves the sliders or Escape is pressed. Without this the
+  // per-press commits would resolve latch against a gesture that never began, and every
+  // axis would hold its new value — latch permanently on for keyboard users (spec §8.2).
+  const keyboardGesture = useRef(false);
+  const keyboardValues = useRef({ x: x.value, y: y.value });
+
+  const stepAxis = useCallback(
+    (axis: 'x' | 'y', value: number) => {
+      if (!keyboardGesture.current) {
+        keyboardGesture.current = true;
+        // Seed from the resting values so the untouched axis is carried through unchanged.
+        keyboardValues.current = { x: x.value, y: y.value };
+        onGestureStart?.();
+      }
+      keyboardValues.current = { ...keyboardValues.current, [axis]: value };
+      onTransient(keyboardValues.current.x, keyboardValues.current.y);
+    },
+    [onGestureStart, onTransient, x.value, y.value],
+  );
+
+  const endKeyboardGesture = useCallback(() => {
+    if (!keyboardGesture.current) return;
+    keyboardGesture.current = false;
+    // One commit for the whole keyboard gesture ⇒ one undo entry, as for a drag (§3.3).
+    onCommit(keyboardValues.current.x, keyboardValues.current.y);
+  }, [onCommit]);
+
+  // A keyboard gesture must not outlive the surface: unmounting mid-gesture would strand a
+  // transient value in the graph with no commit behind it (spec §3.5 lens 5).
+  const endKeyboardGestureRef = useRef(endKeyboardGesture);
+  useLayoutEffect(() => {
+    endKeyboardGestureRef.current = endKeyboardGesture;
+  });
+  useEffect(() => () => endKeyboardGestureRef.current(), []);
+
   const xControl = useContinuousControl({
     value: x.value,
     range: x.range,
     orientation: 'horizontal',
     disabled,
-    onCommit: (value) => onCommit(value, y.value),
+    onCommit: (value) => stepAxis('x', value),
   });
   const yControl = useContinuousControl({
     value: y.value,
     range: y.range,
     disabled,
-    onCommit: (value) => onCommit(x.value, value),
+    onCommit: (value) => stepAxis('y', value),
   });
 
   return (
@@ -227,7 +277,15 @@ export function XYSurface({
         <canvas ref={canvasRef} aria-hidden="true" className="block h-full w-full" />
       </div>
       {/* The two axis sliders are the accessible representation of the surface (§8.2). */}
-      <div className="flex gap-2">
+      {/* Focus leaving the pair releases the keyboard gesture — the keyboard's "pointer up".
+          Moving between the two sliders stays inside one gesture. */}
+      <div
+        className="flex gap-2"
+        onBlur={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget)) return;
+          endKeyboardGesture();
+        }}
+      >
         {(
           [
             { axis: x, control: xControl, orientation: 'horizontal' as const },
@@ -248,8 +306,16 @@ export function XYSurface({
             aria-valuemax={axis.range[1]}
             aria-valuenow={axis.value}
             aria-valuetext={formatValueText(axis.value, axis.unit ?? '')}
-            onKeyDown={control.onKeyDown}
-            className="flex-1 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-[0.625rem] text-bb-muted"
+            onKeyDown={(event) => {
+              // Escape releases without moving focus — the explicit end of a keyboard gesture.
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                endKeyboardGesture();
+                return;
+              }
+              control.onKeyDown(event);
+            }}
+            className="flex-1 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-bb-micro text-bb-muted"
           >
             {axis.label}:{' '}
             <span className="font-mono tabular-nums text-bb-text">

@@ -4,14 +4,29 @@
 //
 //   npm run build:wasm
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const ascEntry = resolve(root, 'node_modules/assemblyscript/bin/asc.js');
 const assemblyDir = resolve(root, 'src/core/dsp/assembly');
 const outDir = resolve(root, 'src/core/dsp/dist');
+
+// Resolve asc the way Node resolves everything else — walking up from this script — rather
+// than pinning `<root>/node_modules`. A `git worktree` has no node_modules of its own and
+// inherits the parent checkout's, which is how vitest and the app deps already resolve
+// there; pinning made this the one step that broke (#88).
+let ascEntry;
+try {
+  ascEntry = createRequire(import.meta.url).resolve('assemblyscript/bin/asc.js');
+} catch {
+  console.error(
+    'assemblyscript is not installed — run `npm install` (in this worktree, or in the ' +
+      'checkout it was created from).',
+  );
+  process.exit(1);
+}
 
 /** Kernel registry: one entry per AssemblyScript source (spec §5.6.4 grows this list). */
 const kernels = [
@@ -22,11 +37,6 @@ const kernels = [
   'transientDetect',
   'granularStretch',
 ];
-
-if (!existsSync(ascEntry)) {
-  console.error('assemblyscript is not installed — run `npm install` first.');
-  process.exit(1);
-}
 
 mkdirSync(outDir, { recursive: true });
 

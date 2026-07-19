@@ -5,13 +5,15 @@
  * (plain data only, spec §4.2). The store delegates to the implementation registered
  * here by the project-load layer at boot; the indirection keeps the store cycle-free.
  */
+import type { SaveOutcome } from './autosave';
+
 export interface ProjectService {
   /** Create a fresh project with defaults, persist it, hydrate the stores. Returns its id. */
   newProject(name?: string): Promise<string>;
   /** Load a project by id and hydrate all stores from the database (spec §4.4). */
   loadProject(id: string): Promise<void>;
-  /** Flush autosave synchronously (spec §4.4 explicit save). */
-  saveNow(): Promise<void>;
+  /** Flush autosave synchronously (spec §4.4 explicit save). Resolves with the outcome. */
+  saveNow(): Promise<SaveOutcome>;
   /** Pack the open project to a `.mpcweb` blob (spec §9.6). */
   exportMpcweb(): Promise<Blob>;
   /** Import a `.mpcweb` file and open it (spec §9.6). Returns the new project id. */

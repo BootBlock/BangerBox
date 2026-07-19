@@ -13,9 +13,11 @@ import { useProjectStore, useUIStore } from '@/store';
 import { registerSyncSubscribers, type Unsubscribe } from '@/store/syncLayer';
 import { subscribeSequencerSync } from '@/store/syncLayer/sequencerSync';
 import { installProjectService, loadOrCreateActiveProject, projectService } from './projectService';
+import { installUnloadGuard } from './unloadGuard';
 
 let syncDispose: Unsubscribe | null = null;
 let sequencerSyncDispose: Unsubscribe | null = null;
+let unloadGuardDispose: Unsubscribe | null = null;
 let visibilityHandler: (() => void) | null = null;
 let audioEngine: AudioEngine | null = null;
 
@@ -29,6 +31,7 @@ export async function startProjectSession(): Promise<void> {
       if (document.visibilityState === 'hidden') void projectService.saveNow();
     };
     document.addEventListener('visibilitychange', visibilityHandler);
+    unloadGuardDispose = installUnloadGuard();
   } catch {
     useUIStore
       .getState()
@@ -75,6 +78,8 @@ export function stopProjectSession(): void {
   syncDispose = null;
   audioEngine?.dispose();
   audioEngine = null;
+  unloadGuardDispose?.();
+  unloadGuardDispose = null;
   if (visibilityHandler !== null) {
     document.removeEventListener('visibilitychange', visibilityHandler);
     visibilityHandler = null;

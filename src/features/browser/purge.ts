@@ -27,6 +27,11 @@ async function referencePayloads(
   projectId: string,
 ): Promise<string[]> {
   if (scope === 'global') return repos.programs.allPayloads();
+  // No open project means no programs to ask about, and `listByProject('')` answers with an
+  // empty set rather than an error — which reads as "nothing references anything" and would
+  // mark the whole library for deletion. The reference set is unknowable here, so refuse
+  // rather than guess (spec §8.5.7: fail safe, delete nothing).
+  if (projectId === '') throw new Error('No project is open, so no sample can be judged unused.');
   const programs = await repos.programs.listByProject(projectId);
   return programs.rows.map((program) => program.payload);
 }

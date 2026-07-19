@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PPQN } from '@/core/constants';
 import type { AutomationPoint, MidiEvent } from '@/core/project/schemas';
 import type { ScheduledEvent } from './messages';
 import { SchedulerCore, type SchedulerTickResult } from './schedulerCore';
@@ -118,6 +119,41 @@ describe('SchedulerCore — song transition (spec §7.9)', () => {
     expect(bHit?.when).toBeCloseTo(2, 3);
     expect(result.songAdvanced).toEqual([0, 1]); // entered entry 0, then entry 1
   });
+
+  it('swings in song mode exactly as in sequence mode (spec §7.4, §7.9)', () => {
+    // §7.4 applies swing "at schedule time" with no song-mode exemption: the same pattern
+    // must not sound straight just because a song is playing it rather than the sequencer.
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['A'], 'A', 'song');
+    core.setSongSequence(['A']);
+    core.setTempo(120);
+    core.setSwing(75, 16);
+    core.applyEventsDiff('ta', 'A', [note('x', 240)], []);
+    core.setTransport(true, false, 0);
+
+    const when = notes(run(core, steps(0.5))).find((e) => e.tick === 240)?.when;
+    // Same as the sequence-mode case: 240 ticks delayed by 60 → 300 ticks at 120 bpm.
+    expect(when).toBeCloseTo(300 / 1920, 3);
+  });
+
+  it('applies a track groove in song mode (spec §7.5)', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['A'], 'A', 'song');
+    core.setSongSequence(['A']);
+    core.setTempo(120);
+    core.setGroove('ta', {
+      ppqn: PPQN,
+      lengthTicks: PPQN * 4,
+      division: 16,
+      points: [{ gridTick: 0, offsetTicks: 30, velocityScale: 0.8 }],
+    });
+    core.applyEventsDiff('ta', 'A', [note('a', 0)], []);
+    core.setTransport(true, false, 0);
+
+    const hit = notes(run(core, steps(0.5)))[0];
+    expect(hit?.velocity).toBe(80);
+    expect(hit!.when).toBeCloseTo(30 / 1920, 4);
+  });
 });
 
 describe('SchedulerCore — note repeat (spec §7.3)', () => {
@@ -208,6 +244,21 @@ describe('SchedulerCore — recording (spec §7.7)', () => {
     expect(clicks[0]!.accented).toBe(true); // beat 1 accented
     expect(clicks[1]!.accented).toBe(false);
     expect(clicks.map((c) => c.when)).toEqual([0, 0.5, 1, 1.5].map((v) => expect.closeTo(v, 3)));
+  });
+
+  it('accents the bar line, not the play gesture, when starting mid-bar (spec §5.9)', () => {
+    // Loop start is user-placeable at any tick (§7.1.5) and becomes the transport start tick,
+    // so playback can begin on beat 3. The accent must still land on beat 1.
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    core.setLoop({ enabled: true, startTick: 1920, endTick: 3840 }); // beat 3 of the bar
+    core.setMetronome(true, 0);
+    core.setTransport(true, false, 1920);
+
+    const clicks = run(core, steps(1.7)).batch.filter((e) => e.kind === 'click');
+    // Beats 3, 4, 1, 2 — only the third click (beat 1) is accented.
+    expect(clicks.map((c) => c.accented)).toEqual([false, false, true, false]);
   });
 });
 

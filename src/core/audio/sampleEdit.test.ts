@@ -67,6 +67,13 @@ describe('sampleEdit — pure destructive-op DSP (spec §8.5.4)', () => {
       expect(Array.from(out[0]!)).toEqual([0, 1, 2, 3]);
       expect(() => trim([Float32Array.from([0, 1, 2, 3])], 3, 3)).toThrow(/range/i);
     });
+
+    it('clamps against the shortest channel so the result is never ragged (issue #77)', () => {
+      // A mis-decoded stereo sample with a short right channel: bounds clamped against
+      // channel 0 alone would return [800, 500] and misalign the pair downstream.
+      const out = trim([new Float32Array(1000), new Float32Array(500)], 0, 800);
+      expect(out.map((channel) => channel.length)).toEqual([500, 500]);
+    });
   });
 
   describe('applyToRegion', () => {

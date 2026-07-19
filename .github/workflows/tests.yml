@@ -84,9 +84,53 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Proves the shipped artefact still builds (kernels + tsc -b + vite build). The
-      # Playwright browser smoke is NOT run here: it drives the system-installed Edge
-      # (`channel: 'msedge'`, spec §1.3 #13) rather than downloading a browser, so it
-      # belongs on the Windows dev machine, not an ubuntu runner.
+      # Proves the shipped artefact still builds (kernels + factory packs + tsc -b + vite
+      # build). The real-browser smokes run in the `smoke` job below, on Windows.
       - name: Build
         run: npm run build
+
+  smoke:
+    name: Real-browser smoke (Edge)
+    # windows-latest, not ubuntu: all three smokes drive the system-installed Edge
+    # (`channel: 'msedge'`, spec §1.3 #13) rather than downloading a browser binary, and
+    # only the Windows image ships Edge preinstalled. Running them here keeps that locked
+    # decision intact — no script and no spec text changes to put them in CI (#15).
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 25
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # browser-smoke.mjs spawns vite's dev and build directly, so it never runs the
+      # `build:wasm`/`build:factory` steps `npm run build` wraps them in. Without these the
+      # DSP kernels are missing and the Factory panel fails to parse its pack index.
+      - name: Build the WASM DSP kernels and factory packs
+        run: npm run build:wasm && npm run build:factory
+
+      # §11.4: isolation, start gate, audible output, OPFS round-trip, offline PWA reload.
+      - name: Browser smoke (dev + offline PWA)
+        run: npm run test:e2e
+
+      # The remaining two smokes assert the *Pages* path, where isolation has to come from
+      # the service worker, so they need a build carrying the Pages base path.
+      - name: Build with the Pages base path
+        run: npm run build
+        env:
+          BANGERBOX_BASE: /BangerBox/
+
+      # §14 (m): header-less host, service-worker isolation, and the capability gate's
+      # import-time regression guard.
+      - name: Pages smoke
+        run: npm run test:pages
+
+      # §14 (n): the gate's own copy plus the bootstrap retry logic.
+      - name: Capability gate smoke
+        run: npm run test:gate

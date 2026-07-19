@@ -10,6 +10,7 @@
 import { useEffect, useRef } from 'react';
 import { useProjectStore, useTransportStore, useUndoStore } from '@/store';
 import { BPM_RANGE, SWING_RANGE } from '@/core/project/schemas';
+import type { SaveOutcome } from '@/core/project/autosave';
 import { Button, FieldLabel, Knob, SegmentControl, Toggle, ValueReadout, announce } from '@/ui/primitives';
 import {
   IconFullscreenEnter,
@@ -25,6 +26,15 @@ import {
 } from '@/ui/icons';
 import { StorageGauge } from './StorageGauge';
 import { useFullscreen } from './useFullscreen';
+
+/** What the explicit Save button announces for each flush outcome (spec §4.4). */
+const SAVE_ANNOUNCEMENT: Record<SaveOutcome, string> = {
+  saved: 'Project saved',
+  // Not "retrying": an unflushable batch is dropped rather than retried, so the only
+  // claim true of every failure is that the changes did not reach storage.
+  failed: 'Save failed — your changes are not saved',
+  idle: 'Nothing to save',
+};
 
 const COUNT_IN_OPTIONS = [
   { value: 0, label: 'Off' },
@@ -192,10 +202,13 @@ export function TransportBar() {
           icon={<IconSave size={16} aria-hidden="true" />}
           data-testid="transport-save"
           onClick={() => {
+            // Announce what the flush achieved, not merely that it finished: a failed
+            // write resolves too, and claiming success would contradict the autosave
+            // error toast and stop the user checking (spec §4.4).
             void useProjectStore
               .getState()
               .saveNow()
-              .then(() => announce('Project saved'));
+              .then((outcome) => announce(SAVE_ANNOUNCEMENT[outcome]));
           }}
         />
 

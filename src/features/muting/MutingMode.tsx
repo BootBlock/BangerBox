@@ -101,7 +101,7 @@ export function MutingMode() {
           }`}
         >
           <span className="line-clamp-2 text-center break-words">{label}</span>
-          <span className="mt-1 text-[0.625rem] opacity-80">{muted ? 'Muted' : 'Live'}</span>
+          <span className="mt-1 text-bb-micro opacity-80">{muted ? 'Muted' : 'Live'}</span>
         </button>
         <Toggle
           label={`${label} solo`}

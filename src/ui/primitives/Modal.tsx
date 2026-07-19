@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useId, useRef, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { IconClose } from '@/ui/icons';
+import { EASE_BB_SNAP } from '@/ui/motionTokens';
 
 export interface ModalProps {
   open: boolean;
@@ -171,7 +172,7 @@ export function Modal({
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 8 }}
             animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 8 }}
-            transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
+            transition={{ duration: 0.18, ease: EASE_BB_SNAP }}
             className={`relative flex max-h-[85dvh] w-full flex-col rounded-bb-lg border border-bb-line bg-bb-surface shadow-bb-raised ${SIZE[size]}`}
           >
             <header className="flex items-center justify-between gap-4 border-b border-bb-line px-5 py-3">

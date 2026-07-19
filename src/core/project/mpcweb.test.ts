@@ -120,6 +120,14 @@ describe('mpcweb snapshot — serialise/parse round-trip (spec §9.6, §11.1)', 
 });
 
 describe('mpcweb remap — collision-free UUIDs (spec §9.6)', () => {
+  it('rejects a snapshot that reuses one id for two rows (issue #77)', () => {
+    const original = fixtureSnapshot();
+    // Two sequences sharing an id would map onto a single new id and collide on the primary
+    // key part-way through restore, leaving rows already written.
+    original.sequences.push({ ...original.sequences[0]!, name: 'Copy' });
+    expect(() => remapSnapshot(original)).toThrow(/reuses the same id/i);
+  });
+
   it('rewrites every id and every reference consistently', () => {
     const original = fixtureSnapshot();
     const { snapshot, projectId: newProjectId, sampleIdMap } = remapSnapshot(original);

@@ -91,7 +91,7 @@ export function FactorySection() {
 
   return (
     <section aria-labelledby="factory-heading" className="flex flex-col gap-2">
-      <h3 id="factory-heading" className="text-[0.625rem] font-semibold text-bb-muted uppercase">
+      <h3 id="factory-heading" className="text-bb-micro font-semibold text-bb-muted uppercase">
         Factory content
       </h3>
 
@@ -117,14 +117,14 @@ export function FactorySection() {
             >
               <span className="flex min-w-0 flex-col">
                 <span className="truncate">{pack.title}</span>
-                <span className="truncate text-[0.625rem] text-bb-muted">{pack.description}</span>
+                <span className="truncate text-bb-micro text-bb-muted">{pack.description}</span>
               </span>
-              <span className="shrink-0 rounded-bb-sm border border-bb-line px-1.5 py-0.5 text-[0.625rem] text-bb-muted uppercase">
+              <span className="shrink-0 rounded-bb-sm border border-bb-line px-1.5 py-0.5 text-bb-micro text-bb-muted uppercase">
                 {pack.kind}
               </span>
-              <span className="shrink-0 text-[0.625rem] text-bb-muted">{formatSize(pack.bytes)}</span>
+              <span className="shrink-0 text-bb-micro text-bb-muted">{formatSize(pack.bytes)}</span>
               {/* Packs are fetched on demand — say so before the user commits to a download. */}
-              <span className="shrink-0 text-[0.625rem] text-bb-muted">
+              <span className="shrink-0 text-bb-micro text-bb-muted">
                 {cached[pack.id] === true ? 'Cached' : 'Not cached'}
               </span>
               <Button

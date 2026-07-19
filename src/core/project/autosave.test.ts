@@ -99,6 +99,24 @@ describe('AutosaveQueue', () => {
     expect(flush.mock.calls[1]![0]).toEqual(['b']);
   });
 
+  it('does not re-queue a failed batch onto a queue disposed mid-flush (issue #77)', async () => {
+    let rejectFirst!: (error: Error) => void;
+    const flush = vi.fn(() => new Promise<void>((_resolve, reject) => (rejectFirst = reject)));
+    const queue = new AutosaveQueue({ flush, onError: vi.fn() });
+
+    queue.markDirty('project:1');
+    const flushing = queue.flushNow();
+    // The project closes while the write is still in flight, and only then does it fail.
+    queue.dispose();
+    rejectFirst(new Error('quota'));
+    await flushing;
+
+    // Nothing re-arms for a disposed queue, so a re-queued key would stay dirty forever and
+    // pin the unsaved dot on a project that is already gone.
+    expect(queue.pendingKeys).toEqual([]);
+    expect(queue.hasPending).toBe(false);
+  });
+
   it('never signals idle for a batch the flush could not write (issue #72)', async () => {
     const onIdle = vi.fn();
     const onError = vi.fn();
@@ -126,6 +144,46 @@ describe('AutosaveQueue', () => {
     // A transient failure re-queues and retries; a permanent one is attempted exactly once.
     expect(flush).toHaveBeenCalledTimes(1);
     expect(queue.hasPending).toBe(false);
+  });
+
+  it('reports the flush outcome so an explicit save can announce the truth (issue #41)', async () => {
+    let fail = false;
+    const flush = vi.fn(async () => {
+      if (fail) throw new Error('quota exceeded');
+    });
+    const queue = new AutosaveQueue({ flush, onError: vi.fn() });
+
+    expect(await queue.flushNow()).toBe('idle'); // nothing queued is not a save
+
+    queue.markDirty('project:1');
+    expect(await queue.flushNow()).toBe('saved');
+
+    fail = true;
+    queue.markDirty('project:1');
+    expect(await queue.flushNow()).toBe('failed');
+  });
+
+  it('gives a coalesced save the outcome of the flush it waited on', async () => {
+    let finishFirst!: () => void;
+    const flush = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    const queue = new AutosaveQueue({ flush });
+
+    queue.markDirty('a');
+    const first = queue.flushNow();
+    // A second explicit save arrives while the first flush is still in flight. It queues no
+    // dirt of its own, so it must inherit that flush's verdict rather than report 'idle' —
+    // the in-flight write is what saved the user's work.
+    const second = queue.flushNow();
+    finishFirst();
+
+    expect(await first).toBe('saved');
+    expect(await second).toBe('saved');
+    expect(flush).toHaveBeenCalledTimes(1);
   });
 
   it('stops accepting work after dispose', async () => {

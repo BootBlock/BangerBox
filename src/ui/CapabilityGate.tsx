@@ -111,7 +111,7 @@ export function CapabilityGate({ report }: { report: CapabilityReport }) {
                 <span className="font-semibold">Try this: </span>
                 {detail.fix}
               </p>
-              <p className="mt-2 font-mono text-[11px] text-bb-muted">{detail.technical}</p>
+              <p className="mt-2 font-mono text-bb-micro text-bb-muted">{detail.technical}</p>
             </li>
           ))}
         </ul>

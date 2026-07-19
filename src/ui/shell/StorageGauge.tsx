@@ -96,7 +96,7 @@ export function StorageGauge() {
       >
         <span className={`block h-full ${fillColour}`} style={{ width: `${percent}%` }} />
       </span>
-      <span className="font-mono text-[0.625rem] tabular-nums text-bb-muted">{percent} %</span>
+      <span className="font-mono text-bb-micro tabular-nums text-bb-muted">{percent} %</span>
     </span>
   );
 }
