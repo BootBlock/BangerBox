@@ -11,7 +11,7 @@
  */
 import { useState } from 'react';
 import { useProgramStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
-import { Pad, SegmentControl, ValueReadout } from '@/ui/primitives';
+import { EmptyState, Pad, SegmentControl, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { AudioEnginePanel } from '@/ui/AudioEnginePanel';
 import { usePadTrigger } from '@/ui/usePadTrigger';
@@ -139,9 +139,7 @@ export function MainMode() {
 
         <Panel title="Sequences" scroll>
           <ul className="flex flex-col gap-1">
-            {Object.values(sequences).length === 0 && (
-              <li className="text-xs text-bb-muted">No sequences yet.</li>
-            )}
+            {Object.values(sequences).length === 0 && <EmptyState as="li" message="No sequences yet." />}
             {Object.values(sequences)
               .sort((a, b) => a.position - b.position)
               .map((sequence) => (

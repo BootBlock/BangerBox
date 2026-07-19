@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { useSequenceStore, useTransportStore, useUIStore } from '@/store';
 import { bounceSong } from '@/core/audio/bounceService';
 import { sampleEditContext } from '../sample-edit/sampleContext';
-import { Button, SegmentControl, ValueReadout } from '@/ui/primitives';
+import { Button, EmptyState, SegmentControl, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { IconAdd, IconChevronDown, IconChevronUp, IconRemove } from '@/ui/icons';
 
@@ -87,7 +87,11 @@ export function SongMode() {
   const handleBounce = () => {
     setBouncing(true);
     void bounceSong('song', sampleEditContext())
-      .then((path) => useUIStore.getState().pushToast(`Song bounced to ${path}`, 'success'))
+      // Deliberately does not name the file. The bounce lands at an OPFS path (spec §9.1)
+      // that no part of the UI can browse and no file manager can open, so quoting it only
+      // sends the user looking for something they cannot reach. Same wording as the
+      // Browser's sequence bounce; getting the file back out is a separate gap.
+      .then(() => useUIStore.getState().pushToast('Song bounced.', 'success'))
       .catch((error: unknown) =>
         useUIStore
           .getState()
@@ -132,9 +136,10 @@ export function SongMode() {
 
       <Panel title="Playlist" scroll className="flex-1">
         {songEntries.length === 0 ? (
-          <p className="text-xs text-bb-muted">
-            The song is empty. Add a sequence below to start the arrangement.
-          </p>
+          <EmptyState
+            message="No entries in the song yet."
+            hint="Add a sequence below to start the arrangement."
+          />
         ) : (
           <ol className="flex flex-col gap-1">
             {songEntries.map((entry, index) => {
@@ -193,7 +198,7 @@ export function SongMode() {
 
       <Panel title="Add sequence">
         {sequenceList.length === 0 ? (
-          <p className="text-xs text-bb-muted">No sequences to add yet.</p>
+          <EmptyState message="No sequences to add yet." />
         ) : (
           <ul className="flex flex-wrap gap-2">
             {sequenceList.map((sequence) => (

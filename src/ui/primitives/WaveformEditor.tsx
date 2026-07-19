@@ -27,6 +27,7 @@ import {
   zoomView,
   type WaveformView,
 } from '@/core/audio/waveformView';
+import { IconRemove } from '@/ui/icons';
 import { Button } from './Button';
 import { drawMarkers, drawSelection, drawWaveform, readWaveformTokens } from './waveformDraw';
 
@@ -357,10 +358,13 @@ export function WaveformEditor({
               <button
                 type="button"
                 onClick={() => commitMarkers(markers.filter((_, i) => i !== index))}
-                className="rounded-bb-sm border border-bb-line bg-bb-raised px-1.5 py-0.5 tabular-nums"
+                className="inline-flex items-center gap-1 rounded-bb-sm border border-bb-line bg-bb-raised px-1.5 py-0.5 tabular-nums"
                 aria-label={`Remove marker at ${secondsOf(marker).toFixed(3)} seconds`}
               >
-                {secondsOf(marker).toFixed(3)}s ✕
+                {secondsOf(marker).toFixed(3)}s
+                {/* The app's one delete glyph, so a marker chip removes with the same mark
+                    as every other removable row (spec §3.6). */}
+                <IconRemove size={12} aria-hidden="true" />
               </button>
             </li>
           ))}

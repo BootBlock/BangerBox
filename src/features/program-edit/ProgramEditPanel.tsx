@@ -39,9 +39,11 @@ export function ProgramEditPanel() {
       <h3 id="program-edit-heading" className="text-sm font-semibold">
         Program edit
       </h3>
+      {/* Spec §6 is the surface this describes; the reference belongs here, not in the
+          sentence a musician reads. */}
       <p className="mt-1 text-xs leading-relaxed text-bb-muted">
-        The instrument: build drum and keygroup programs — layers, envelopes, filter, LFOs and the mod matrix
-        (spec §6). Edits are undoable and autosaved.
+        The instrument: build drum and keygroup programs — layers, envelopes, filter, LFOs and the mod matrix.
+        Edits are undoable and autosaved.
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">

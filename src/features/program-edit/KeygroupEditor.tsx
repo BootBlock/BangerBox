@@ -17,6 +17,7 @@ import {
   type KeygroupZone,
 } from '@/core/project/schemas';
 import { useProgramStore } from '@/store';
+import { EmptyState } from '@/ui/primitives';
 import { ControlGroup, NumberField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
 import { ModMatrixEditor } from './ModMatrixEditor';
@@ -81,7 +82,7 @@ export function KeygroupEditor({ program }: { program: KeygroupProgram }) {
       <section aria-label="Key zones" className="rounded-bb-sm border border-bb-line bg-bb-surface p-3">
         <h4 className="mb-2 text-xs font-semibold text-bb-text">Key zones</h4>
         {program.zones.length === 0 ? (
-          <p className="text-xs text-bb-muted">No zones yet — assign a sample from the Browser.</p>
+          <EmptyState message="No zones yet." />
         ) : (
           <ul className="flex flex-col gap-3">
             {program.zones.map((zone, index) => (
