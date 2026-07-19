@@ -333,14 +333,22 @@ export class SchedulerCore {
   // --- metronome + count-in (spec §7.7) ---
   private scheduleClicks(horizon: number, result: SchedulerTickResult): void {
     const beatSeconds = this.beatSeconds();
-    const barBeats = this.activeTimeSig().numerator;
+    const timeSig = this.activeTimeSig();
+    // §5.9 accents beat 1, so the accent must follow the *bar line*, not the play gesture:
+    // `startTick` is the loop start (§7.1.5), which the user may place mid-bar. Phase the
+    // click index by the origin's beat offset within its bar. A count-in is always a whole
+    // number of bars, so the same expression accents the count-in on that same bar grid.
+    const barBeats = Math.max(1, Math.round(timeSig.numerator));
+    const originBeat = Math.floor(this.originTick / ticksPerBeat(timeSig));
+    const beatPhase = ((originBeat % barBeats) + barBeats) % barBeats;
     let guard = 0;
     while (guard++ < WINDOW_GUARD) {
       const when = this.playStartContext + this.nextClickIndex * beatSeconds;
       if (when > horizon) break;
       const inCountIn = when < this.contentStartContext - 1e-9;
       if (inCountIn || this.metronomeEnabled) {
-        result.batch.push({ kind: 'click', when, tick: 0, accented: this.nextClickIndex % barBeats === 0 });
+        const accented = (beatPhase + this.nextClickIndex) % barBeats === 0;
+        result.batch.push({ kind: 'click', when, tick: 0, accented });
       }
       this.nextClickIndex++;
     }
@@ -379,6 +387,26 @@ export class SchedulerCore {
     return elapsed <= 0 ? this.originTick : this.originTick + secondsToTicks(elapsed, this.bpm);
   }
 
+  /**
+   * The schedule-time shaping a note at `seqTick` on `trackId` receives: swing (§7.4) and the
+   * track's groove (§7.5) are both non-destructive tick offsets, and they compose — a grooved
+   * track still swings. Shared by sequence and song mode so a pattern cannot sound different
+   * depending on which transport mode plays it.
+   */
+  private shapeNote(
+    trackId: string,
+    seqTick: number,
+    velocity: number,
+  ): { offsetTicks: number; velocity: number } {
+    const groove = this.grooves.get(trackId);
+    const shift = groove ? grooveShiftAtTick(groove, seqTick) : null;
+    return {
+      offsetTicks:
+        swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision) + (shift?.offsetTicks ?? 0),
+      velocity: shift ? clamp(Math.round(velocity * shift.velocityScale), 1, 127) : velocity,
+    };
+  }
+
   private emitNote(
     result: SchedulerTickResult,
     trackId: string,
@@ -386,22 +414,17 @@ export class SchedulerCore {
     seqTick: number,
     linearTick: number,
   ): void {
-    // Swing and groove are both non-destructive schedule-time shaping (spec §7.4, §7.5);
-    // they compose, so a grooved track still swings.
-    const groove = this.grooves.get(trackId);
-    const shift = groove ? grooveShiftAtTick(groove, seqTick) : null;
-    const swung =
-      linearTick +
-      swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision) +
-      (shift?.offsetTicks ?? 0);
-    const when = this.contentStartContext + ticksToSeconds(swung - this.originTick, this.bpm);
+    const shaped = this.shapeNote(trackId, seqTick, event.velocity);
+    const when =
+      this.contentStartContext +
+      ticksToSeconds(linearTick + shaped.offsetTicks - this.originTick, this.bpm);
     result.batch.push({
       kind: 'noteOn',
       when,
       tick: seqTick,
       trackId,
       note: event.note,
-      velocity: shift ? clamp(Math.round(event.velocity * shift.velocityScale), 1, 127) : event.velocity,
+      velocity: shaped.velocity,
       durationSec: ticksToSeconds(event.durationTicks, this.bpm),
     });
   }
@@ -542,14 +565,22 @@ export class SchedulerCore {
         for (const event of track.events) {
           if (event.tickStart < slice.seqFrom || event.tickStart >= slice.seqTo) continue;
           const songTick = segment.startTick + event.tickStart;
-          const when = this.contentStartContext + (songTickToSeconds(this.songMap, songTick) - base);
+          // Swing (§7.4) and groove (§7.5) are "applied at schedule time" with no song-mode
+          // exemption, so the offset is added here too. It is added in *seconds at the
+          // segment's tempo* rather than to `songTick`, so a note near a segment boundary
+          // cannot be nudged across it and re-timed by the next segment's tempo (§7.9).
+          const shaped = this.shapeNote(trackId, event.tickStart, event.velocity);
+          const when =
+            this.contentStartContext +
+            (songTickToSeconds(this.songMap, songTick) - base) +
+            ticksToSeconds(shaped.offsetTicks, segment.bpm);
           result.batch.push({
             kind: 'noteOn',
             when,
             tick: event.tickStart,
             trackId,
             note: event.note,
-            velocity: event.velocity,
+            velocity: shaped.velocity,
             durationSec: ticksToSeconds(event.durationTicks, segment.bpm),
           });
         }
