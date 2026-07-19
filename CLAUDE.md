@@ -25,6 +25,13 @@ git branch -d <short-branch-name>
 files. Never remove a worktree you did not create — another agent may still be
 using it; check commit timestamps and file mtimes before assuming one is idle.
 
+A worktree starts without `node_modules`; run `npm ci` in it before building or
+testing.
+
+`main` moves while you work. Expect the merge back to conflict with whatever
+else landed, and re-run the gate **after** merging, not just on the branch — a
+green branch plus a green `main` does not make a green merge result.
+
 ## Close the ticket when the work lands
 
 Work that resolves a GitHub issue is not finished until that issue is closed.
@@ -54,8 +61,31 @@ section references such as §8.5.7 point into it.
 | Unit tests      | `npm test`                                     |
 | Type check      | `npm run type-check`                           |
 | Lint            | `npm run lint`                                 |
+| Formatting      | `npm run format:check` / `npm run format`      |
 | Repo invariants | `npm run verify` (deps, language, stub checks) |
 | Browser smoke   | `npm run test:e2e` (hardcodes port 5199)       |
+
+Run the full gate before committing: `type-check`, `lint`, `test`, `format:check`
+and `verify`.
+
+`npm run format:check` matters more than it looks. Nothing else runs Prettier —
+no pre-commit hook, and a local `git merge` never checks formatting — so
+unformatted code reaches `main` silently and the next branch inherits the drift.
+
+### What `npm run verify` does and does not cover
+
+`verify` is exactly three scripts: `check:deps` (the dependency surface matches
+the closed §2.2 matrix), `check:lang` (no American spellings outside the
+allowlist) and `check:stubs` (no open `STUB(phase-N)` tags, and no phase
+deferrals written as prose).
+
+It does **not** check §3.4 orphan-proofing — "every exported function, store, or
+component is imported and used within the live application tree" is a review
+rule in the spec with no script behind it. A speculative export, or a helper
+exported only so a test can reach it, will pass `verify` untouched. Check that
+by hand when adding exports, and be sceptical of any sweep that reports nothing:
+`grep -P` is unavailable on this repo's Git Bash, so a `-P` pattern fails
+silently and reads as a clean result.
 
 `npm run verify` enforces project invariants — notably §3.4 orphan-proofing,
 which forbids store state or exported helpers that nothing in the application
