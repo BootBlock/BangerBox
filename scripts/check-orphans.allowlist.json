@@ -1,0 +1,4 @@
+{
+  "comment": "check:orphans allowlist — runtime exports in src that the live application tree does not import, and which are nonetheless justified (spec §3.4). Each entry names the declaring module and the exported symbol, and must state why the export earns its place. The usual defensible case is a pure helper whose own module uses it internally and which is exported so a unit test can reach the arithmetic directly rather than through the rendered component. Speculative exports do not belong here; delete them or wire them up.",
+  "exports": []
+}
