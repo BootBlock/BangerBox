@@ -198,7 +198,7 @@ export function SongMode() {
 
       <Panel title="Add sequence">
         {sequenceList.length === 0 ? (
-          <EmptyState message="No sequences to add yet." />
+          <EmptyState message="No sequences to add yet." hint="Create one in Main's Sequences panel." />
         ) : (
           <ul className="flex flex-wrap gap-2">
             {sequenceList.map((sequence) => (

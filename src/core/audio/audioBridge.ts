@@ -71,6 +71,12 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
       const channel = graph.getChannel(id);
       if (channel) applyInserts(context, channel, inserts);
     },
+    // Master and the returns are fixtures of the graph (spec §5.2) — they have no strip to
+    // lose, so an id addressing one is ignored rather than torn out from under the mix.
+    removeChannel: (id) => {
+      if (id.startsWith('track:')) graph.removeTrackChannel(id.slice('track:'.length));
+      else if (id.startsWith('pad:')) graph.removePadChannel(id);
+    },
 
     // Inert by design — the graph is not the owner of any of these (spec §3.1):
     setTransportPlaying: () => {}, // the scheduler worker owns transport (spec §7.1.3)

@@ -8,7 +8,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import { useProgramStore } from '@/store';
-import { FieldLabel, Pad, SegmentControl } from '@/ui/primitives';
+import { EmptyState, FieldLabel, Pad, SegmentControl } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { usePadTrigger } from '@/ui/usePadTrigger';
 import {
@@ -214,7 +214,13 @@ export function PadPerformMode() {
           ))}
         </div>
         {trackId === null && (
-          <p className="mt-3 shrink-0 text-xs text-bb-muted">Add a track to the active sequence to play.</p>
+          <div className="mt-3 shrink-0">
+            <EmptyState
+              message="No track is armed for the pads."
+              hint="Add one to the active sequence in Main's Tracks panel."
+              data-testid="perform-no-track"
+            />
+          </div>
         )}
       </Panel>
     </div>

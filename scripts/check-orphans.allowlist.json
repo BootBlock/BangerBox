@@ -412,11 +412,6 @@
       "reason": "Internal caller: the diff walker. Exported so the store-to-graph diff is testable without a live audio graph."
     },
     {
-      "file": "src/store/useProjectStore.ts",
-      "export": "SAMPLE_RATES",
-      "reason": "Issue #40 — no UI creates a project, so the project-settings surface is unbuilt; setSampleRate and setBitDepth have no call site either. This is the option list that surface needs."
-    },
-    {
       "file": "src/ui/ProjectStatusBar.tsx",
       "export": "ProjectStatusBar",
       "reason": "Superseded Phase 2 scaffolding. TransportBar and MainMode now carry its project name, unsaved dot, undo/redo buttons and useUndoKeyboard call, so mounting it would duplicate all four on screen. Held here pending an explicit decision to delete rather than removed silently — it is dead UI either way, not a wiring gap."

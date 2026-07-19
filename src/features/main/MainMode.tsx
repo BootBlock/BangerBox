@@ -15,6 +15,9 @@ import { EmptyState, Pad, SegmentControl, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { AudioEnginePanel } from '@/ui/AudioEnginePanel';
 import { usePadTrigger } from '@/ui/usePadTrigger';
+import { ProjectsPanel } from './ProjectsPanel';
+import { SequencesPanel } from './SequencesPanel';
+import { TracksPanel } from './TracksPanel';
 
 /** Pads per bank (spec §1.3.1 — 128 pads as 8 banks × 16). */
 const PADS_PER_BANK = 16;
@@ -54,7 +57,11 @@ export function MainMode() {
   return (
     // Two columns that fit the viewport (spec §8.4): every panel holds its content height
     // except the one per column marked to absorb the leftover — the pad grid on the left,
-    // the sequence list on the right. Below `lg` this stacks and `<main>` scrolls instead.
+    // the recent-projects list on the right. Below `lg` this stacks and `<main>` scrolls.
+    //
+    // Sequences and Tracks pair up beneath the pad grid rather than going in the right
+    // column: with Engine, Project and Recent projects already there, a fourth panel
+    // pushed the sequence list off the bottom of the viewport (issue #40).
     <div className="grid flex-1 grid-cols-1 gap-3 lg:min-h-0 lg:grid-cols-[2fr_1fr]">
       <div className="flex flex-col gap-3 lg:min-h-0">
         <Panel title="Now playing">
@@ -125,11 +132,20 @@ export function MainMode() {
             })}
           </div>
           {trackId === null && (
-            <p className="mt-3 shrink-0 text-xs text-bb-muted">
-              Add a track to the active sequence to play pads.
-            </p>
+            <div className="mt-3 shrink-0">
+              <EmptyState
+                message="No track is armed for the pads."
+                hint="Add one in the Tracks panel."
+                data-testid="main-no-track"
+              />
+            </div>
           )}
         </Panel>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <SequencesPanel />
+          <TracksPanel />
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 lg:min-h-0">
@@ -137,30 +153,7 @@ export function MainMode() {
           <AudioEnginePanel />
         </Panel>
 
-        <Panel title="Sequences" scroll>
-          <ul className="flex flex-col gap-1">
-            {Object.values(sequences).length === 0 && <EmptyState as="li" message="No sequences yet." />}
-            {Object.values(sequences)
-              .sort((a, b) => a.position - b.position)
-              .map((sequence) => (
-                <li key={sequence.id}>
-                  <button
-                    type="button"
-                    aria-current={sequence.id === activeSequenceId}
-                    onClick={() => useTransportStore.getState().setActiveSequenceId(sequence.id)}
-                    className={`flex w-full items-center justify-between rounded-bb-sm border px-2 py-1.5 text-left text-xs transition-colors duration-150 ${
-                      sequence.id === activeSequenceId
-                        ? 'border-bb-accent bg-bb-raised text-bb-text'
-                        : 'border-bb-line text-bb-muted hover:text-bb-text'
-                    }`}
-                  >
-                    <span className="truncate">{sequence.name}</span>
-                    <span className="ml-2 shrink-0 font-mono tabular-nums">{sequence.lengthBars} bars</span>
-                  </button>
-                </li>
-              ))}
-          </ul>
-        </Panel>
+        <ProjectsPanel />
       </div>
     </div>
   );

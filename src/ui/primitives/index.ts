@@ -16,6 +16,7 @@ export { WaveformEditor, type WaveformEditorProps } from './WaveformEditor';
 export { Toggle, type ToggleProps, type ToggleTone } from './Toggle';
 export { SegmentControl, type SegmentControlProps, type SegmentOption } from './SegmentControl';
 export { ValueReadout, type ValueReadoutProps } from './ValueReadout';
+export { TextField, type TextFieldProps } from './TextField';
 export { Modal, type ModalProps } from './Modal';
 export { Toast, type ToastProps } from './Toast';
 export { LiveRegion, announce } from './LiveRegion';
