@@ -416,8 +416,7 @@ export class SchedulerCore {
   ): void {
     const shaped = this.shapeNote(trackId, seqTick, event.velocity);
     const when =
-      this.contentStartContext +
-      ticksToSeconds(linearTick + shaped.offsetTicks - this.originTick, this.bpm);
+      this.contentStartContext + ticksToSeconds(linearTick + shaped.offsetTicks - this.originTick, this.bpm);
     result.batch.push({
       kind: 'noteOn',
       when,
