@@ -24,7 +24,16 @@ import type { PeakPyramid } from '@/core/audio/peakPyramid';
 import { getPeakPyramid } from '@/core/audio/peakPyramidCache';
 import { importAudioFile } from '@/core/audio/sampleImport';
 import { extractAndBakeGroove } from '@/core/audio/grooveService';
-import { useBrowserStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
+import { GLOBAL_LIBRARY_ROOT, projectSamplesRoot } from '@/core/storage/opfs';
+import {
+  BROWSER_INITIAL_PATH,
+  useBrowserStore,
+  useProjectStore,
+  useSequenceStore,
+  useTransportStore,
+  useUIStore,
+} from '@/store';
+import { isGlobalLibraryPath, scopeOfPath } from '../browser/libraryLocation';
 import { Button, EmptyState } from '@/ui/primitives';
 import { SegmentControl } from '@/ui/primitives/SegmentControl';
 import { WaveformEditor } from '@/ui/primitives/WaveformEditor';
@@ -63,8 +72,21 @@ export function SampleEditPanel() {
   /** Why the selected sample's audio could not be read, or null when it read fine. */
   const [waveformError, setWaveformError] = useState<string | null>(null);
   const samplesError = useBrowserStore((state) => state.samplesError);
+  const currentPath = useBrowserStore((state) => state.currentPath);
   const tracks = useSequenceStore((state) => state.tracks);
   const [grooveTrackId, setGrooveTrackId] = useState<string | null>(null);
+
+  /**
+   * Which library this panel is editing. It is `useBrowserStore.currentPath` — the same
+   * state the Browser's folder tree drives — rather than a second local flag, so the two
+   * modes cannot disagree about where "here" is (see `libraryLocation.ts`).
+   *
+   * This panel used to READ that path without exposing it: factory kits share their audio
+   * into the global library (§9.8), so a user who had never opened Browser mode saw an
+   * empty list here and no way to reach it.
+   */
+  const browsingGlobal = isGlobalLibraryPath(currentPath);
+  const locationLabel = browsingGlobal ? 'global library' : 'project';
 
   const grooveTracks = useMemo(() => Object.values(tracks).sort((a, b) => a.position - b.position), [tracks]);
   /**
@@ -73,9 +95,39 @@ export function SampleEditPanel() {
    */
   const grooveTarget = grooveTracks.find((track) => track.id === grooveTrackId) ?? grooveTracks[0];
 
+  // Point at the active project's samples when a project opens, unless the global library —
+  // which outlives any one project — is the location being edited. Mirrors BrowserPanel, so
+  // arriving in either mode first leaves the other showing the same place.
   useEffect(() => {
-    void reloadSampleList();
+    if (!projectId) return;
+    const { currentPath: path, setCurrentPath } = useBrowserStore.getState();
+    if (!isGlobalLibraryPath(path)) setCurrentPath(projectSamplesRoot(projectId));
   }, [projectId]);
+
+  // The list follows the location, as the Browser's does (spec §8.5.7).
+  useEffect(() => {
+    // On first render the store still holds its placeholder path and the effect above is
+    // about to point it at the project — querying now would only repeat itself a tick later.
+    if (projectId && currentPath === BROWSER_INITIAL_PATH) return;
+    void reloadSampleList();
+  }, [projectId, currentPath]);
+
+  /**
+   * Switch library. The open sample belongs to the list being left, so it is cleared rather
+   * than left selected with every destructive tool still armed against audio the user can no
+   * longer see in the list.
+   */
+  const setLocation = (global: boolean) => {
+    if (global === browsingGlobal) return;
+    setSelected(null);
+    setPyramid(null);
+    setSelection(null);
+    setMarkers([]);
+    setWaveformError(null);
+    useBrowserStore
+      .getState()
+      .setCurrentPath(global || !projectId ? GLOBAL_LIBRARY_ROOT : projectSamplesRoot(projectId));
+  };
 
   const select = async (row: SampleRow) => {
     setSelected(row);
@@ -119,7 +171,16 @@ export function SampleEditPanel() {
       pushToast('Start the audio engine before importing.', 'warning');
       return;
     }
-    void run('Import', () => importAudioFile(file, { ...sampleEditContext(), context: engine.context }));
+    // The import lands where the user is looking. Without the scope it always wrote to the
+    // project, so importing while editing the global library dropped the file into a list
+    // the panel was not showing.
+    void run(`Import into the ${locationLabel}`, () =>
+      importAudioFile(file, {
+        ...sampleEditContext(),
+        context: engine.context,
+        scope: scopeOfPath(currentPath),
+      }),
+    );
   };
 
   /**
@@ -164,6 +225,20 @@ export function SampleEditPanel() {
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
+        {/* Which library is being edited (spec §8.5.7's two roots). Factory kits share their
+            audio into the global library, so without this the panel could only ever reach
+            it by way of a folder-tree click made over in Browser mode. */}
+        <SegmentControl
+          label="Library"
+          size="sm"
+          value={browsingGlobal ? 'global' : 'project'}
+          options={[
+            { value: 'project', label: 'Project' },
+            { value: 'global', label: 'Global library' },
+          ]}
+          onChange={(value) => setLocation(value === 'global')}
+          data-testid="sample-location"
+        />
         <label className="cursor-pointer rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs">
           Import audio…
           <input
@@ -182,7 +257,7 @@ export function SampleEditPanel() {
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[16rem_1fr]">
         <ul
           className="max-h-56 overflow-auto overscroll-contain rounded-bb-sm border border-bb-line"
-          aria-label="Project samples"
+          aria-label={browsingGlobal ? 'Global library samples' : 'Project samples'}
         >
           {samples.map((row) => (
             <li key={row.id}>
@@ -201,12 +276,20 @@ export function SampleEditPanel() {
           ))}
           {samplesError !== null && (
             <li role="alert" className="px-2 py-2 text-xs text-bb-danger">
-              Could not read the sample list: {samplesError} Your samples have not been lost — reload the app
-              rather than re-importing.
+              Could not read the {locationLabel}: {samplesError} Your samples have not been lost — reload the
+              app rather than re-importing.
             </li>
           )}
           {samplesError === null && samples.length === 0 && (
-            <EmptyState as="li" message="No samples yet." hint="Import one with the button above." />
+            <EmptyState
+              as="li"
+              message={`No samples in the ${locationLabel} yet.`}
+              hint={
+                browsingGlobal
+                  ? 'Install a factory kit in Browser mode, or import one here.'
+                  : 'Import one with the button above, or switch to the global library.'
+              }
+            />
           )}
         </ul>
 

@@ -465,3 +465,34 @@ describe('kit merge transactionality (spec §9.8, §9.6)', () => {
     expect(deleteFile).toHaveBeenCalledTimes(total);
   });
 });
+
+/**
+ * The install summary has to name the global library for a kit. A kit re-parents only its
+ * PROGRAMS onto the open project (`buildKitMerge`); its audio is shared into the global
+ * library (§9.1, §9.8), so "merged into this project" on its own left the user watching an
+ * unchanged project sample list with nothing to say where the audio had gone.
+ */
+describe('describeInstall (spec §8.5 item 7, §9.8)', () => {
+  const pack = (kind: 'kit' | 'demo') => ({
+    id: 'p',
+    title: '808 Kit',
+    kind,
+    file: 'kit-808.mpcweb',
+    bytes: 1,
+    description: '',
+  });
+
+  it('tells the user a kit’s samples are in the global library', async () => {
+    const { describeInstall } = await import('./factoryService');
+    expect(describeInstall({ kind: 'kit', projectId: ACTIVE_PROJECT }, pack('kit') as never)).toBe(
+      'Merged “808 Kit” into this project — its samples are in the global library.',
+    );
+  });
+
+  it('says a demo simply opened, since it becomes the active project', async () => {
+    const { describeInstall } = await import('./factoryService');
+    expect(describeInstall({ kind: 'demo', projectId: 'new' }, pack('demo') as never)).toBe(
+      'Opened “808 Kit”.',
+    );
+  });
+});

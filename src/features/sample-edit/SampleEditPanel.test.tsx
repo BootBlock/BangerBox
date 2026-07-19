@@ -2,7 +2,14 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SampleRow } from '@/core/storage/repositories';
-import { useBrowserStore, useSequenceStore, useUIStore } from '@/store';
+import { GLOBAL_LIBRARY_ROOT } from '@/core/storage/opfs';
+import {
+  BROWSER_INITIAL_PATH,
+  useBrowserStore,
+  useProjectStore,
+  useSequenceStore,
+  useUIStore,
+} from '@/store';
 
 // The panel is exercised for its groove target, not its audio: the peak pyramid and the
 // bake itself are stubbed so the test needs neither OPFS nor an audio engine.
@@ -95,5 +102,60 @@ describe('SampleEditPanel groove bake (spec §7.5, §8.5.4)', () => {
     const user = userEvent.setup();
     await open(user);
     expect(await screen.findByTestId('sample-groove')).toBeDisabled();
+  });
+});
+
+/**
+ * The panel used to READ `useBrowserStore.currentPath` without exposing it. Factory kits
+ * share their audio into the global library (§9.8), so a user who had never opened Browser
+ * mode saw an empty list here and had no way to reach it — the list silently depended on a
+ * folder-tree click made in another mode.
+ */
+describe('SampleEditPanel library location (spec §8.5.7, §9.8)', () => {
+  beforeEach(() => {
+    useProjectStore.setState({ projectId: 'p1' });
+    useBrowserStore.setState({ samples: [], samplesError: null, currentPath: '/projects/p1/samples' });
+  });
+  afterEach(() => {
+    useBrowserStore.setState({ samples: [], samplesError: null, currentPath: BROWSER_INITIAL_PATH });
+  });
+
+  it('offers the two library roots and starts on the project', () => {
+    render(<SampleEditPanel />);
+    const control = screen.getByTestId('sample-location');
+    expect(within(control).getByRole('radio', { name: 'Project' })).toBeChecked();
+    expect(within(control).getByRole('radio', { name: 'Global library' })).not.toBeChecked();
+    expect(screen.getByRole('list', { name: 'Project samples' })).toBeInTheDocument();
+  });
+
+  it('switches the location through the same store the Browser folder tree drives', async () => {
+    const user = userEvent.setup();
+    render(<SampleEditPanel />);
+    await user.click(screen.getByRole('radio', { name: 'Global library' }));
+
+    // One source of truth: the Browser's tree reads this same path.
+    expect(useBrowserStore.getState().currentPath).toBe(GLOBAL_LIBRARY_ROOT);
+    expect(screen.getByRole('list', { name: 'Global library samples' })).toBeInTheDocument();
+  });
+
+  it('clears the open sample when the location changes', async () => {
+    useBrowserStore.setState({ samples: [sample] });
+    const user = userEvent.setup();
+    render(<SampleEditPanel />);
+    await user.click(screen.getByRole('button', { name: /loop\.wav/ }));
+    // The editing tools are on screen because a sample is open.
+    expect(await screen.findByTestId('sample-groove')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: 'Global library' }));
+    // The tools belong to a sample from the list we just left, so they go with it.
+    expect(screen.queryByTestId('sample-groove')).toBeNull();
+  });
+
+  it('names the location it is showing when it is empty', async () => {
+    const user = userEvent.setup();
+    render(<SampleEditPanel />);
+    expect(screen.getByText(/No samples in the project yet/)).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'Global library' }));
+    expect(screen.getByText(/No samples in the global library yet/)).toBeInTheDocument();
   });
 });

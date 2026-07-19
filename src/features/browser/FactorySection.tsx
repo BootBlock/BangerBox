@@ -78,7 +78,9 @@ export function FactorySection() {
     setInstalling(pack.id);
     try {
       const result = await installFactoryPack(pack, projectId);
-      // A kit merges new samples into the open project; the library list must follow.
+      // Both install kinds share their samples into the global library (§9.8), so this only
+      // changes the list when THAT is the node being browsed — from a project node it is
+      // correctly a no-op, and `describeInstall` is what says where the audio went.
       await refreshSamples();
       setCached((current) => ({ ...current, [pack.id]: true }));
       pushToast(describeInstall(result, pack), 'success');

@@ -391,9 +391,18 @@ export async function installFactoryPack(
   return { kind: 'kit', projectId: activeProjectId };
 }
 
-/** Sample-count-free human summary used by the Browser list (spec §8.5 item 7). */
+/**
+ * Sample-count-free human summary used by the Browser list (spec §8.5 item 7).
+ *
+ * A kit's message names the global library because that is where its audio actually goes
+ * (§9.1, §9.8 de-duplication — see `buildKitMerge`): only the PROGRAMS are re-parented onto
+ * the open project. "Merged into this project" alone left the user watching an unchanged
+ * project sample list, with nothing to say the audio had landed one node over.
+ */
 export function describeInstall(result: InstallResult, pack: FactoryPack): string {
-  return result.kind === 'demo' ? `Opened “${pack.title}”.` : `Merged “${pack.title}” into this project.`;
+  return result.kind === 'demo'
+    ? `Opened “${pack.title}”.`
+    : `Merged “${pack.title}” into this project — its samples are in the global library.`;
 }
 
 /** Surface an install failure as a toast, keeping the storage refusal distinguishable. */
