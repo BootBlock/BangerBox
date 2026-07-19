@@ -5,8 +5,11 @@
  * plus the live arpeggiator control (spec §7.3). All state flows through the program store
  * (spec §4.2/§4.5).
  *
- * Editing is through plain numeric and select fields. The LFO controls and the graphical
- * envelope, layer and zone editors §8.5.5 describes are still outstanding — see issue #56.
+ * The §8.5.5 graphical editors — the AHDSR envelope graph, the velocity-range bar and the
+ * keygroup zone keyboard — pair a pointer-driven canvas with the numeric fields beside it
+ * rather than replacing them; the canvases are `role="img"`, so the fields are what keep the
+ * editor operable without a pointer (spec §8.2). Program Edit still uses plain inputs rather
+ * than the bespoke `Knob`/`Fader` primitives the rest of the shell uses — see `controls.tsx`.
  */
 import { createDefaultDrumProgram, createDefaultKeygroupProgram } from '@/core/project/schemas';
 import { useProgramStore } from '@/store';

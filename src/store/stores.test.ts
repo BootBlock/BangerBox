@@ -6,6 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { AutosaveQueue } from '@/core/project/autosave';
+import { insertParamPath } from '@/core/audio/params/registry';
 import { registerAutosave, unregisterAutosave } from '@/core/project/dirty';
 import {
   createDefaultChannelStrip,
@@ -90,6 +91,9 @@ describe('useTransportStore clamps and toggles (spec §4.1)', () => {
   });
 });
 
+/** 1-based §7.8 slot number of the channel's last insert — strips start with empty slots. */
+const lastSlotNumber = (id: string) => useMixerStore.getState().channels[id]!.inserts.length;
+
 describe('useMixerStore transient/commit channel (spec §4.1, §3.3)', () => {
   beforeEach(() => {
     useMixerStore.getState().upsertChannel(createDefaultChannelStrip('track:1'));
@@ -135,6 +139,64 @@ describe('useMixerStore transient/commit channel (spec §4.1, §3.3)', () => {
     expect(dirty).toHaveBeenCalledWith('track:1');
     useUndoStore.getState().undo();
     expect(useMixerStore.getState().channels['track:1']!.mute).toBe(false);
+  });
+
+  it('replaces an insert in place, keeping the slot position and id (spec §8.5.6)', () => {
+    useMixerStore.getState().addInsert('track:1', 'delay');
+    useMixerStore.getState().addInsert('track:1', 'limiter');
+    const before = useMixerStore.getState().channels['track:1']!.inserts.slice(-2);
+    useMixerStore.getState().replaceInsert('track:1', before[0]!.id, 'reverb');
+    const after = useMixerStore.getState().channels['track:1']!.inserts.slice(-2);
+    expect(after[0]!.effectType).toBe('reverb');
+    expect(after[0]!.id).toBe(before[0]!.id);
+    expect(after[1]!.effectType).toBe('limiter'); // the rest of the chain did not move
+    expect(dirty).toHaveBeenCalledWith('track:1');
+  });
+
+  it('drops the outgoing effect params on replace, as a fresh slot would have them', () => {
+    useMixerStore.getState().addInsert('track:1', 'delay');
+    const slot = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
+    useMixerStore.getState().commit(insertParamPath('track:1', lastSlotNumber('track:1'), 'feedback'), 0.6);
+    useMixerStore.getState().replaceInsert('track:1', slot.id, 'reverb');
+    expect(useMixerStore.getState().channels['track:1']!.inserts.at(-1)!.params).toEqual({});
+  });
+
+  it('keeps a bypassed slot bypassed but enables one that was empty', () => {
+    useMixerStore.getState().addInsert('track:1', 'delay');
+    const added = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
+    useMixerStore.getState().setInsertEnabled('track:1', added.id, false);
+    useMixerStore.getState().replaceInsert('track:1', added.id, 'reverb');
+    expect(useMixerStore.getState().channels['track:1']!.inserts.at(-1)!.enabled).toBe(false);
+
+    const empty = useMixerStore.getState().channels['track:1']!.inserts[0]!;
+    useMixerStore.getState().replaceInsert('track:1', empty.id, 'filter');
+    expect(useMixerStore.getState().channels['track:1']!.inserts[0]!.enabled).toBe(true);
+  });
+
+  it('undoes a replace back to the previous effect and its params', () => {
+    useMixerStore.getState().addInsert('track:1', 'delay');
+    const slot = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
+    useMixerStore.getState().commit(insertParamPath('track:1', lastSlotNumber('track:1'), 'feedback'), 0.6);
+    useMixerStore.getState().replaceInsert('track:1', slot.id, 'reverb');
+    useUndoStore.getState().undo();
+    const restored = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
+    expect(restored.effectType).toBe('delay');
+    expect(restored.params.feedback).toBe(0.6);
+  });
+
+  it('hands the sync layer a new inserts array so the graph rebuilds the chain (spec §4.3)', () => {
+    useMixerStore.getState().addInsert('track:1', 'delay');
+    const before = useMixerStore.getState().channels['track:1']!.inserts;
+    useMixerStore.getState().replaceInsert('track:1', before.at(-1)!.id, 'reverb');
+    expect(useMixerStore.getState().channels['track:1']!.inserts).not.toBe(before);
+  });
+
+  it('ignores a replace that would not change the effect', () => {
+    useMixerStore.getState().addInsert('track:1', 'delay');
+    const depth = useUndoStore.getState().undoDepth;
+    const slot = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
+    useMixerStore.getState().replaceInsert('track:1', slot.id, 'delay');
+    expect(useUndoStore.getState().undoDepth).toBe(depth);
   });
 
   it('routes pad and master strips to their owning entity dirty keys', () => {
