@@ -11,6 +11,7 @@ import { Button } from '@/ui/primitives';
 import { NumberField, SelectField, ToggleField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
 import { LayersEditor } from './LayersEditor';
+import { LfoEditor } from './LfoEditor';
 import { ModMatrixEditor } from './ModMatrixEditor';
 
 const PLAYBACK_MODES = [
@@ -134,6 +135,9 @@ export function PadEditor({ program }: { program: DrumProgram }) {
             onChange={(amp) => patchPad({ envelopes: { ...activePad.envelopes, amp } })}
           />
           <FilterEditor filter={activePad.filter} onChange={(filter) => patchPad({ filter })} />
+          {/* Before the mod matrix: the matrix routes lfo1/lfo2 somewhere, so their shape is
+              the thing you set first and the thing the matrix's source names refer back to. */}
+          <LfoEditor lfos={activePad.lfos} onChange={(lfos) => patchPad({ lfos })} />
           <ModMatrixEditor routes={activePad.modMatrix} onChange={(modMatrix) => patchPad({ modMatrix })} />
           <LayersEditor layers={activePad.layers} onChange={(layers) => patchPad({ layers })} />
         </div>

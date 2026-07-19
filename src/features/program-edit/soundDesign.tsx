@@ -2,6 +2,11 @@
  * Shared §6 sound-design editors — the amp AHDSR envelope and the filter — reused by the
  * drum pad editor and the keygroup editor (spec §8.5.5, §6). Every control is wired to an
  * `onChange` the parent commits through the program store (spec §3.4 no dead controls).
+ *
+ * The envelope leads with the §8.5.5 graph, but keeps the numeric fields below it rather than
+ * replacing them: the canvas is `role="img"` and cannot be operated without a pointer, so the
+ * fields are what make the envelope editable from the keyboard at all (spec §8.2). They are
+ * two views of one value, the same pairing `WaveformEditor` uses (spec §8.5.4).
  */
 import {
   ENVELOPE_LEVEL_RANGE,
@@ -12,6 +17,7 @@ import {
   type PadFilter,
 } from '@/core/project/schemas';
 import { ControlGroup, NumberField, SelectField } from './controls';
+import { EnvelopeGraph } from './EnvelopeGraph';
 
 const FILTER_TYPES = [
   { value: 'off', label: 'Off' },
@@ -36,6 +42,10 @@ export function EnvelopeEditor({
   const set = (patch: Partial<AhdsrEnvelope>) => onChange({ ...envelope, ...patch });
   return (
     <ControlGroup title="Amp envelope">
+      {/* Spans the control grid — the shape is the point, so it gets the full width. */}
+      <div className="col-span-full">
+        <EnvelopeGraph envelope={envelope} onChange={onChange} label="Amp envelope" />
+      </div>
       <NumberField
         label="Attack"
         suffix="ms"

@@ -41,6 +41,8 @@ interface MixerState {
   setSolo: (channelId: string, solo: boolean) => void;
 
   addInsert: (channelId: string, effectType: EffectType) => void;
+  /** Swap the effect in one slot, keeping its chain position (spec §8.5.6). */
+  replaceInsert: (channelId: string, slotId: string, effectType: EffectType) => void;
   removeInsert: (channelId: string, slotId: string) => void;
   setInsertEnabled: (channelId: string, slotId: string, enabled: boolean) => void;
 }
@@ -274,6 +276,44 @@ export const useMixerStore = create<MixerState>()(
       commit({
         label: 'Add insert',
         apply: () => write([...prev.inserts, slot]),
+        revert: () => write(prev.inserts),
+        dirtyKeys: [mixerChannelDirtyKey(channelId)],
+      });
+    },
+
+    replaceInsert: (channelId, slotId, effectType) => {
+      const prev = get().channels[channelId];
+      if (prev === undefined) return;
+      const target = prev.inserts.find((slot) => slot.id === slotId);
+      if (target === undefined || target.effectType === effectType) return;
+      const write = (inserts: InsertSlotState[]) =>
+        set((state) => ({
+          channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } },
+        }));
+      // The slot keeps its id — the id is the slot's handle (React key, the id callers pass
+      // back to remove/bypass), and a new one would read as a remove-then-add. Nothing in the
+      // audio graph or the §7.8 addresses depends on it: the graph rebuilds the whole serial
+      // chain from slot state on any `inserts` identity change, and insert addresses key off
+      // slot *index*, so the replaced effect's DSP node is built fresh and Q-Link stays bound.
+      const replaced = prev.inserts.map((slot) =>
+        slot.id === slotId
+          ? {
+              ...slot,
+              effectType,
+              // Params start empty, exactly as `addInsert` leaves a fresh slot: each effect owns
+              // its own parameter set (spec §5.7), so the outgoing values have no meaning here —
+              // and a name two effects happen to share would import the old effect's taste unseen.
+              params: {},
+              // Bypass belongs to the slot's place in the chain, not to the effect, so a slot the
+              // user muted stays muted. Filling a previously empty slot is an add in disguise and
+              // comes up enabled, or picking an effect there would do nothing audible.
+              enabled: slot.effectType === null ? true : slot.enabled,
+            }
+          : slot,
+      );
+      commit({
+        label: 'Replace insert',
+        apply: () => write(replaced),
         revert: () => write(prev.inserts),
         dirtyKeys: [mixerChannelDirtyKey(channelId)],
       });

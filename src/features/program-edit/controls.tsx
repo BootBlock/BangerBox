@@ -1,8 +1,9 @@
 /**
  * Reusable labelled form controls for the Program Edit mode (spec §8.5.5) — plain inputs,
  * accessible (label association, aria) and token-styled (spec §3.6). Program Edit has not
- * been moved onto the bespoke `Knob`/`Fader` primitives the rest of the shell uses; that
- * is part of the outstanding §8.5.5 editor work — see issue #56.
+ * been moved onto the bespoke `Knob`/`Fader` primitives the rest of the shell uses; these
+ * fields are also the keyboard-operable half of the §8.5.5 graphical editors, so any such
+ * migration has to keep them reachable without a pointer (spec §8.2).
  */
 import { useId, type ReactNode } from 'react';
 

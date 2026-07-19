@@ -3,6 +3,9 @@
  * (spec §8.5.6: "insert slot list (add/replace/reorder/bypass; tapping opens the effect's
  * parameter panel)").
  *
+ * Replace is in-place rather than remove-then-add, so the slot holds its chain position and
+ * the first-slot Q-Link binding below survives an effect swap.
+ *
  * Parameter ranges come from the effect registry (spec §5.7 `EFFECT_PARAM_RANGES`) rather
  * than being restated here, so a knob can never offer a value the store would clamp away.
  * Slot changes go through `useMixerStore`, making them undoable and autosaved (spec §4.5).
@@ -119,9 +122,29 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
               >
                 <div className="flex items-center gap-2">
                   <span className="w-6 font-mono text-xs tabular-nums text-bb-muted">{index + 1}</span>
-                  <span className="flex-1 text-xs font-semibold text-bb-text">
-                    {effectType ? EFFECT_LABELS[effectType] : 'Empty slot'}
-                  </span>
+                  {/*
+                   * The slot's name doubles as its replace control — a sibling of the Add
+                   * select rather than a second way to name an effect. No FieldLabel: the
+                   * caption chassis is for a visible caption, and the row number already
+                   * names the slot, so the accessible name carries it instead (spec §8.2).
+                   */}
+                  <select
+                    aria-label={`Replace insert ${index + 1}`}
+                    value={effectType ?? ''}
+                    onChange={(event) => {
+                      if (!event.target.value) return;
+                      mixer().replaceInsert(channelId, slot.id, event.target.value as EffectType);
+                    }}
+                    data-testid={`insert-replace-${index}`}
+                    className="flex-1 rounded-bb-sm border border-bb-line bg-bb-base px-2 py-1 text-xs font-semibold text-bb-text"
+                  >
+                    {!effectType && <option value="">Empty slot</option>}
+                    {availableEffects.map((effect) => (
+                      <option key={effect} value={effect}>
+                        {EFFECT_LABELS[effect]}
+                      </option>
+                    ))}
+                  </select>
                   <Toggle
                     label="Enabled"
                     pressed={slot.enabled}
