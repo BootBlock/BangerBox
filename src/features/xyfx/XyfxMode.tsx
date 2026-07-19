@@ -113,6 +113,7 @@ export function XyfxMode() {
     [effectiveX, effectiveY, latch],
   );
 
+  /** Fires for pointer *and* keyboard gestures alike, so latch behaves the same for both. */
   const beginGesture = useCallback(() => {
     restingValues.current = { x: valueAt(effectiveX), y: valueAt(effectiveY) };
   }, [effectiveX, effectiveY, valueAt]);
@@ -164,11 +165,7 @@ export function XyfxMode() {
             No automatable parameters yet — start the audio engine to build the mixer graph.
           </p>
         ) : (
-          <div
-            onPointerDown={beginGesture}
-            data-testid="xyfx-surface-wrapper"
-            className="flex min-h-0 flex-1 flex-col"
-          >
+          <div data-testid="xyfx-surface-wrapper" className="flex min-h-0 flex-1 flex-col">
             <XYSurface
               x={{
                 label: choices.find((c) => c.path === effectiveX)?.label ?? 'X',
@@ -182,6 +179,7 @@ export function XyfxMode() {
               }}
               onTransient={applyTransient}
               onCommit={applyCommit}
+              onGestureStart={beginGesture}
               fill
               data-testid="xyfx-surface"
             />
