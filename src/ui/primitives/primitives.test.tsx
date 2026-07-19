@@ -16,6 +16,7 @@ import { Modal } from './Modal';
 import { Pad } from './Pad';
 import { SegmentControl } from './SegmentControl';
 import { Toast } from './Toast';
+import { TextField } from './TextField';
 import { Toggle } from './Toggle';
 import { ValueReadout } from './ValueReadout';
 
@@ -502,5 +503,57 @@ describe('Toast (spec §8.2 severity → announcement role)', () => {
     render(<Toast message="Project saved" tone="success" onDismiss={onDismiss} />);
     await user.click(screen.getByRole('button', { name: 'Dismiss notification' }));
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TextField (spec §8.2 naming + keyboard)', () => {
+  it('names the input by its label without rendering a visible caption', () => {
+    render(<TextField label="Project name" value="Beat 1" onChange={vi.fn()} />);
+    expect(screen.getByLabelText('Project name')).toHaveValue('Beat 1');
+    expect(screen.queryByText('Project name')).not.toBeInTheDocument();
+  });
+
+  it('associates the visible caption with the input when asked to show it', () => {
+    render(<TextField label="Project name" value="Beat 1" onChange={vi.fn()} showLabel />);
+    expect(screen.getByText('Project name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Project name')).toHaveValue('Beat 1');
+  });
+
+  it('confirms on Enter and abandons on Escape', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <TextField label="Name" value="Verse" onChange={vi.fn()} onSubmit={onSubmit} onCancel={onCancel} />,
+    );
+
+    await user.type(screen.getByLabelText('Name'), '{Enter}');
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    await user.type(screen.getByLabelText('Name'), '{Escape}');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Escape inside an enclosing Modal — it cancels the edit, not the dialog', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <Modal open title="New project" onClose={onClose}>
+        <TextField label="Name" value="Verse" onChange={vi.fn()} onCancel={onCancel} />
+      </Modal>,
+    );
+
+    await user.type(screen.getByLabelText('Name'), '{Escape}');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('takes focus and selects the existing name when revealed for a rename', () => {
+    render(<TextField label="Name" value="Sequence 1" onChange={vi.fn()} focusOnMount />);
+    const input = screen.getByLabelText<HTMLInputElement>('Name');
+    expect(input).toHaveFocus();
+    // Selected, so typing replaces rather than appending to the old name.
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe('Sequence 1'.length);
   });
 });

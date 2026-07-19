@@ -20,6 +20,12 @@ export interface SyncBridge {
   setChannelSend: (channelId: string, index: number, level: number) => void;
   /** Rebuild a channel's serial insert chain from its slot state (spec §5.7). */
   setChannelInserts: (channelId: string, inserts: readonly InsertSlotState[]) => void;
+  /**
+   * Tear down a channel whose strip has left the store — track delete (spec §5.3). The
+   * graph creates track channels lazily on first trigger, so without this the nodes of
+   * every deleted track stay connected to master until the project is reloaded.
+   */
+  removeChannel: (channelId: string) => void;
 
   setTransportPlaying: (isPlaying: boolean) => void;
   setTransportRecording: (isRecording: boolean) => void;
@@ -47,6 +53,7 @@ export const noopBridge: SyncBridge = {
   setChannelSolo: () => {},
   setChannelSend: () => {},
   setChannelInserts: () => {},
+  removeChannel: () => {},
   setTransportPlaying: () => {},
   setTransportRecording: () => {},
   setBpm: () => {},

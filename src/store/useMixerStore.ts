@@ -31,6 +31,11 @@ interface MixerState {
   setChannels: (channels: Record<string, ChannelStrip>) => void;
   /** Upsert one strip (hydration / channel creation). */
   upsertChannel: (strip: ChannelStrip) => void;
+  /**
+   * Drop one strip (track delete). Not undoable in its own right: the strip's existence
+   * follows its track, so the track's own undo entry is what restores it (spec §4.5).
+   */
+  removeChannel: (channelId: string) => void;
 
   /** Continuous-gesture update: graph moves, no undo/autosave (spec §4.1). */
   setTransient: (path: string, value: number) => void;
@@ -190,6 +195,13 @@ export const useMixerStore = create<MixerState>()(
 
     setChannels: (channels) => set({ channels: { ...channels } }),
     upsertChannel: (strip) => set((state) => ({ channels: { ...state.channels, [strip.id]: strip } })),
+    removeChannel: (channelId) =>
+      set((state) => {
+        if (!(channelId in state.channels)) return {};
+        const channels = { ...state.channels };
+        delete channels[channelId];
+        return { channels };
+      }),
 
     setTransient: (path, value) => {
       const channels = get().channels;

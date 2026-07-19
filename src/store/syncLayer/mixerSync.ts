@@ -27,6 +27,11 @@ export function subscribeMixerSync(bridge: SyncBridge): Unsubscribe {
           bridge.setChannelInserts(id, strip.inserts);
         }
       }
+      // A strip that has left the record belongs to a deleted entity (spec §5.3); its
+      // graph nodes go with it, or they stay wired to master for the rest of the session.
+      for (const id of Object.keys(previous)) {
+        if (!(id in channels)) bridge.removeChannel(id);
+      }
     },
   );
 }
