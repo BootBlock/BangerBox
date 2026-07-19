@@ -149,13 +149,31 @@ describe('Pad (spec §8.3 velocity + §8.2 keyboard)', () => {
     expect(screen.getByRole('button', { name: 'Snare' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('releases on pointer leave so a drag off the pad cannot leave a note hanging', async () => {
+  it('stays held when the pointer slides off, and releases wherever it lifts', async () => {
     const user = userEvent.setup();
     const onRelease = vi.fn();
     render(<Pad label="Hat" padIndex={2} onTrigger={vi.fn()} onRelease={onRelease} />);
     const pad = screen.getByRole('button', { name: 'Hat' });
+
+    // Struck, then dragged off with the button still down. A finger that slides off a
+    // hardware pad has not let go of it, and `whileTap` keeps the pad visually depressed
+    // through this — releasing the voice here would put the sound and the picture at odds.
     await user.pointer([{ target: pad, keys: '[MouseLeft>]' }, { target: document.body }]);
+    expect(onRelease).not.toHaveBeenCalled();
+
+    // Lifting anywhere ends it, so the note still cannot hang.
+    await user.pointer({ target: document.body, keys: '[/MouseLeft]' });
     expect(onRelease).toHaveBeenCalledWith(2);
+  });
+
+  it('releases a held pad when it unmounts mid-hit, so switching bank cannot hang a note', async () => {
+    const user = userEvent.setup();
+    const onRelease = vi.fn();
+    const { unmount } = render(<Pad label="Tom" padIndex={3} onTrigger={vi.fn()} onRelease={onRelease} />);
+    await user.pointer({ target: screen.getByRole('button', { name: 'Tom' }), keys: '[MouseLeft>]' });
+    expect(onRelease).not.toHaveBeenCalled();
+    unmount();
+    expect(onRelease).toHaveBeenCalledWith(3);
   });
 });
 

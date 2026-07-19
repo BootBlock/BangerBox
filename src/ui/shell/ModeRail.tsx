@@ -11,6 +11,7 @@ import { useRef, type KeyboardEvent } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useUIStore, type Mode } from '@/store';
 import { MODE_DEFINITIONS } from '@/features/modes';
+import { SPRING_BB_LAYOUT } from '@/ui/motionTokens';
 
 /**
  * Two columns, because one does not fit. Twelve 64 px entries stacked singly need
@@ -88,7 +89,7 @@ export function ModeRail() {
               onKeyDown={handleKeyDown}
               onClick={() => useUIStore.getState().setActiveMode(mode.id as Mode)}
               // Touch-large hit target for the tablet form factor (spec §8.1).
-              className={`relative flex min-h-16 w-20 flex-col items-center justify-center gap-1 rounded-bb-md px-1 py-2 text-[0.625rem] font-semibold transition-colors duration-150 ease-bb-snap ${
+              className={`relative flex min-h-16 w-20 flex-col items-center justify-center gap-1 rounded-bb-md px-1 py-2 text-bb-micro font-semibold transition-colors duration-150 ease-bb-snap ${
                 selected ? 'text-bb-bg' : 'text-bb-muted hover:text-bb-text'
               }`}
             >
@@ -98,7 +99,7 @@ export function ModeRail() {
                   layoutId={reduceMotion ? undefined : 'mode-rail-indicator'}
                   aria-hidden="true"
                   className="absolute inset-0 rounded-bb-md bg-bb-accent"
-                  transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                  transition={SPRING_BB_LAYOUT}
                 />
               )}
               <Icon size={18} aria-hidden="true" className="relative" />

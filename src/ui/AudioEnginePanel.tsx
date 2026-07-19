@@ -14,7 +14,7 @@ import { getAudioEngine } from '@/core/project/session';
 import { useMixerStore } from '@/store';
 import { LEVEL_RANGE } from '@/core/project/schemas';
 import { faderLevelToDb } from '@/core/audio/params/faderLaw';
-import { Button, Fader, MeterCanvas, formatValueText } from './primitives';
+import { Button, Fader, MeterCanvas, Pad, formatValueText } from './primitives';
 
 /** The four bundled demo pads the engine proof triggers (spec §12 Phase 3). */
 const DEMO_PADS = [0, 1, 2, 3];
@@ -60,20 +60,25 @@ export function AudioEnginePanel() {
       </div>
 
       <div className="flex flex-wrap items-end gap-4">
-        <div>
-          <p className="mb-2 text-[0.625rem] font-semibold text-bb-muted uppercase">Demo pads</p>
-          <div className="grid grid-cols-2 gap-2">
+        {/* Real Pad primitives, not lookalikes. These sound a pad, so §3.6 says they *are*
+            pads: hand-rolled ones drifted to a 75 ms press against every other pad's 150 ms,
+            skipped the velocity glow and `aria-pressed` entirely, and carried a
+            `hover:bg-bb-line` treatment used nowhere else in the app. Velocity now comes
+            from where the pad is struck like everywhere else, rather than from a per-index
+            constant — which makes this panel a truer proof of the §5.4 trigger path. */}
+        <div role="group" aria-label="Demo pads">
+          <p className="mb-2 text-bb-micro font-semibold text-bb-muted uppercase">Demo pads</p>
+          {/* 96 px of grid, less the 8 px gap, gives each pad its 44 px touch minimum. */}
+          <div className="grid w-24 grid-cols-2 gap-2">
             {DEMO_PADS.map((index) => (
-              <button
+              <Pad
                 key={index}
-                type="button"
+                label={String(index + 1)}
+                padIndex={index}
+                assigned
                 data-testid={`pad-trigger-${index}`}
-                aria-label={`Trigger demo pad ${index + 1}`}
-                onClick={() => void getAudioEngine()?.triggerDemoPad(80 + index * 12)}
-                className="h-11 w-11 rounded-bb-md bg-bb-raised text-xs font-semibold text-bb-text transition-transform duration-75 ease-bb-snap hover:bg-bb-line active:scale-95"
-              >
-                {index + 1}
-              </button>
+                onTrigger={(_padIndex, velocity) => void getAudioEngine()?.triggerDemoPad(velocity)}
+              />
             ))}
           </div>
         </div>

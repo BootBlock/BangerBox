@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { formatValueText, valueToNormalised, type ControlCurve, type ControlRange } from './controlMaths';
+import { ControlChassis } from './ControlChassis';
 import { useContinuousControl } from './useContinuousControl';
 
 /** Dial sweep: 270° of travel centred on 12 o'clock, the hardware-encoder convention. */
@@ -98,7 +99,7 @@ export function Knob({
   }, [normalised, valueText]);
 
   return (
-    <div className="flex flex-col items-center gap-1">
+    <ControlChassis label={label} valueText={valueText} readoutRef={readoutRef} showValue={showValue}>
       <div
         ref={rootRef}
         role="slider"
@@ -130,18 +131,6 @@ export function Knob({
           <span className="mt-1 block h-1/3 w-0.5 rounded-full bg-bb-accent" />
         </div>
       </div>
-      <span className="max-w-16 truncate text-center text-[0.625rem] leading-tight text-bb-muted">
-        {label}
-      </span>
-      {showValue && (
-        <span
-          ref={readoutRef}
-          aria-hidden="true"
-          className="font-mono text-[0.625rem] tabular-nums text-bb-text"
-        >
-          {valueText}
-        </span>
-      )}
-    </div>
+    </ControlChassis>
   );
 }

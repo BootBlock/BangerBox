@@ -70,7 +70,7 @@ export function PadEditor({ program }: { program: DrumProgram }) {
               aria-label={`Pad ${padIndex + 1}${exists ? '' : ' (empty)'}`}
               aria-pressed={active}
               onClick={() => selectPad(padIndex)}
-              className={`aspect-square rounded-bb-sm border text-[10px] font-semibold ${
+              className={`aspect-square rounded-bb-sm border text-bb-micro font-semibold ${
                 active
                   ? 'border-bb-accent bg-bb-accent text-bb-bg'
                   : exists

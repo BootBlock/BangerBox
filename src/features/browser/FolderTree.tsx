@@ -69,7 +69,7 @@ export function FolderTree() {
           aria-label={`${projectsExpanded ? 'Collapse' : 'Expand'} projects`}
           data-testid="browser-tree-projects"
           onClick={() => setProjectsExpanded((expanded) => !expanded)}
-          className="w-full truncate rounded-bb-sm px-2 py-1 text-left text-[0.625rem] font-semibold text-bb-muted uppercase"
+          className="w-full truncate rounded-bb-sm px-2 py-1 text-left text-bb-micro font-semibold text-bb-muted uppercase"
         >
           {projectsExpanded ? '▾' : '▸'} Projects
         </button>

@@ -30,7 +30,7 @@ export interface SegmentControlProps<T extends string | number> {
  * shoulder with no gap to expand into.
  */
 const SIZE: Record<'sm' | 'md', string> = {
-  sm: 'min-h-11 px-3 text-[0.625rem]',
+  sm: 'min-h-11 px-3 text-bb-micro',
   md: 'min-h-11 px-4 text-xs',
 };
 

@@ -14,8 +14,14 @@
  *
  * `iconOnly` keeps the label as the accessible name while hiding it visually (spec §8.2),
  * matching how Toggle handles the same case.
+ *
+ * Press feedback is the shared `whileTap` spring (spec §8.3), so every button in the app
+ * depresses identically — the colour transition below was previously the whole of a
+ * button's response to being pressed, which reads as a state change rather than as contact.
  */
 import type { MouseEvent, ReactNode } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
+import { PRESS_SCALE, SPRING_BB_PRESS } from '@/ui/motionTokens';
 
 export type ButtonVariant = 'default' | 'accent' | 'quiet' | 'danger';
 export type ButtonSize = 'sm' | 'md' | 'lg';
@@ -94,12 +100,18 @@ export function Button({
   'aria-expanded': ariaExpanded,
   'data-testid': testId,
 }: ButtonProps) {
+  const reduceMotion = useReducedMotion();
   return (
-    <button
+    <motion.button
       // Always `button`: a bare <button> in a form defaults to `submit`, and nothing in
       // the app submits a form (spec §8 — every action is a handler, not a form post).
       type="button"
       disabled={disabled}
+      // Spec §8.3 press feedback. Nothing to depress when the button cannot be pressed;
+      // the JS spring also needs its own reduced-motion guard, since the CSS media query
+      // in index.css only collapses CSS transitions.
+      whileTap={reduceMotion || disabled ? undefined : { scale: PRESS_SCALE }}
+      transition={SPRING_BB_PRESS}
       aria-label={accessibleName ?? (iconOnly ? label : undefined)}
       aria-expanded={ariaExpanded}
       title={title ?? (iconOnly ? (accessibleName ?? label) : undefined)}
@@ -128,6 +140,6 @@ export function Button({
     >
       {icon}
       {!iconOnly && <span>{label}</span>}
-    </button>
+    </motion.button>
   );
 }
