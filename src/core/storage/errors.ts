@@ -2,8 +2,8 @@
  * Unified database error model for the storage layer (spec §9.2).
  *
  * SQLite/worker failures are serialised across the RPC bridge and rebuilt on the
- * main thread as `DbError`, so call sites (repositories, and the stores/undo layer
- * in Phase 2) can branch on a stable `code` rather than parsing message strings.
+ * main thread as `DbError`, so call sites (repositories, and the stores/undo layer)
+ * can branch on a stable `code` rather than parsing message strings.
  */
 
 export type DbErrorCode =

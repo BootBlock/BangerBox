@@ -20,7 +20,7 @@ import { Button, FieldLabel, MeterCanvas, SegmentControl } from '@/ui/primitives
 import { refreshSamples, sampleEditContext } from '../sample-edit/sampleContext';
 import { LooperRing } from './LooperRing';
 
-/** 0 bars = free running: capture until stopped by hand, as the Phase 6 Looper always did. */
+/** 0 bars = free running: capture until stopped by hand, ignoring the bar lock. */
 const LENGTH_OPTIONS = [
   { value: 0, label: 'Free' },
   { value: 1, label: '1 bar' },

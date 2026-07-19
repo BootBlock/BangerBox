@@ -1,9 +1,12 @@
 /**
- * Program Edit mode (spec §8.5.5) — the functional (unpolished, Phase 5) deep editor for the
- * §6 program model. Manages the project's programs (create Drum/Keygroup, rename, delete,
- * select) and edits the active program's sound design via {@link PadEditor} (drum) or
- * {@link KeygroupEditor} (keygroup), plus the live arpeggiator control (spec §7.3). All state
- * flows through the program store (spec §4.2/§4.5); the polished 12-mode shell is Phase 7.
+ * Program Edit mode (spec §8.5.5) — the deep editor for the §6 program model. Manages the
+ * project's programs (create Drum/Keygroup, rename, delete, select) and edits the active
+ * program's sound design via {@link PadEditor} (drum) or {@link KeygroupEditor} (keygroup),
+ * plus the live arpeggiator control (spec §7.3). All state flows through the program store
+ * (spec §4.2/§4.5).
+ *
+ * Editing is through plain numeric and select fields. The LFO controls and the graphical
+ * envelope, layer and zone editors §8.5.5 describes are still outstanding — see issue #56.
  */
 import { createDefaultDrumProgram, createDefaultKeygroupProgram } from '@/core/project/schemas';
 import { useProgramStore } from '@/store';

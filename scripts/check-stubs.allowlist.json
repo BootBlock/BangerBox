@@ -1,0 +1,29 @@
+{
+  "comment": "check:stubs phase-prose allowlist — the only phrasings in which a source comment may still name an implementation phase (spec §13.6). Every phase (§12) has completed, so a phase number can only ever be history: an exit-criterion citation, a §14 provenance note, or a frozen identifier. Anything else reads as deferred work and is a violation, because prose deferrals route around the STUB gate. Each pattern is a case-insensitive regular expression; matched substrings are removed from a line before the phase scan runs.",
+  "patterns": [
+    {
+      "pattern": "§12 Phase \\d",
+      "reason": "Citation of the §12 phase plan itself"
+    },
+    {
+      "pattern": "Phase \\d exit",
+      "reason": "Exit-criterion citation — states what a test or surface was built to satisfy"
+    },
+    {
+      "pattern": "\\badded\\b[^.]{0,40}\\bin Phase \\d",
+      "reason": "§14 provenance note recording when a field or address form was introduced"
+    },
+    {
+      "pattern": "\\bbefore Phase \\d",
+      "reason": "Provenance about data persisted by an older build that must still hydrate"
+    },
+    {
+      "pattern": "Phase 0\\b",
+      "reason": "Phase 0 was the scaffold and its exemplars are named after it; never a deferral target"
+    },
+    {
+      "pattern": "phase\\d-[a-z-]+",
+      "reason": "Frozen identifiers (e.g. the 'phase3-demo' program/track ids)"
+    }
+  ]
+}

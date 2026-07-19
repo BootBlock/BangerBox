@@ -4,7 +4,7 @@
  * ({@link grooveFromTransients}), and bakes it destructively into a track's events
  * ({@link applyGrooveToEvents}) via the undoable store action (spec §7.5 "bake-able as a
  * destructive edit"). Schedule-time non-destructive application (like swing, §7.4) is the
- * remaining §7.5 wiring, deferred with the Grid editor (Phase 7). Browser-only (OPFS + WASM).
+ * remaining §7.5 wiring and is still outstanding — see issue #71. Browser-only (OPFS + WASM).
  */
 import { loadKernelModule } from '@/core/dsp/kernelLoader';
 import { TransientDetectKernel, transientDetectWasmUrl } from '@/core/dsp/transientDetectKernel';

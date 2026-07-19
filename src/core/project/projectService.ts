@@ -2,7 +2,7 @@
  * Project lifecycle service (spec §4.2, §4.4) — the concrete implementation the store
  * delegates to (spec §4.2). Owns the repositories, the active project's autosave queue,
  * and the create/load/save flows. Registered once at boot via {@link installProjectService};
- * `.mpcweb` export/import land in Phase 6 and are stubbed here.
+ * `.mpcweb` export/import run in the pack worker (spec §9.6) and are driven from here.
  */
 import { getDatabaseDriver } from '@/core/storage/client';
 import { createRepositories, type Repositories } from '@/core/storage/repositories';

@@ -7,7 +7,7 @@
  * A capture may be bar-locked: given a target frame count derived from the transport tempo and
  * time signature, the drain loop stops itself on the bar line and the take is written at exactly
  * that length, so successive overdubs stay phase-aligned. Overdub sums onto the held take;
- * `clear` discards it. Mic-source capture remains Phase 7 Looper-mode polish.
+ * `clear` discards it. Mic-source capture is still outstanding — see issue #2.
  */
 import { RingBuffer } from '@/core/dsp/ringBuffer';
 import type { SampleRow } from '@/core/storage/repositories';

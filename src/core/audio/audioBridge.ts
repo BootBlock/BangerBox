@@ -3,9 +3,9 @@
  * touches audio nodes in response to store state (spec §3.1). Mixer changes ramp the
  * matching graph channel's params (spec §4.3 dezipper); mute/solo are evaluated as
  * solo-in-place computed mutes across the whole mixer (spec §5.2, {@link
- * computeEffectiveMutes}). Transport methods are effectively no-op for audio until the
- * scheduler worker lands (Phase 4, §7.1.3). Inserts rebuild the channel's serial chain
- * from slot state (spec §5.7).
+ * computeEffectiveMutes}). Inserts rebuild the channel's serial chain from slot state
+ * (spec §5.7). The transport and mode hooks are deliberately inert here — those concerns
+ * belong to the scheduler worker and `core/midi`, not the graph (see {@link SyncBridge}).
  */
 import { useMixerStore } from '@/store';
 import type { InsertSlotState } from '@/core/project/schemas';
@@ -72,11 +72,12 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
       if (channel) applyInserts(context, channel, inserts);
     },
 
-    setTransportPlaying: () => {}, // scheduler worker — Phase 4 (spec §7.1.3)
+    // Inert by design — the graph is not the owner of any of these (spec §3.1):
+    setTransportPlaying: () => {}, // the scheduler worker owns transport (spec §7.1.3)
     setTransportRecording: () => {},
-    setBpm: () => {}, // synced-delay tempo map — Phase 4 (spec §7.9)
-    onActiveProgramChanged: () => {}, // pad mixer-strip population — Phase 5 (spec §4.2)
-    onQLinkModeChanged: () => {}, // Q-Link runtime — Phase 8 (spec §10.3)
+    setBpm: () => {}, // no synced-delay tempo map to feed yet — see issue #70 (spec §5.7)
+    onActiveProgramChanged: () => {}, // `syncLayer/padStrips` populates pad strips (spec §4.2)
+    onQLinkModeChanged: () => {}, // `core/midi/qlinkRuntime` owns Q-Link mode (spec §10.3)
 
     // Automation dispatch (spec §7.8): resolve the registered target and ramp its param.
     // `when` starts the dezipper ramp; native/insert params ramp identically to live edits.

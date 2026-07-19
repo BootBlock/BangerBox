@@ -275,8 +275,8 @@ function buildReverb(context: BaseAudioContext, params: Record<string, number>):
 }
 
 /**
- * Worklet + WASM core (spec §5.6.2 / §5.7) for the `multibandComp`, `limiter` and (Phase 6+)
- * `fdnReverb` reverb engines. The precompiled kernel module is handed to the `dsp-effect`
+ * Worklet + WASM core (spec §5.6.2 / §5.7) for the `multibandComp`, `limiter` and `fdnReverb`
+ * reverb engines. The precompiled kernel module is handed to the `dsp-effect`
  * processor via processorOptions; params flow over the port (kernels apply directly — the
  * native-node dezipper, §4.3, does not apply). The limiter reports its lookahead as latency for
  * PDC (spec §5.7.3); the others report 0.
@@ -349,8 +349,8 @@ export function buildEffectCore(
     case 'saturator':
       return buildSaturator(context, params);
     case 'reverb': {
-      // spec §5.7: v1 native ConvolverNode; Phase 6+ the fdnReverb worklet when its module is
-      // loaded (start gate / offline prepare). Native remains the fallback (e.g. unit tests).
+      // spec §5.7: the fdnReverb worklet when its module is loaded (start gate / offline
+      // prepare); the native ConvolverNode remains the fallback (e.g. unit tests).
       const module = getKernelModule('fdnReverb');
       return module
         ? buildWorkletEffect(context, 'fdnReverb', 'reverb', module, params)

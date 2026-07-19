@@ -1,7 +1,7 @@
 /**
  * useTransportStore — runtime transport & playback control (spec §4.2). Transport
  * actions are live performance state, never undoable and never autosaved (spec §4.5);
- * the scheduler worker (Phase 4) is driven from here through the transport sync
+ * the scheduler worker is driven from here through the transport sync
  * subscriber (spec §4.3). The playhead tick lives in the scheduler SAB, not here —
  * this store keeps only a coarse bar:beat readout for accessible text (spec §4.2).
  */

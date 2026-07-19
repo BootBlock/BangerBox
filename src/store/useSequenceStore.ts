@@ -3,8 +3,8 @@
  * (spec §4.2; the superseded draft's `useTrackStore`, renamed for accuracy in §4.2).
  * Every structural or note/automation mutation records an undo entry (spec §4.5) and
  * marks its owning entity dirty for autosave (spec §4.4). Posting the incremental diff
- * to the scheduler worker (spec §7.1.3) is wired in Phase 4 — the scheduler does not
- * exist yet (handover §7).
+ * to the scheduler worker (spec §7.1.3) is not done here: `syncLayer/sequencerSync`
+ * subscribes to this store and sends it, so the actions stay pure state (spec §3.1).
  */
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';

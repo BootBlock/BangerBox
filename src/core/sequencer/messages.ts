@@ -10,8 +10,8 @@
  * §7.9), `liveNote.trackId` (record-capture destination), `eventsDiff.sequenceId` (the
  * owning sequence, needed to select a segment's tracks in song mode, §7.9), `liveErase`
  * request + `erased` response (MPC live erase, §7.7), and `ScheduledEvent.accented`
- * (metronome beat-1 accent, §5.9). Phase 5 adds the `arp` request (keygroup arpeggiator,
- * §7.3; spec §14 2026-07-17 (g)). New kinds extend the union; existing ones never change.
+ * (metronome beat-1 accent, §5.9), and the `arp` request (keygroup arpeggiator, §7.3;
+ * spec §14 2026-07-17 (g)). New kinds extend the union; existing ones never change.
  */
 import { z } from 'zod';
 import {

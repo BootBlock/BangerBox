@@ -1,9 +1,9 @@
 /**
  * The mixer store must accept the canonical §7.8 parameter addresses that the registry
- * builders produce — that is the grammar the Mixer, XYFX, and (Phase 8) Q-Link surfaces
- * all address parameters with (spec §7.8, §10.3). Before Phase 8 the store parsed only a
- * bare `<channelId>.<field>` form, so canonical addresses silently no-opped and those
- * controls were dead (spec §3.4 forbids dead controls).
+ * builders produce — that is the grammar the Mixer, XYFX and Q-Link surfaces all address
+ * parameters with (spec §7.8, §10.3). The store once parsed only a bare
+ * `<channelId>.<field>` form, so canonical addresses silently no-opped and those controls
+ * were dead (spec §3.4 forbids dead controls); these tests pin the regression shut.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {

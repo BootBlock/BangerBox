@@ -2,8 +2,8 @@
  * Sync-layer registration (spec §4.3). Wires every domain subscriber (mixer, transport,
  * program, hardware) to the graph bridge and returns a single disposer that unsubscribes
  * them all — so mode unmount / project close leave no dangling subscriptions (spec §3.5
- * lens 5, memory & resources). Phase 3 passes the real audio-graph bridge; until then
- * the caller may omit it and the no-op bridge is used.
+ * lens 5, memory & resources). The engine passes the real audio-graph bridge; callers
+ * with no graph (tests, headless boot) may omit it and get the no-op bridge.
  */
 import { noopBridge, type SyncBridge, type Unsubscribe } from './bridge';
 import { combineUnsubscribers } from './bridge';

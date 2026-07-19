@@ -1,7 +1,8 @@
 /**
  * useHardwareStore — BLE-MIDI connection and Q-Link binding state (spec §4.2, §10.3).
- * The BLE transport and runtime binding execution arrive in Phase 8; Phase 2 owns the
- * connection/mode state and the persisted binding model. Binding edits are undoable
+ * This store owns the connection/mode state and the persisted binding model; the BLE
+ * transport and the runtime that executes a binding live in `core/midi` (spec §10.4,
+ * {@link qlinkRuntime}) and drive this store rather than the reverse. Binding edits are undoable
  * (spec §4.5 "Q-Link binding edits") and persist per mode in `app_settings` (spec
  * §10.3) via the settings dirty key.
  */

@@ -1,9 +1,10 @@
 /**
  * Project `payload` schema (spec §9.3 projects.payload — "Zod-validated project extras
  * (master strip, groove templates)"). The master mixer strip persists here (its live
- * state lives in `useMixerStore` under the `master` channel, spec §4.2). Groove
- * templates (spec §7.5) arrive in Phase 4+; unknown keys are preserved (`.loose()`)
- * so a payload written by a later build round-trips through this one unharmed.
+ * state lives in `useMixerStore` under the `master` channel, spec §4.2). The groove
+ * templates §9.3 also names have no field here yet — grooves are only ever baked
+ * destructively into events, so none survives to persist (see issue #71). Unknown keys
+ * are preserved (`.loose()`) so a payload written by a later build round-trips unharmed.
  */
 import { z } from 'zod';
 import { channelStripSchema } from './mixer';

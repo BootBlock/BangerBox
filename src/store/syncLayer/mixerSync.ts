@@ -1,8 +1,8 @@
 /**
  * Mixer sync subscriber (spec §4.3). Watches the channel-strip record and forwards
  * only the fields that actually changed to the graph bridge (diff-based, spec §4.3).
- * Solo is forwarded as a flag here; the real bridge evaluates solo-in-place as
- * computed mutes (spec §5.2) in Phase 3.
+ * Solo is forwarded as a flag here; the audio bridge is what evaluates solo-in-place
+ * as computed mutes across the whole mixer (spec §5.2).
  */
 import { useMixerStore } from '../useMixerStore';
 import type { SyncBridge, Unsubscribe } from './bridge';

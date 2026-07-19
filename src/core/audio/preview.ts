@@ -1,8 +1,8 @@
 /**
  * Preview channel — spec §5.9. Browser-mode auditioning plays through a dedicated gain on
  * the monitor bus, NEVER through a pad or track chain, so a sample can be heard before it
- * is assigned. A single voice at a time: a new preview cuts the previous one. The Browser
- * UI that drives this lands in Phase 6; the channel itself is live now.
+ * is assigned. A single voice at a time: a new preview cuts the previous one. Browser mode
+ * and the Sample Edit audition control both drive this channel (spec §8.5.7, §8.5.4).
  *
  * Each audition gets its own amp gain between the source and the level gain, so it can be
  * declicked like a pool voice (spec §5.4): a fade to zero at the buffer's natural end, and

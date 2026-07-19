@@ -1,7 +1,7 @@
 /**
  * Modulation-matrix editor (spec §8.5.5, §6) — add/remove routes with source/target/amount
- * pickers from the §6 model. Insert-parameter targets are addressed in the mixer effect
- * panels (Phase 7); this picker covers the fixed sound-design targets. Every change is
+ * pickers from the §6 model. Insert-parameter targets are addressed in the Mixer mode's
+ * {@link InsertPanel}; this picker covers the fixed sound-design targets. Every change is
  * committed by the parent through the program store (spec §3.4, §4.5).
  */
 import { MOD_AMOUNT_RANGE, type ModRoute, type ModSource } from '@/core/project/schemas';

@@ -14,8 +14,8 @@
  *
  * `<channelId>` is a mixer channel address (`master` | `track:<id>` | `pad:<prog>:<idx>` |
  * `return:0..3`). Program-scope sound-design addresses (`program:<id>.pad:<idx>.…`, spec
- * §7.8) register in Phase 5 with per-voice parameter automation; Phase 4 automates the
- * channel-level AudioParams the graph exposes (mixer + insert).
+ * §7.8) resolve through the per-voice parameter path; the channel-level addresses resolve
+ * to the AudioParams the graph exposes (mixer + insert).
  */
 import {
   BPM_RANGE,

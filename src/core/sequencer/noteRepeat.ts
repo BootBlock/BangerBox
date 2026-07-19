@@ -4,7 +4,7 @@
  * This module is the pure grid generator (spec §7.1.5): it enumerates the repeat ticks in a
  * lookahead window; swing (§7.4) is applied by the scheduler when it converts ticks to
  * seconds, so every repeat respects swing without duplicating that maths here. The
- * arpeggiator (§7.3, keygroup tracks) shares this subdivision clock and lands in Phase 5.
+ * arpeggiator (§7.3, keygroup tracks) shares this subdivision clock.
  */
 import { PPQN } from '@/core/constants';
 

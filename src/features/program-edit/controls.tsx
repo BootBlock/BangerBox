@@ -1,8 +1,8 @@
 /**
- * Reusable labelled form controls for the Program Edit mode (spec §8.5.5). Functional,
- * unpolished inputs (Phase 5) — accessible (label association, aria) and token-styled
- * (spec §3.6). The polished bespoke knob/fader primitives are Phase 7 (spec §12); these
- * plain inputs prove the §6 editing surface is wired end to end (spec §3.4).
+ * Reusable labelled form controls for the Program Edit mode (spec §8.5.5) — plain inputs,
+ * accessible (label association, aria) and token-styled (spec §3.6). Program Edit has not
+ * been moved onto the bespoke `Knob`/`Fader` primitives the rest of the shell uses; that
+ * is part of the outstanding §8.5.5 editor work — see issue #56.
  */
 import { useId, type ReactNode } from 'react';
 

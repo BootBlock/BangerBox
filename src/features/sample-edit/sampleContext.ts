@@ -1,5 +1,5 @@
 /**
- * Shared helpers for the Phase 6 sample modes (Browser + Sample Edit) — build the import/edit
+ * Shared helpers for the sample modes (Browser + Sample Edit) — build the import/edit
  * context from the active project stores (spec §4.2) and refresh the Browser sample cache
  * (spec §4.2 useBrowserStore) from the repositories. Keeps the two functional panels DRY.
  */
