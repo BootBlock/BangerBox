@@ -79,14 +79,33 @@ the closed §2.2 matrix), `check:lang` (no American spellings outside the
 allowlist) and `check:stubs` (no open `STUB(phase-N)` tags, and no phase
 deferrals written as prose).
 
-It does **not** check §3.4 orphan-proofing — "every exported function, store, or
-component is imported and used within the live application tree" is a review
-rule in the spec with no script behind it. A speculative export, or a helper
-exported only so a test can reach it, will pass `verify` untouched. Check that
-by hand when adding exports, and be sceptical of any sweep that reports nothing:
-`grep -P` is unavailable on this repo's Git Bash, so a `-P` pattern fails
-silently and reads as a clean result.
+§3.4 orphan-proofing now has a script behind it too — `npm run check:orphans` —
+but it is **not yet in the `verify` chain**, because it currently reports 138
+findings and those have not been triaged. Run it directly.
 
-`npm run verify` enforces project invariants — notably §3.4 orphan-proofing,
-which forbids store state or exported helpers that nothing in the application
-tree ever calls. Run it before committing.
+`check:orphans` parses `src` with the TypeScript compiler API and fails on any
+runtime export that no non-test module imports. It uses the compiler rather than
+a grep because of barrels: `src/**/index.ts` re-exports with `export { X } from`
+and `export *`, so a textual search finds a hit inside the barrel and every
+orphan behind one launders itself clean. Re-exports are therefore modelled as
+conditional edges — a barrel only counts as using `X` once something else uses
+the barrel's own `X`. Exports that only a `*.test.ts(x)` file imports are
+reported as orphans and marked as such, since a helper exported purely to be
+tested is the case §3.4 exists to catch. Genuinely defensible ones go in
+`scripts/check-orphans.allowlist.json` with a reason, in the same shape as the
+`check-lang` and `check-stubs` allowlists; a stale entry there also fails the
+gate, so the allowlist cannot quietly drift out of date.
+
+What it still cannot see: `export type` and `export interface` are skipped
+deliberately, because a type has no runtime existence and flagging types would
+bury the real signal. It also cannot judge anything reached dynamically — a
+namespace import, a bare `import('./x')` or a string-keyed lookup marks the
+whole target module as consumed rather than risk a false accusation, so an
+orphan hiding behind one of those will pass. It reasons about export _names_,
+not values, so an export that is imported and then never called still counts as
+used. And it says nothing about whole modules that are unreachable while their
+exports all reference each other.
+
+Be sceptical of any hand sweep that reports nothing: `grep -P` is unavailable on
+this repo's Git Bash, so a `-P` pattern fails silently and reads as a clean
+result.
