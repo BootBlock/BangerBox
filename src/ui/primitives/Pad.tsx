@@ -7,9 +7,23 @@
  * Velocity comes from the vertical position of the hit within the pad, the MPC-style
  * touch convention: strike low = soft, high = hard. Keyboard triggers (Space/Enter,
  * spec §8.2) use a fixed nominal velocity since a key press carries no position.
+ *
+ * The press depression is `whileTap` on a spring (spec §8.3 names both), not the CSS
+ * `active:scale-95` this used to carry. That is not a cosmetic swap. `:active` is dropped
+ * the moment the pointer leaves the element, so a pad struck and slid off — an ordinary
+ * thing to do to a pad — went visually un-pressed while it was still sounding. Motion's
+ * press gesture instead ends on a *window* `pointerup`, so the finger keeps the pad down
+ * until it lifts, wherever it lifts. The voice release below is bound to the same window
+ * event for exactly that reason: the depression and the note now end together by
+ * construction rather than by coincidence.
+ *
+ * Motion still costs no re-render — `whileTap` is animated outside React's render pass,
+ * so the §3.3 zero-render-per-hit property is unchanged.
  */
-import { useCallback, useRef, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
 import { clampInt } from '@/core/math';
+import { PRESS_SCALE, SPRING_BB_PRESS } from '@/ui/motionTokens';
 
 /** Velocity for keyboard-triggered hits — a firm-but-not-maximum default (spec §8.2). */
 const KEYBOARD_VELOCITY = 100;
@@ -53,11 +67,19 @@ export function Pad({
   'data-testid': testId,
 }: PadProps) {
   const rootRef = useRef<HTMLButtonElement | null>(null);
+  const reduceMotion = useReducedMotion();
+  /** Tears down the in-flight pointer press, if any. Held in a ref so unmount can run it. */
+  const endPointerPress = useRef<(() => void) | null>(null);
 
   /** Paint the velocity glow directly (spec §8.3) — never through React state. */
   const glow = useCallback((velocity: number) => {
     rootRef.current?.style.setProperty('--bb-pad-glow', String(velocity / MAX_VELOCITY));
   }, []);
+
+  const release = useCallback(() => {
+    glow(0);
+    onRelease?.(padIndex);
+  }, [glow, onRelease, padIndex]);
 
   const handlePointerDown = useCallback(
     (event: PointerEvent<HTMLButtonElement>) => {
@@ -69,15 +91,31 @@ export function Pad({
       glow(velocity);
       onSelect?.(padIndex);
       onTrigger(padIndex, velocity);
+
+      // Release on a pointerup *anywhere*, not on leaving the pad. A finger that slides off
+      // mid-hit is still holding the pad down, which is both what hardware does and what
+      // `whileTap` above is now doing visually — motion ends its press on this same window
+      // event. Capture phase so a handler between here and the window cannot swallow it.
+      // Listening on the window (rather than capturing the pointer) also means a pad that
+      // unmounts mid-press still gets its release, via the effect below.
+      endPointerPress.current?.();
+      const finish = () => {
+        window.removeEventListener('pointerup', finish, true);
+        window.removeEventListener('pointercancel', finish, true);
+        endPointerPress.current = null;
+        release();
+      };
+      endPointerPress.current = finish;
+      window.addEventListener('pointerup', finish, true);
+      window.addEventListener('pointercancel', finish, true);
     },
-    [disabled, glow, onSelect, onTrigger, padIndex],
+    [disabled, glow, onSelect, onTrigger, padIndex, release],
   );
 
-  const handlePointerUp = useCallback(() => {
-    if (disabled) return;
-    glow(0);
-    onRelease?.(padIndex);
-  }, [disabled, glow, onRelease, padIndex]);
+  // A pad can be unmounted mid-hit — switching bank, program or mode while a finger is
+  // down. Ending the press here rather than only removing the listeners means the voice
+  // gets its note-off instead of hanging until the next one steals it (spec §5.3).
+  useEffect(() => () => endPointerPress.current?.(), []);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -95,16 +133,19 @@ export function Pad({
     (event: KeyboardEvent<HTMLButtonElement>) => {
       if (disabled) return;
       if (event.key !== ' ' && event.key !== 'Enter') return;
-      glow(0);
-      onRelease?.(padIndex);
+      release();
     },
-    [disabled, glow, onRelease, padIndex],
+    [disabled, release],
   );
 
   return (
-    <button
+    <motion.button
       ref={rootRef}
       type="button"
+      // Press depression (spec §8.3, ≈0.95), collapsed under prefers-reduced-motion — the
+      // CSS media query in index.css only reaches CSS transitions, never a JS spring.
+      whileTap={reduceMotion || disabled ? undefined : { scale: PRESS_SCALE }}
+      transition={SPRING_BB_PRESS}
       aria-label={label}
       aria-pressed={active}
       aria-disabled={disabled || undefined}
@@ -112,16 +153,11 @@ export function Pad({
       data-assigned={assigned || undefined}
       data-selected={selected || undefined}
       onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
-      onPointerLeave={handlePointerUp}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
       className={[
-        'relative touch-none select-none rounded-bb-md border text-[0.625rem] font-semibold',
+        'relative touch-none select-none rounded-bb-md border text-bb-micro font-semibold',
         fill ? 'h-full min-h-0 w-full' : 'aspect-square',
-        // Press feedback is a GPU-composited transform only (spec §8.3 60 fps budget).
-        'active:scale-95',
         assigned ? 'bg-bb-raised text-bb-text' : 'bg-bb-surface text-bb-muted',
         active ? 'border-bb-accent' : 'border-bb-line',
         selected ? 'ring-2 ring-bb-accent' : '',
@@ -136,6 +172,6 @@ export function Pad({
       <span className="pointer-events-none absolute inset-0 flex items-center justify-center p-1">
         <span className="line-clamp-2 break-words">{label}</span>
       </span>
-    </button>
+    </motion.button>
   );
 }

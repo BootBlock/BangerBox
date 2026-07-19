@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { formatValueText, valueToNormalised, type ControlCurve, type ControlRange } from './controlMaths';
+import { ControlChassis } from './ControlChassis';
 import { useContinuousControl } from './useContinuousControl';
 
 /**
@@ -96,7 +97,7 @@ export function Fader({
   }, [normalised, valueText]);
 
   return (
-    <div className="flex flex-col items-center gap-1">
+    <ControlChassis label={label} valueText={valueText} readoutRef={readoutRef}>
       <div
         ref={rootRef}
         role="slider"
@@ -134,16 +135,6 @@ export function Fader({
           <div className="absolute inset-x-0 bottom-0 h-3 translate-y-1/2 rounded-bb-sm border border-bb-line bg-bb-raised shadow-bb-raised" />
         </div>
       </div>
-      <span className="max-w-16 truncate text-center text-[0.625rem] leading-tight text-bb-muted">
-        {label}
-      </span>
-      <span
-        ref={readoutRef}
-        aria-hidden="true"
-        className="font-mono text-[0.625rem] tabular-nums text-bb-text"
-      >
-        {valueText}
-      </span>
-    </div>
+    </ControlChassis>
   );
 }

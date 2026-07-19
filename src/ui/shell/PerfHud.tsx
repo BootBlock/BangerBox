@@ -91,7 +91,7 @@ export function PerfHud() {
     <aside
       aria-label="Performance heads-up display"
       data-testid="perf-hud"
-      className="pointer-events-none fixed right-3 bottom-3 z-40 flex flex-col gap-1 rounded-bb-md border border-bb-line bg-bb-surface/95 px-3 py-2 font-mono text-[0.625rem] text-bb-text shadow-bb-raised"
+      className="pointer-events-none fixed right-3 bottom-3 z-40 flex flex-col gap-1 rounded-bb-md border border-bb-line bg-bb-surface/95 px-3 py-2 font-mono text-bb-micro text-bb-text shadow-bb-raised"
     >
       <span className="flex items-center gap-1.5 font-sans font-bold text-bb-accent">
         <IconPerf size={12} aria-hidden="true" />

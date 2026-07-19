@@ -25,7 +25,16 @@
   --radius-bb-md: 0.75rem;
   --radius-bb-lg: 1.25rem;
 
-  /* Easings */
+  /* Type scale. `bb-micro` is the caption size worn by every control label, readout and
+     rail entry in the app. It was two dozen hand-written arbitrary values at 0.625rem, with
+     a 10px and an 11px near-miss variant of the same typographic role. The px ones do not
+     answer to the root font size, so they silently drifted away from the primitive beside
+     them for anyone using browser zoom or a large-text setting. */
+  --text-bb-micro: 0.625rem;
+
+  /* Easings. `--ease-bb-snap` is mirrored in `ui/motionTokens.ts` as EASE_BB_SNAP —
+     motion/react animates in JS and cannot read a custom property, so the curve has to
+     exist in both forms. Retune them together. */
   --ease-bb-snap: cubic-bezier(0.2, 0, 0, 1);
   --ease-bb-glide: cubic-bezier(0.4, 0, 0.2, 1);
 
@@ -38,12 +47,16 @@
   --shadow-bb-pad-glow: 0 0 calc(var(--bb-pad-glow, 0) * 30px) calc(var(--bb-pad-glow, 0) * -4px)
     var(--color-bb-accent);
 
-  /* Composite transitions used by primitives. Press feedback snaps; the velocity glow
-     decays slowly on release. Transform/opacity/shadow only — never layout properties
-     (spec §8.3 60 fps budget). */
+  /* Composite transition used by the Pad primitive: the velocity glow decays slowly on
+     release while the state colours settle quickly. Colour and shadow only — never layout
+     properties (spec §8.3 60 fps budget).
+
+     `transform` is deliberately absent. Press feedback is a spring driven by motion/react
+     (SPRING_BB_PRESS), which writes `transform` afresh every frame; a CSS transition on the
+     same property would try to tween between those frames and fight the spring. */
   --transition-bb-pad:
-    transform 150ms var(--ease-bb-snap), background-color 150ms var(--ease-bb-snap),
-    border-color 150ms var(--ease-bb-snap), box-shadow 420ms var(--ease-bb-glide);
+    background-color 150ms var(--ease-bb-snap), border-color 150ms var(--ease-bb-snap),
+    box-shadow 420ms var(--ease-bb-glide);
 }
 
 /* Pointer-target expansion — spec §8.1/§8.5.3 (touch-large controls). A control that must

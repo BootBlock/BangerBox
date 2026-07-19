@@ -11,6 +11,7 @@
  */
 import { motion, useReducedMotion } from 'motion/react';
 import type { ToastTone } from '@/store/useUIStore';
+import { EASE_BB_SNAP } from '@/ui/motionTokens';
 
 export interface ToastProps {
   message: string;
@@ -41,7 +42,7 @@ export function Toast({ message, tone, onDismiss }: ToastProps) {
       initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
       animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
       exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
-      transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
+      transition={{ duration: 0.18, ease: EASE_BB_SNAP }}
       className={`pointer-events-auto flex w-full max-w-md items-start justify-between gap-3 rounded-bb-md border bg-bb-surface px-4 py-3 text-sm shadow-bb-raised ${TONE_CLASS[tone]}`}
     >
       <span className="leading-relaxed">{message}</span>

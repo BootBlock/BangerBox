@@ -315,7 +315,7 @@ export function XYSurface({
               }
               control.onKeyDown(event);
             }}
-            className="flex-1 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-[0.625rem] text-bb-muted"
+            className="flex-1 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-bb-micro text-bb-muted"
           >
             {axis.label}:{' '}
             <span className="font-mono tabular-nums text-bb-text">
