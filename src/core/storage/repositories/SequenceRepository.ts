@@ -3,6 +3,7 @@
  */
 import { DbError } from '../errors';
 import { BaseRepository } from './base';
+import type { SqlStatement } from '../driver';
 import type { Page, PageParams, SequenceRow } from './types';
 
 export interface SequenceCreate {
@@ -40,14 +41,16 @@ const PATCH_COLUMNS = [
   'swing_division',
 ] as const;
 
+const INSERT_SQL = `INSERT INTO sequences (id, project_id, position, name, length_bars, time_sig_numerator, time_sig_denominator, tempo, swing_amount, swing_division)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`;
+
 export class SequenceRepository extends BaseRepository {
-  async create(input: SequenceCreate): Promise<SequenceRow> {
-    const id = input.id ?? crypto.randomUUID();
-    await this.driver.execute(
-      `INSERT INTO sequences (id, project_id, position, name, length_bars, time_sig_numerator, time_sig_denominator, tempo, swing_amount, swing_division)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      [
-        id,
+  /** The insert as an unexecuted statement, for cross-table batches (see ProjectRepository). */
+  insertStatement(input: SequenceCreate & { readonly id: string }): SqlStatement {
+    return {
+      sql: INSERT_SQL,
+      params: [
+        input.id,
         input.project_id,
         input.position,
         input.name,
@@ -58,7 +61,13 @@ export class SequenceRepository extends BaseRepository {
         input.swing_amount ?? 50,
         input.swing_division ?? 16,
       ],
-    );
+    };
+  }
+
+  async create(input: SequenceCreate): Promise<SequenceRow> {
+    const id = input.id ?? crypto.randomUUID();
+    const { sql, params } = this.insertStatement({ ...input, id });
+    await this.driver.execute(sql, params);
     return this.require(id);
   }
 

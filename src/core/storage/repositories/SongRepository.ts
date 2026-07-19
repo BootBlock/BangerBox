@@ -2,6 +2,7 @@
  * Song-mode playlist persistence (spec §9.2, §9.3 `song_entries`, §7.9).
  */
 import { BaseRepository } from './base';
+import type { SqlStatement } from '../driver';
 import type { SongEntryRow } from './types';
 
 export interface SongEntryCreate {
@@ -24,12 +25,17 @@ export class SongRepository extends BaseRepository {
    * positions are re-stamped from array order).
    */
   async replaceForProject(projectId: string, entries: readonly SongEntryCreate[]): Promise<void> {
-    await this.driver.transaction([
+    await this.driver.transaction(this.replaceStatements(projectId, entries));
+  }
+
+  /** The replacement as unexecuted statements, for cross-table batches (see ProjectRepository). */
+  replaceStatements(projectId: string, entries: readonly SongEntryCreate[]): SqlStatement[] {
+    return [
       { sql: 'DELETE FROM song_entries WHERE project_id = ?;', params: [projectId] },
       ...entries.map((entry, position) => ({
         sql: 'INSERT INTO song_entries (id, project_id, position, sequence_id, repeats) VALUES (?, ?, ?, ?, ?);',
         params: [entry.id ?? crypto.randomUUID(), projectId, position, entry.sequence_id, entry.repeats ?? 1],
       })),
-    ]);
+    ];
   }
 }

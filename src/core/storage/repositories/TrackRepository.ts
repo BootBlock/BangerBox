@@ -3,6 +3,7 @@
  */
 import { DbError } from '../errors';
 import { BaseRepository } from './base';
+import type { SqlStatement } from '../driver';
 import type { Page, PageParams, TrackRow } from './types';
 
 export interface TrackCreate {
@@ -24,14 +25,16 @@ export interface TrackPatch {
 
 const PATCH_COLUMNS = ['program_id', 'position', 'name', 'mixer'] as const;
 
+const INSERT_SQL = `INSERT INTO tracks (id, sequence_id, program_id, position, name, type, mixer)
+ VALUES (?, ?, ?, ?, ?, ?, ?);`;
+
 export class TrackRepository extends BaseRepository {
-  async create(input: TrackCreate): Promise<TrackRow> {
-    const id = input.id ?? crypto.randomUUID();
-    await this.driver.execute(
-      `INSERT INTO tracks (id, sequence_id, program_id, position, name, type, mixer)
-       VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      [
-        id,
+  /** The insert as an unexecuted statement, for cross-table batches (see ProjectRepository). */
+  insertStatement(input: TrackCreate & { readonly id: string }): SqlStatement {
+    return {
+      sql: INSERT_SQL,
+      params: [
+        input.id,
         input.sequence_id,
         input.program_id ?? null,
         input.position,
@@ -39,7 +42,13 @@ export class TrackRepository extends BaseRepository {
         input.type,
         input.mixer ?? '{}',
       ],
-    );
+    };
+  }
+
+  async create(input: TrackCreate): Promise<TrackRow> {
+    const id = input.id ?? crypto.randomUUID();
+    const { sql, params } = this.insertStatement({ ...input, id });
+    await this.driver.execute(sql, params);
     return this.require(id);
   }
 

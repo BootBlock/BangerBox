@@ -7,7 +7,7 @@
  */
 import type { BitDepth } from '@/core/project/schemas';
 import type { Repositories, SampleRow } from '@/core/storage/repositories';
-import { globalLibraryPath, samplePath, writeFileStreamed } from '@/core/storage/opfs';
+import { deleteFile, globalLibraryPath, samplePath, writeFileStreamed } from '@/core/storage/opfs';
 import { assertWriteHeadroom } from '@/core/storage/safeguards';
 import type { WavEncodeRequest, WavEncodeResponse } from './wavEncode.worker';
 
@@ -117,6 +117,12 @@ export type SampleWriteContext = Pick<ImportContext, 'repos' | 'projectId' | 'pr
  * Encode planar channels to canonical WAV, write them to a new OPFS sample, and insert the
  * metadata row + tags (spec §9.4 steps 4–5). The shared write path for import, destructive
  * sample edits, and Looper captures. Returns the new sample row.
+ *
+ * The file and the row are separate writes with no transaction over them, so each step undoes
+ * the ones before it on failure (spec §9.6 transactionality): a row insert that throws deletes
+ * the WAV it would have described, rather than leaving bytes in the user's quota that nothing
+ * references and the §8.5.7 purge cannot see; a failing tag write takes the row with it, so the
+ * caller's failure does not still leave a half-imported sample in the Browser.
  */
 export async function saveChannelsAsSample(
   channels: Float32Array[],
@@ -142,19 +148,42 @@ export async function saveChannelsAsSample(
   // Sample payloads are the large writes the worker sync-access-handle path exists for
   // (spec §9.1); the view is transferred there, and nothing below reads it again.
   await writeFileStreamed(path, new Uint8Array(bytes));
-  const row = await ctx.repos.samples.create({
-    id: sampleId,
-    // NULL project_id is what makes a row global (spec §9.3).
-    project_id: global ? null : ctx.projectId,
-    name,
-    opfs_path: path,
-    frames,
-    sample_rate: sampleRate,
-    channels: channelCount,
-    root_note: 60,
-  });
-  await ctx.repos.samples.setTags(sampleId, [...new Set(tags)]);
+
+  let row: SampleRow;
+  try {
+    row = await ctx.repos.samples.create({
+      id: sampleId,
+      // NULL project_id is what makes a row global (spec §9.3).
+      project_id: global ? null : ctx.projectId,
+      name,
+      opfs_path: path,
+      frames,
+      sample_rate: sampleRate,
+      channels: channelCount,
+      root_note: 60,
+    });
+  } catch (error) {
+    await discard(() => deleteFile(path));
+    throw error;
+  }
+
+  try {
+    await ctx.repos.samples.setTags(sampleId, [...new Set(tags)]);
+  } catch (error) {
+    await discard(() => ctx.repos.samples.remove(sampleId));
+    await discard(() => deleteFile(path));
+    throw error;
+  }
   return row;
+}
+
+/** Run one compensating step, swallowing its failure so it cannot mask the original error. */
+async function discard(step: () => Promise<unknown>): Promise<void> {
+  try {
+    await step();
+  } catch {
+    // Already gone, or the store itself is the thing that failed — nothing more to do here.
+  }
 }
 
 /** Resample a decoded buffer to `targetRate` if needed, via an OfflineAudioContext (spec §9.4). */

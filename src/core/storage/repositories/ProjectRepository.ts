@@ -3,6 +3,7 @@
  */
 import { DbError } from '../errors';
 import { BaseRepository } from './base';
+import type { SqlStatement } from '../driver';
 import type { BitDepth, Page, PageParams, ProjectRow } from './types';
 
 export interface ProjectCreate {
@@ -33,16 +34,21 @@ const SETTINGS_COLUMNS = [
   'payload',
 ] as const;
 
+const INSERT_SQL = `INSERT INTO projects (id, name, created_at, modified_at, sample_rate, bit_depth, bpm_default, insert_limit, payload)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`;
+
 export class ProjectRepository extends BaseRepository {
-  /** Insert a new project (defaults per the §9.3 DDL) and return its row. */
-  async create(input: ProjectCreate): Promise<ProjectRow> {
-    const id = input.id ?? crypto.randomUUID();
+  /**
+   * The insert as an unexecuted statement, for callers batching rows of SEVERAL tables into
+   * one transaction — `.mpcweb` import, which must leave no partial project (spec §9.6).
+   * `id` is required here: a batch has to know the id it is inserting to key its other rows.
+   */
+  insertStatement(input: ProjectCreate & { readonly id: string }): SqlStatement {
     const now = Date.now();
-    await this.driver.execute(
-      `INSERT INTO projects (id, name, created_at, modified_at, sample_rate, bit_depth, bpm_default, insert_limit, payload)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      [
-        id,
+    return {
+      sql: INSERT_SQL,
+      params: [
+        input.id,
         input.name,
         now,
         now,
@@ -52,7 +58,14 @@ export class ProjectRepository extends BaseRepository {
         input.insert_limit ?? 4,
         input.payload ?? '{}',
       ],
-    );
+    };
+  }
+
+  /** Insert a new project (defaults per the §9.3 DDL) and return its row. */
+  async create(input: ProjectCreate): Promise<ProjectRow> {
+    const id = input.id ?? crypto.randomUUID();
+    const { sql, params } = this.insertStatement({ ...input, id });
+    await this.driver.execute(sql, params);
     return this.require(id);
   }
 

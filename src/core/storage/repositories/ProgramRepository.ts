@@ -6,6 +6,7 @@
  */
 import { DbError } from '../errors';
 import { BaseRepository } from './base';
+import type { SqlStatement } from '../driver';
 import type { Page, PageParams, ProgramRow } from './types';
 
 export interface ProgramCreate {
@@ -23,13 +24,21 @@ export interface ProgramPatch {
 
 const PATCH_COLUMNS = ['name', 'payload'] as const;
 
+const INSERT_SQL = 'INSERT INTO programs (id, project_id, name, type, payload) VALUES (?, ?, ?, ?, ?);';
+
 export class ProgramRepository extends BaseRepository {
+  /** The insert as an unexecuted statement, for cross-table batches (see ProjectRepository). */
+  insertStatement(input: ProgramCreate & { readonly id: string }): SqlStatement {
+    return {
+      sql: INSERT_SQL,
+      params: [input.id, input.project_id, input.name, input.type, input.payload],
+    };
+  }
+
   async create(input: ProgramCreate): Promise<ProgramRow> {
     const id = input.id ?? crypto.randomUUID();
-    await this.driver.execute(
-      'INSERT INTO programs (id, project_id, name, type, payload) VALUES (?, ?, ?, ?, ?);',
-      [id, input.project_id, input.name, input.type, input.payload],
-    );
+    const { sql, params } = this.insertStatement({ ...input, id });
+    await this.driver.execute(sql, params);
     return this.require(id);
   }
 
