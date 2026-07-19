@@ -107,6 +107,30 @@ async function waitForIsolation(page, timeoutMs = 30_000) {
   return false;
 }
 
+/**
+ * Poll until the service worker is registered, or give up.
+ *
+ * Asking once straight after `goto` is a race the CI runner loses: `register()` has been
+ * called but has not resolved, so the check reported "never registered" on a run whose very
+ * next assertion — isolation achieved — proves it registered. Polling keeps the guard (a
+ * bootstrap that genuinely skips `register()` still fails, just after the deadline) without
+ * asserting on how fast the machine happens to be.
+ */
+async function waitForRegistration(page, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (await page.evaluate(() => navigator.serviceWorker.getRegistration().then(Boolean))) {
+        return true;
+      }
+    } catch {
+      // navigating mid-reload
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
 async function bodyText(page) {
   return page.evaluate(() => document.body.innerText.trim());
 }
@@ -215,13 +239,7 @@ await withServer({}, async (page) => {
   });
   await page.goto(URL_, { waitUntil: 'load' });
 
-  const registered = await page
-    .evaluate(async () => {
-      const reg = await navigator.serviceWorker.getRegistration();
-      return Boolean(reg);
-    })
-    .catch(() => false);
-  record('registers the worker even when storage throws', registered);
+  record('registers the worker even when storage throws', await waitForRegistration(page));
   record('still reaches isolation with storage blocked', await waitForIsolation(page));
 });
 
