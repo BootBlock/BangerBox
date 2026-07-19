@@ -27,7 +27,7 @@ export interface PwaUpdateApi {
 }
 
 /** The real browser seam, backed by vite-plugin-pwa's `registerSW`. */
-export function browserPwaUpdateApi(): PwaUpdateApi {
+function browserPwaUpdateApi(): PwaUpdateApi {
   let registration: ServiceWorkerRegistration | undefined;
   return {
     register(handlers) {

@@ -10,7 +10,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { clamp } from '@/core/math';
 import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
 import { dirtyKey } from '@/core/project/dirty';
-import { createDefaultPad, type Pad, type Program } from '@/core/project/schemas';
+import type { Pad, Program } from '@/core/project/schemas';
 import { commit } from './commit';
 
 interface ProgramState {
@@ -294,6 +294,3 @@ export const useProgramStore = create<ProgramState>()(
     },
   })),
 );
-
-/** Re-exported so callers can seed a fresh pad before assigning it (spec §6). */
-export { createDefaultPad };

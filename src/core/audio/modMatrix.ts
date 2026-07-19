@@ -34,18 +34,6 @@ export interface ModSourceValues {
 /** Summed modulation amount per target (spec §6); un-clamped, in normalised units. */
 export type ModMatrixResult = Map<ModTarget, number>;
 
-/** Whether a source swings both ways (−1..1) or only positive (0..1) — spec §6. */
-export const MOD_SOURCE_POLARITY: Readonly<Record<ModSource, 'bipolar' | 'unipolar'>> = {
-  lfo1: 'bipolar',
-  lfo2: 'bipolar',
-  random: 'bipolar',
-  ampEnv: 'unipolar',
-  pitchEnv: 'unipolar',
-  filterEnv: 'unipolar',
-  velocity: 'unipolar',
-  noteNumber: 'unipolar',
-};
-
 /**
  * Sum every route's `sourceValue × amount` into its target (spec §6). Targets with no
  * routes are absent from the result; a target with several routes carries their sum.

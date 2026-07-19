@@ -13,9 +13,9 @@
 /** Maximum simultaneously metered points (spec §5.8 — generous headroom). */
 export const METER_SLOTS = 64;
 /** Stereo: L then R (mono taps write L and leave R silent). */
-export const CHANNELS_PER_SLOT = 2;
+const CHANNELS_PER_SLOT = 2;
 /** Per channel: `[peak, rms]`. */
-export const VALUES_PER_CHANNEL = 2;
+const VALUES_PER_CHANNEL = 2;
 export const VALUES_PER_SLOT = CHANNELS_PER_SLOT * VALUES_PER_CHANNEL;
 /** Int32 header words: [0] = generation counter. */
 export const HEADER_INTS = 1;

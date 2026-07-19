@@ -10,7 +10,7 @@
 import { z } from 'zod';
 
 /** Install behaviour of a pack (spec §9.8 "Install modes"). */
-export const factoryPackKindSchema = z.enum(['kit', 'demo']);
+const factoryPackKindSchema = z.enum(['kit', 'demo']);
 export type FactoryPackKind = z.infer<typeof factoryPackKindSchema>;
 
 /**
@@ -21,7 +21,7 @@ export type FactoryPackKind = z.infer<typeof factoryPackKindSchema>;
  * payload, which is measured from the unpacked archive in memory before any OPFS write
  * (spec §9.8 "Storage"), so no size claim in this file can be trusted into a write.
  */
-export const factoryPackSchema = z.object({
+const factoryPackSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   kind: factoryPackKindSchema,
@@ -37,7 +37,7 @@ export type FactoryPack = z.infer<typeof factoryPackSchema>;
  * wrapper object, so none is invented (spec §13.6 naming freeze). Pack ids must be unique
  * because the UI keys on them and installs are addressed by id.
  */
-export const factoryCatalogueSchema = z
+const factoryCatalogueSchema = z
   .array(factoryPackSchema)
   .refine(
     (packs) => new Set(packs.map((pack) => pack.id)).size === packs.length,

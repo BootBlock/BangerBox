@@ -7,9 +7,12 @@ import { z } from 'zod';
 import { automationCurveSchema, automationScopeSchema, rangedInt, trackTypeSchema } from './primitives';
 import {
   BPM_RANGE,
+  DURATION_TICKS_MIN,
   LENGTH_BARS_RANGE,
   NOTE_RANGE,
   SWING_RANGE,
+  TICK_MIN,
+  TIME_SIG_DENOMINATORS,
   TIME_SIG_NUMERATOR_RANGE,
   VELOCITY_RANGE,
 } from './ranges';
@@ -18,8 +21,8 @@ import { ranged } from './primitives';
 // --- MIDI event (spec §9.3 midi_events; keyed by trackId in the store) ------------
 export const midiEventSchema = z.object({
   id: z.string(),
-  tickStart: z.number().int().min(0),
-  durationTicks: z.number().int().min(1), // spec §7.7 min duration 1 tick
+  tickStart: z.number().int().min(TICK_MIN),
+  durationTicks: z.number().int().min(DURATION_TICKS_MIN), // spec §7.7 min duration 1 tick
   note: rangedInt(NOTE_RANGE),
   velocity: rangedInt(VELOCITY_RANGE),
   /** Reserved JSON (probability, provenance) — spec §9.3. */
@@ -49,9 +52,9 @@ export function automationLaneKey(
 }
 
 // --- Sequence (spec §4.2, §9.3 sequences) ----------------------------------------
-export const timeSignatureSchema = z.object({
+const timeSignatureSchema = z.object({
   numerator: rangedInt(TIME_SIG_NUMERATOR_RANGE),
-  denominator: z.union([z.literal(2), z.literal(4), z.literal(8), z.literal(16)]),
+  denominator: z.literal(TIME_SIG_DENOMINATORS),
 });
 export type TimeSignature = z.infer<typeof timeSignatureSchema>;
 

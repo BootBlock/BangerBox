@@ -27,11 +27,6 @@ export interface KernelDisposeMessage {
   kind: 'dispose';
 }
 
-/** URL of the built kernel binary (emitted by `npm run build:wasm` — spec §5.6). */
-export function gainProofWasmUrl(): URL {
-  return new URL('./dist/gainProof.wasm', import.meta.url);
-}
-
 export class GainProofKernel {
   private disposed = false;
 

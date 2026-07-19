@@ -37,7 +37,7 @@ import {
 } from './gridGeometry';
 
 /** Height of the velocity lane strip beneath the note grid (spec §8.5.2 velocity lane). */
-export const VELOCITY_LANE_HEIGHT = 64;
+const VELOCITY_LANE_HEIGHT = 64;
 
 export type GridTool = 'draw' | 'erase' | 'select';
 

@@ -14,7 +14,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MODE_DEFINITIONS } from './modes';
 import { useProgramStore, useSequenceStore, useTransportStore } from '@/store';
-import { createDefaultPad } from '@/store/useProgramStore';
+import { createDefaultPad } from '@/core/project/schemas';
 
 afterEach(cleanup);
 

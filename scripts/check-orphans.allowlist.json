@@ -1,4 +1,425 @@
 {
-  "comment": "check:orphans allowlist — runtime exports in src that the live application tree does not import, and which are nonetheless justified (spec §3.4). Each entry names the declaring module and the exported symbol, and must state why the export earns its place. The usual defensible case is a pure helper whose own module uses it internally and which is exported so a unit test can reach the arithmetic directly rather than through the rendered component. Speculative exports do not belong here; delete them or wire them up.",
-  "exports": []
+  "comment": "check:orphans allowlist — runtime exports in src that the live application tree does not import, and which are nonetheless justified (spec §3.4). Each entry names the declaring module and the exported symbol, and must state why the export earns its place. Two cases are defensible. The first is a pure helper whose own module uses it internally and which is exported so a unit test can reach the arithmetic directly rather than through the rendered component or the audio graph; the reason names the internal caller, so a reader can check the claim. The second is a complete implementation that no UI reaches yet, where the gap is already tracked by an open issue; the reason cites that issue, and the entry is expected to disappear when it closes. Speculative exports do not belong here; delete them or wire them up.",
+  "exports": [
+    {
+      "file": "src/core/audio/bounceService.ts",
+      "export": "bounceTrack",
+      "reason": "Issue #104 — stem bounce renders a WAV the user cannot reach; no UI invokes it yet. Deleting it would discard the implementation that issue is about."
+    },
+    {
+      "file": "src/core/audio/bounceService.ts",
+      "export": "resampleSequenceToSample",
+      "reason": "Issue #104 — resample-to-pad (§9.5) is implemented but unreachable from any surface."
+    },
+    {
+      "file": "src/core/audio/grooveService.ts",
+      "export": "extractGrooveFromSample",
+      "reason": "Issue #71 — the non-destructive groove path is dead end to end; the module header already cites the issue."
+    },
+    {
+      "file": "src/core/audio/detuneSchedule.ts",
+      "export": "baseDetuneAt",
+      "reason": "Internal caller: detuneAt, plus the swing and cursor-rate paths. Exported so the tuning arithmetic is testable without an AudioContext."
+    },
+    {
+      "file": "src/core/audio/detuneSchedule.ts",
+      "export": "detuneAt",
+      "reason": "Internal caller: the two playbackRate integrations in this module."
+    },
+    {
+      "file": "src/core/audio/factory.ts",
+      "export": "SEND_COUNT",
+      "reason": "Internal caller: createTrackChannel and createPadChannel."
+    },
+    {
+      "file": "src/core/audio/inserts/insert.ts",
+      "export": "equalPowerMix",
+      "reason": "Internal caller: the dry/wet crossfade. Exported so the equal-power curve is testable directly."
+    },
+    {
+      "file": "src/core/audio/looper.ts",
+      "export": "foldCaptureIntoTake",
+      "reason": "Internal caller: the overdub fold. Exported so the fold arithmetic is testable without a live capture."
+    },
+    {
+      "file": "src/core/audio/metering.ts",
+      "export": "createMeterSab",
+      "reason": "Internal caller: the MeterRegistry constructor default."
+    },
+    {
+      "file": "src/core/audio/metering.ts",
+      "export": "meterData",
+      "reason": "Internal caller: the MeterRegistry constructor. Exported so the SAB layout is assertable in isolation."
+    },
+    {
+      "file": "src/core/audio/metering.ts",
+      "export": "meterHeader",
+      "reason": "Internal caller: the MeterRegistry constructor."
+    },
+    {
+      "file": "src/core/audio/metronome.ts",
+      "export": "renderClickWaveform",
+      "reason": "Internal caller: the click-buffer builder. Exported so the rendered click is assertable without an AudioContext."
+    },
+    {
+      "file": "src/core/audio/params/faderLaw.ts",
+      "export": "FADER_MAX_DB",
+      "reason": "Internal caller: faderLevelToDb. Exported so the fader law's endpoints are pinned by test."
+    },
+    {
+      "file": "src/core/audio/params/faderLaw.ts",
+      "export": "FADER_FLOOR_DB",
+      "reason": "Internal caller: faderLevelToDb."
+    },
+    {
+      "file": "src/core/audio/params/ramps.ts",
+      "export": "rampEndTime",
+      "reason": "Internal caller: rampParamLinear. Exported so ramp scheduling maths is testable without an AudioParam."
+    },
+    {
+      "file": "src/core/audio/params/ramps.ts",
+      "export": "rampTimeConstantSeconds",
+      "reason": "Internal caller: rampParamTarget."
+    },
+    {
+      "file": "src/core/audio/peakPyramid.ts",
+      "export": "MAX_BASE_BUCKETS",
+      "reason": "Internal caller: baseBucketFrames."
+    },
+    {
+      "file": "src/core/audio/peakPyramid.ts",
+      "export": "baseBucketFrames",
+      "reason": "Internal caller: the pyramid builder. Exported so bucket sizing is testable without decoding audio."
+    },
+    {
+      "file": "src/core/audio/programVoice.ts",
+      "export": "programChannelId",
+      "reason": "Internal caller: resolveDrumVoice and resolveKeygroupVoice."
+    },
+    {
+      "file": "src/core/audio/programVoice.ts",
+      "export": "selectVelocityLayer",
+      "reason": "Internal caller: the drum voice resolver. Exported so §6 layer selection is testable without a voice pool."
+    },
+    {
+      "file": "src/core/audio/programVoice.ts",
+      "export": "selectKeygroupZone",
+      "reason": "Internal caller: resolveKeygroupVoice. Exported so §6 zone selection is testable directly."
+    },
+    {
+      "file": "src/core/audio/programVoice.ts",
+      "export": "keygroupDetuneCents",
+      "reason": "Internal caller: resolveKeygroupVoice."
+    },
+    {
+      "file": "src/core/audio/programVoice.ts",
+      "export": "resolveDrumVoice",
+      "reason": "Internal caller: resolveVoice."
+    },
+    {
+      "file": "src/core/audio/programVoice.ts",
+      "export": "resolveKeygroupVoice",
+      "reason": "Internal caller: resolveVoice."
+    },
+    {
+      "file": "src/core/audio/sampleEdit.ts",
+      "export": "peakOf",
+      "reason": "Internal caller: the normalise path. Exported so peak detection is testable on a bare buffer."
+    },
+    {
+      "file": "src/core/audio/voiceModulation.ts",
+      "export": "staticSourceValues",
+      "reason": "Internal caller: staticModulation. Exported so the §6 mod-source table is assertable directly."
+    },
+    {
+      "file": "src/core/audio/voicePool.ts",
+      "export": "playRegion",
+      "reason": "Internal caller: voice construction. Exported so region playback maths is testable without scheduling a voice."
+    },
+    {
+      "file": "src/core/audio/waveformView.ts",
+      "export": "MIN_VISIBLE_FRAMES",
+      "reason": "Internal caller: the visible-window clamp. Exported so the zoom floor is pinned by test."
+    },
+    {
+      "file": "src/core/midi/bleTransport.ts",
+      "export": "BLE_MIDI_SERVICE_UUID",
+      "reason": "Internal caller: the GATT filter and service lookup. Exported so the well-known UUID is pinned by test."
+    },
+    {
+      "file": "src/core/midi/bleTransport.ts",
+      "export": "BLE_MIDI_CHARACTERISTIC_UUID",
+      "reason": "Internal caller: the characteristic lookup."
+    },
+    {
+      "file": "src/core/midi/bleTransport.ts",
+      "export": "RECONNECT_ATTEMPTS",
+      "reason": "Internal caller: the reconnect loop."
+    },
+    {
+      "file": "src/core/midi/hardwareService.ts",
+      "export": "createHardwareService",
+      "reason": "Internal caller: the singleton accessor. Exported so a test can build an isolated service rather than mutate the singleton."
+    },
+    {
+      "file": "src/core/midi/parser.ts",
+      "export": "BLE_MIDI_TIMESTAMP_WRAP_MS",
+      "reason": "Internal caller: unwrapTimestamp. Exported so the 13-bit wrap boundary is pinned by test."
+    },
+    {
+      "file": "src/core/midi/qlink.ts",
+      "export": "scaleCcToValue",
+      "reason": "Internal caller: the absolute-mode branch."
+    },
+    {
+      "file": "src/core/midi/qlink.ts",
+      "export": "relativeIncrement",
+      "reason": "Internal caller: the relative-mode branch. Exported so each encoder mode is testable in isolation."
+    },
+    {
+      "file": "src/core/midi/qlinkBindings.ts",
+      "export": "qLinkSettingsKey",
+      "reason": "Internal caller: the settings load."
+    },
+    {
+      "file": "src/core/midi/qlinkRuntime.ts",
+      "export": "QLINK_COMMIT_IDLE_MS",
+      "reason": "Internal caller: the commit debounce. Exported so the idle window is pinned by test rather than restated."
+    },
+    {
+      "file": "src/core/platform/capabilities.ts",
+      "export": "HARD_CAPABILITY_DETAILS",
+      "reason": "Internal caller: the capability report builder."
+    },
+    {
+      "file": "src/core/platform/capabilities.ts",
+      "export": "HARD_CAPABILITY_LABELS",
+      "reason": "Internal caller: evaluateCapabilities."
+    },
+    {
+      "file": "src/core/platform/capabilities.ts",
+      "export": "SOFT_CAPABILITY_LABELS",
+      "reason": "Issue #51 — soft capabilities are unhandled and the eviction warning is only a tooltip in one mode; this is the labelling table that issue's UI needs."
+    },
+    {
+      "file": "src/core/platform/capabilities.ts",
+      "export": "evaluateCapabilities",
+      "reason": "Internal caller: the cached-report accessor. Exported so detection is testable against a synthetic environment."
+    },
+    {
+      "file": "src/core/platform/capabilities.ts",
+      "export": "detectBrowser",
+      "reason": "Internal caller: the cached-report accessor."
+    },
+    {
+      "file": "src/core/project/sampleSharing.ts",
+      "export": "contentHash",
+      "reason": "Internal caller: planSharedSamples. Exported so the dedupe hash is assertable on fixed bytes."
+    },
+    {
+      "file": "src/core/project/schemas/program.ts",
+      "export": "modRouteSchema",
+      "reason": "Composed into padSchema and keygroupProgramSchema; the §11.1 accept/reject fixture parses it directly through the schemas barrel."
+    },
+    {
+      "file": "src/core/project/schemas/program.ts",
+      "export": "padSchema",
+      "reason": "Composed into drumProgramSchema; the §11.1 accept/reject fixture parses it directly through the schemas barrel."
+    },
+    {
+      "file": "src/core/project/schemas/program.ts",
+      "export": "createDefaultLfo",
+      "reason": "Internal caller: createDefaultPad and createDefaultKeygroupProgram."
+    },
+    {
+      "file": "src/core/project/schemas/sequence.ts",
+      "export": "sequenceSchema",
+      "reason": "The §11.1 accept/reject fixture parses it through the barrel, and the live Sequence type is inferred from it."
+    },
+    {
+      "file": "src/core/project/schemas/sequence.ts",
+      "export": "trackSchema",
+      "reason": "The §11.1 accept/reject fixture parses it through the barrel, and the live Track type is inferred from it."
+    },
+    {
+      "file": "src/core/project/schemas/sequence.ts",
+      "export": "songEntrySchema",
+      "reason": "Sole declaration of the §9.3 song_entries shape, from which the live SongEntry type is inferred. Weakest entry here: nothing parses it, and mappers.rowToSongEntry maps the row with no validation at all, so wiring it in would be a behaviour change rather than a tidy-up. Revisit rather than treat as settled."
+    },
+    {
+      "file": "src/core/sequencer/arpeggiator.ts",
+      "export": "arpSequence",
+      "reason": "Internal caller: arpeggiatorHits. Exported so §7.3 arp ordering is testable without a scheduler."
+    },
+    {
+      "file": "src/core/sequencer/automation.ts",
+      "export": "automationRampForWindow",
+      "reason": "Issue #96 — named there as the dead duplicate of schedulerCore's hand-rolled automation scheduling, to be reconciled in that issue rather than deleted here."
+    },
+    {
+      "file": "src/core/sequencer/clockSync.ts",
+      "export": "DRIFT_SNAP_SECONDS",
+      "reason": "Internal caller: ClockModel.applySync. Exported so the drift threshold is pinned by test."
+    },
+    {
+      "file": "src/core/sequencer/lookahead.ts",
+      "export": "segmentWindow",
+      "reason": "Internal caller: eventsInWindow. Exported so window maths is testable without running the scheduler."
+    },
+    {
+      "file": "src/core/sequencer/messages.ts",
+      "export": "SCHEDULER_PROTOCOL_VERSION",
+      "reason": "Issue #96 — requires this be attached and checked on the worker handshake, or deleted; #101 depends on it staying 1. Resolve there, not by removing it here."
+    },
+    {
+      "file": "src/core/sequencer/quantise.ts",
+      "export": "snapTickToGrid",
+      "reason": "Internal caller: quantiseTick."
+    },
+    {
+      "file": "src/core/sequencer/quantise.ts",
+      "export": "quantiseTick",
+      "reason": "Internal caller: quantiseEvents. Exported so §7.4 strength and swing interaction is testable per tick."
+    },
+    {
+      "file": "src/core/sequencer/songMap.ts",
+      "export": "songTotalTicks",
+      "reason": "Internal caller: songSecondsToTick."
+    },
+    {
+      "file": "src/core/sequencer/songMap.ts",
+      "export": "songTotalSeconds",
+      "reason": "Internal caller: songTickToSeconds."
+    },
+    {
+      "file": "src/core/sequencer/songMap.ts",
+      "export": "segmentAtSongTick",
+      "reason": "Internal caller: songTickToSeconds. Exported so §7.9 segment lookup is testable across tempo changes."
+    },
+    {
+      "file": "src/core/sequencer/swing.ts",
+      "export": "swingDivisionTicks",
+      "reason": "Internal caller: swingOffsetTicks."
+    },
+    {
+      "file": "src/core/storage/errors.ts",
+      "export": "mapResultCode",
+      "reason": "Internal caller: toDbError. Exported so SQLite result-code mapping is testable without a database."
+    },
+    {
+      "file": "src/core/storage/migrations/engine.ts",
+      "export": "getUserVersion",
+      "reason": "Internal caller: runMigrations."
+    },
+    {
+      "file": "src/core/storage/repositories/base.ts",
+      "export": "MAX_PAGE_SIZE",
+      "reason": "Internal caller: BaseRepository.resolvePage. Exported so the page clamp is pinned by test."
+    },
+    {
+      "file": "src/core/storage/rpc.ts",
+      "export": "parseResponseEnvelope",
+      "reason": "Internal caller: the RPC response path. Exported so envelope validation is testable without a worker."
+    },
+    {
+      "file": "src/features/program-edit/envelopeGraphMaths.ts",
+      "export": "MAX_TIME_MS",
+      "reason": "Canvas-geometry split: the envelope graph's maths lives apart from the component so it is testable without a real 2D context, which jsdom does not provide."
+    },
+    {
+      "file": "src/features/program-edit/envelopeGraphMaths.ts",
+      "export": "timeToSpan",
+      "reason": "Canvas-geometry split — the tapered time axis is tested directly rather than through a canvas jsdom cannot render."
+    },
+    {
+      "file": "src/features/program-edit/envelopeGraphMaths.ts",
+      "export": "spanToTime",
+      "reason": "Canvas-geometry split — the inverse taper is tested directly, including its round-trip against timeToSpan."
+    },
+    {
+      "file": "src/features/program-edit/envelopeGraphMaths.ts",
+      "export": "shapeProgress",
+      "reason": "Canvas-geometry split — internal caller envelopePolyline; the linear/exponential curve is asserted directly."
+    },
+    {
+      "file": "src/features/program-edit/keyZoneLayout.ts",
+      "export": "isBlackKey",
+      "reason": "Canvas-geometry split — the keyboard pitch-class layout is tested directly rather than through a canvas."
+    },
+    {
+      "file": "src/features/program-edit/keyZoneLayout.ts",
+      "export": "whiteKeyCount",
+      "reason": "Canvas-geometry split — internal caller keyLayout."
+    },
+    {
+      "file": "src/features/program-edit/keyZoneLayout.ts",
+      "export": "uncoveredRanges",
+      "reason": "Canvas-geometry split — internal caller describeZones; silent-key detection is asserted on note numbers, never on pixels."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "VELOCITY_COUNT",
+      "reason": "Canvas-geometry split — the 0..127 axis constant shared by the drawing and hit-testing maths tested directly."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "VELOCITY_MAX",
+      "reason": "Canvas-geometry split — the clamp endpoint, pinned by test."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "boundaryX",
+      "reason": "Canvas-geometry split — velocity-to-pixel mapping tested without a 2D context."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "xToVelocity",
+      "reason": "Canvas-geometry split — the inverse mapping, tested for its round-trip against boundaryX."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "rangeSpanX",
+      "reason": "Canvas-geometry split — internal caller the range painter."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "edgeHandleXs",
+      "reason": "Canvas-geometry split — internal caller the pointer-down hit test."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "rangeAtVelocity",
+      "reason": "Canvas-geometry split — internal caller the body-drag hit test; overlap precedence is asserted directly."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "applyRangeDrag",
+      "reason": "Canvas-geometry split — the clamp-not-swap drag rule is the behaviour most worth testing without a pointer."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "velocityCoverage",
+      "reason": "Canvas-geometry split — gap and overlap detection is computed on velocities, and asserted as such."
+    },
+    {
+      "file": "src/features/program-edit/VelocityRangeBar.tsx",
+      "export": "describeCoverage",
+      "reason": "Canvas-geometry split — the accessible summary read out to screen readers, asserted as text."
+    },
+    {
+      "file": "src/store/syncLayer/programParams.ts",
+      "export": "changedPadLeaves",
+      "reason": "Internal caller: the diff walker. Exported so the store-to-graph diff is testable without a live audio graph."
+    },
+    {
+      "file": "src/store/useProjectStore.ts",
+      "export": "SAMPLE_RATES",
+      "reason": "Issue #40 — no UI creates a project, so the project-settings surface is unbuilt; setSampleRate and setBitDepth have no call site either. This is the option list that surface needs."
+    },
+    {
+      "file": "src/ui/ProjectStatusBar.tsx",
+      "export": "ProjectStatusBar",
+      "reason": "Superseded Phase 2 scaffolding. TransportBar and MainMode now carry its project name, unsaved dot, undo/redo buttons and useUndoKeyboard call, so mounting it would duplicate all four on screen. Held here pending an explicit decision to delete rather than removed silently — it is dead UI either way, not a wiring gap."
+    }
+  ]
 }

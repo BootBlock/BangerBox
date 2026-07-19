@@ -14,7 +14,7 @@ import { DbError } from './errors';
 import type { DbDiagnostics } from './rpc';
 
 /** The single database file within the OPFS hierarchy (spec §9.1). */
-export const DB_FILENAME = '/bangerbox.sqlite3';
+const DB_FILENAME = '/bangerbox.sqlite3';
 
 /** The OPFS VFS name as registered by sqlite-wasm. */
 const OPFS_VFS = 'opfs';

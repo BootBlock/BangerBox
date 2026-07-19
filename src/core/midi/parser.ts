@@ -90,7 +90,7 @@ function toBytes(data: Uint8Array | DataView): Uint8Array {
  * BLE-MIDI timestamp and the packet's arrival time (spec §10.1 "unwrap against arrival
  * time").
  */
-export function unwrapTimestamp(timestamp13: number, arrivalMs: number): number {
+function unwrapTimestamp(timestamp13: number, arrivalMs: number): number {
   const windowStart = Math.floor(arrivalMs / BLE_MIDI_TIMESTAMP_WRAP_MS) * BLE_MIDI_TIMESTAMP_WRAP_MS;
   const candidate = windowStart + timestamp13;
   return candidate > arrivalMs + FUTURE_TOLERANCE_MS ? candidate - BLE_MIDI_TIMESTAMP_WRAP_MS : candidate;

@@ -25,14 +25,6 @@ export function secondsToTicks(seconds: number, bpm: number): number {
   return seconds / secondsPerTick(bpm);
 }
 
-/**
- * Whole ticks spanning a millisecond window at `bpm` — the lookahead conversion (spec
- * §7.1.4). Rounds up so the window never falls short of the requested horizon.
- */
-export function ticksIn(ms: number, bpm: number): number {
-  return Math.ceil(secondsToTicks(ms / 1000, bpm));
-}
-
 /** Ticks per beat (one denominator note) for a time signature (spec §7.2). */
 export function ticksPerBeat(timeSig: TimeSignature): number {
   return TICKS_PER_WHOLE_NOTE / timeSig.denominator;

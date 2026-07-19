@@ -22,7 +22,7 @@ export interface SongSegment {
 }
 
 /** The effective tempo of a sequence: its own tempo, or the project default (spec §7.2). */
-export function effectiveBpm(sequence: Sequence, projectBpm: number): number {
+function effectiveBpm(sequence: Sequence, projectBpm: number): number {
   return sequence.tempo ?? projectBpm;
 }
 
