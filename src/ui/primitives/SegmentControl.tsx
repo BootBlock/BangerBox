@@ -9,6 +9,14 @@ import { useRef, type KeyboardEvent } from 'react';
 export interface SegmentOption<T extends string | number> {
   readonly value: T;
   readonly label: string;
+  /**
+   * Disable this option alone — for a choice the build offers but this environment cannot do,
+   * such as a §2.1 soft capability the browser lacks. Pair it with {@link SegmentOption.title}:
+   * an option that is dead with no stated reason reads as a bug.
+   */
+  readonly disabled?: boolean;
+  /** Native tooltip, and the place to say why a disabled option is disabled (spec §2.1). */
+  readonly title?: string;
 }
 
 export interface SegmentControlProps<T extends string | number> {
@@ -53,10 +61,20 @@ export function SegmentControl<T extends string | number>({
     event.preventDefault();
     const index = options.findIndex((option) => option.value === value);
     if (index < 0) return;
-    // Wrap around the group, per the WAI-ARIA radio-group pattern.
-    const nextIndex = (index + (forward ? 1 : -1) + options.length) % options.length;
+    // Wrap around the group, per the WAI-ARIA radio-group pattern, stepping over any disabled
+    // option rather than landing on it — the arrow keys select as they move, so a stop on a
+    // disabled option would have to select it.
+    const step = forward ? 1 : -1;
+    let nextIndex = index;
+    for (let hop = 1; hop < options.length; hop += 1) {
+      const candidate = (((index + step * hop) % options.length) + options.length) % options.length;
+      if (!options[candidate]?.disabled) {
+        nextIndex = candidate;
+        break;
+      }
+    }
     const next = options[nextIndex];
-    if (!next) return;
+    if (!next || nextIndex === index) return;
     onChange(next.value);
     // Roving tabindex: focus follows selection so the keyboard stays inside the group.
     const buttons = groupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
@@ -74,15 +92,17 @@ export function SegmentControl<T extends string | number>({
     >
       {options.map((option) => {
         const selected = option.value === value;
+        const optionDisabled = disabled || option.disabled === true;
         return (
           <button
             key={String(option.value)}
             type="button"
             role="radio"
             aria-checked={selected}
+            title={option.title}
             // Roving tabindex — only the selected option is in the tab order (spec §8.2).
             tabIndex={selected ? 0 : -1}
-            disabled={disabled}
+            disabled={optionDisabled}
             // Arrow handling lives on the options, not the group: the group is a container
             // and giving it a key handler would demand it be focusable too (jsx-a11y).
             onKeyDown={handleKeyDown}
@@ -93,7 +113,7 @@ export function SegmentControl<T extends string | number>({
               'inline-flex items-center justify-center font-semibold transition-colors duration-150 ease-bb-snap',
               SIZE[size],
               selected ? 'bg-bb-accent text-bb-bg' : 'text-bb-muted hover:text-bb-text',
-              disabled ? 'cursor-not-allowed opacity-40' : '',
+              optionDisabled ? 'cursor-not-allowed opacity-40' : '',
             ].join(' ')}
           >
             {option.label}

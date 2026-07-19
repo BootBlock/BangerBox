@@ -7,7 +7,13 @@
  * A capture may be bar-locked: given a target frame count derived from the transport tempo and
  * time signature, the drain loop stops itself on the bar line and the take is written at exactly
  * that length, so successive overdubs stay phase-aligned. Overdub sums onto the held take;
- * `clear` discards it. Mic-source capture is still outstanding — see issue #2.
+ * `clear` discards it.
+ *
+ * The record source is switchable between the master bus and the microphone (spec §8.5.8). Only
+ * the node feeding the recorder changes — ring, drain loop, WAV worker and OPFS write are the
+ * same path for both — so mic capture inherits bar-locking, overdub and progress for free. The
+ * mic is a §2.1 soft capability: callers gate the choice on `capabilities.soft.microphone` and
+ * `setSource` still fails loudly if the stream cannot be opened.
  */
 import { RingBuffer } from '@/core/dsp/ringBuffer';
 import type { SampleRow } from '@/core/storage/repositories';
@@ -49,6 +55,19 @@ export function foldCaptureIntoTake(
   return merged;
 }
 
+/** Where the recorder worklet takes its signal from (spec §8.5.8). */
+export type LooperSource = 'master' | 'microphone';
+
+/**
+ * Mic constraints: every browser DSP off. The Looper samples material to play back as an
+ * instrument, so echo cancellation, noise suppression and auto-gain — all tuned for speech on a
+ * call — would pump and gate the very transients a sampler exists to capture.
+ */
+const MIC_CONSTRAINTS: MediaStreamConstraints = {
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+  video: false,
+};
+
 export interface LooperCaptureOptions {
   /**
    * Bar-locked capture length in frames; the capture stops itself once reached and the take is
@@ -67,10 +86,39 @@ export interface LooperCaptureOptions {
   readonly onComplete?: () => void;
 }
 
+/**
+ * Open the microphone, turning every failure into copy the user can act on. `getUserMedia`
+ * reports refusal, absence and hardware faults through `DOMException.name`, and the three need
+ * different advice — "allow it", "plug one in", "something else has it".
+ */
+async function requestMicrophone(): Promise<MediaStream> {
+  const getUserMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+  if (!getUserMedia) throw new Error('This browser cannot capture microphone input.');
+  try {
+    return await getUserMedia(MIC_CONSTRAINTS);
+  } catch (error) {
+    const name = error instanceof DOMException ? error.name : '';
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      throw new Error('Microphone access was blocked. Allow it for this site, then try again.');
+    }
+    if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+      throw new Error('No microphone was found. Connect one and try again.');
+    }
+    if (name === 'NotReadableError') {
+      throw new Error('The microphone is in use by another application.');
+    }
+    throw new Error('The microphone could not be opened.');
+  }
+}
+
 export class Looper {
   private readonly ring: RingBuffer;
   private node: AudioWorkletNode | null = null;
   private sink: GainNode | null = null;
+  private sourceKind: LooperSource = 'master';
+  /** Held only while the mic is the selected source, so the browser's in-use indicator is honest. */
+  private micStream: MediaStream | null = null;
+  private micNode: MediaStreamAudioSourceNode | null = null;
   private chunks: Float32Array[] = [];
   private drainRaf: number | null = null;
   private recording = false;
@@ -95,7 +143,7 @@ export class Looper {
     this.ring = RingBuffer.create(this.ringFrames + 1);
   }
 
-  /** Attach the recorder worklet to the master bus (spec §8.5.8). */
+  /** Attach the recorder worklet to the current source — the master bus by default (spec §8.5.8). */
   attach(): void {
     this.node = new AudioWorkletNode(this.context, 'looper-recorder', {
       numberOfInputs: 1,
@@ -106,13 +154,53 @@ export class Looper {
     // A silenced sink keeps the node scheduled without doubling audio (like the meter taps).
     this.sink = this.context.createGain();
     this.sink.gain.value = 0;
-    this.masterTap.connect(this.node);
+    this.inputNode()?.connect(this.node);
     this.node.connect(this.sink);
     this.sink.connect(this.context.destination);
   }
 
   get isRecording(): boolean {
     return this.recording;
+  }
+
+  get source(): LooperSource {
+    return this.sourceKind;
+  }
+
+  /**
+   * Switch the record source (spec §8.5.8). Selecting the microphone opens the stream — which is
+   * where the permission prompt happens, and where a denial surfaces — and holds it until the
+   * source changes back or the Looper is destroyed, so repeated takes do not re-prompt. Refused
+   * mid-take: swapping the input under a running capture would splice two sources into one take.
+   * The source is left unchanged if the stream cannot be opened, so a rejection never strands the
+   * recorder with nothing connected.
+   */
+  async setSource(source: LooperSource): Promise<void> {
+    if (source === this.sourceKind) return;
+    if (this.recording) throw new Error('Stop the capture before changing the Looper source.');
+    if (source === 'microphone') {
+      const stream = await requestMicrophone();
+      this.micStream = stream;
+      this.micNode = this.context.createMediaStreamSource(stream);
+    }
+    // Only re-patch once the new source exists, so a denial above leaves the old one connected.
+    if (this.node) this.inputNode()?.disconnect(this.node);
+    this.sourceKind = source;
+    if (source === 'master') this.releaseMicrophone();
+    if (this.node) this.inputNode()?.connect(this.node);
+  }
+
+  /** The node currently feeding the recorder, or null if the mic source has no stream yet. */
+  private inputNode(): AudioNode | null {
+    return this.sourceKind === 'microphone' ? this.micNode : this.masterTap;
+  }
+
+  /** Stop every track and drop the stream — the §3.2 obligation for a captured device. */
+  private releaseMicrophone(): void {
+    this.micNode?.disconnect();
+    this.micStream?.getTracks().forEach((track) => track.stop());
+    this.micNode = null;
+    this.micStream = null;
   }
 
   /** True once a take is held, so it can be overdubbed onto, saved, or cleared. */
@@ -208,10 +296,10 @@ export class Looper {
   }
 
   /**
-   * Release the recorder worklet and every edge `attach` created (spec §3.2). Destroying
-   * mid-take must stop the processor too: it is the port message, not the main-thread flag,
-   * that clears its own `recording`, and a processor left capturing would keep pushing into a
-   * ring nothing drains.
+   * Release the recorder worklet, every edge `attach` created, and the mic stream if one is
+   * held (spec §3.2). Destroying mid-take must stop the processor too: it is the port message,
+   * not the main-thread flag, that clears its own `recording`, and a processor left capturing
+   * would keep pushing into a ring nothing drains.
    */
   destroy(): void {
     if (this.drainRaf !== null) cancelAnimationFrame(this.drainRaf);
@@ -221,11 +309,13 @@ export class Looper {
     if (node) {
       node.port.postMessage({ kind: 'record', on: false });
       node.port.postMessage({ kind: 'dispose' });
-      // `disconnect()` severs outgoing edges only, so the master tap's edge into the node
-      // survives a `node.disconnect()` and keeps the processor scheduled — cut it from the tap.
-      this.masterTap.disconnect(node);
+      // `disconnect()` severs outgoing edges only, so the source's edge into the node
+      // survives a `node.disconnect()` and keeps the processor scheduled — cut it at the source.
+      this.inputNode()?.disconnect(node);
       node.disconnect();
     }
+    this.releaseMicrophone();
+    this.sourceKind = 'master';
     this.sink?.disconnect();
     this.node = null;
     this.sink = null;

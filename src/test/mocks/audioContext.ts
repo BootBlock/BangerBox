@@ -97,6 +97,14 @@ class FakeGainNode extends FakeAudioNode {
     super(context, 'gain');
   }
 }
+class FakeMediaStreamSourceNode extends FakeAudioNode {
+  constructor(
+    context: FakeAudioContext,
+    readonly mediaStream: MediaStream,
+  ) {
+    super(context, 'mediaStreamSource');
+  }
+}
 class FakeStereoPannerNode extends FakeAudioNode {
   readonly pan = new FakeAudioParam(0);
   constructor(context: FakeAudioContext) {
@@ -247,6 +255,9 @@ export class FakeAudioContext {
 
   createGain(): FakeGainNode {
     return new FakeGainNode(this);
+  }
+  createMediaStreamSource(stream: MediaStream): FakeMediaStreamSourceNode {
+    return new FakeMediaStreamSourceNode(this, stream);
   }
   createStereoPanner(): FakeStereoPannerNode {
     return new FakeStereoPannerNode(this);
