@@ -207,10 +207,25 @@ export class Looper {
     }
   }
 
+  /**
+   * Release the recorder worklet and every edge `attach` created (spec §3.2). Destroying
+   * mid-take must stop the processor too: it is the port message, not the main-thread flag,
+   * that clears its own `recording`, and a processor left capturing would keep pushing into a
+   * ring nothing drains.
+   */
   destroy(): void {
     if (this.drainRaf !== null) cancelAnimationFrame(this.drainRaf);
     this.drainRaf = null;
-    this.node?.disconnect();
+    this.recording = false;
+    const node = this.node;
+    if (node) {
+      node.port.postMessage({ kind: 'record', on: false });
+      node.port.postMessage({ kind: 'dispose' });
+      // `disconnect()` severs outgoing edges only, so the master tap's edge into the node
+      // survives a `node.disconnect()` and keeps the processor scheduled — cut it from the tap.
+      this.masterTap.disconnect(node);
+      node.disconnect();
+    }
     this.sink?.disconnect();
     this.node = null;
     this.sink = null;
