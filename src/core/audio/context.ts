@@ -11,9 +11,13 @@ import meterTapWorkletUrl from './worklets/meterTap.worklet.ts?worker&url';
 import dspEffectWorkletUrl from './worklets/dspEffect.worklet.ts?worker&url';
 import recorderWorkletUrl from './worklets/recorder.worklet.ts?worker&url';
 import { loadKernelModules } from '@/core/dsp/kernelModules';
+import { installCancelAndHoldPolyfill } from './params/cancelAndHold';
 
 /** Create the single application AudioContext at the project sample rate (spec §5.1). */
 export function createAudioContext(sampleRate: number): AudioContext {
+  // Before any node exists, so every param the engine builds is recorded from its first
+  // event (issue #109 — Firefox has no `cancelAndHoldAtTime`, and §5.4 declick needs it).
+  installCancelAndHoldPolyfill();
   return new AudioContext({ latencyHint: 'interactive', sampleRate });
 }
 

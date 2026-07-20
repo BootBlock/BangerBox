@@ -13,6 +13,7 @@ import { importAudioFile } from '@/core/audio/sampleImport';
 import { deleteFile, projectSamplesRoot, readFile } from '@/core/storage/opfs';
 import type { SampleRow } from '@/core/storage/repositories';
 import { BROWSER_INITIAL_PATH, useBrowserStore, useProjectStore, useUIStore } from '@/store';
+import { IconPlay } from '@/ui/icons';
 import { Button, FieldLabel, Modal, Toggle } from '@/ui/primitives';
 import {
   auditionSample,
@@ -421,9 +422,14 @@ export function BrowserPanel() {
               >
                 Assign
               </span>
+              {/* Audition through the preview channel (spec §5.9). The play glyph carries the
+                  affordance: "Audition" alone did not read as "hear this", and the row was
+                  reported as having no way to play a sample at all (issue #109). */}
               <Button
                 label="Audition"
                 accessibleName={`Audition ${row.name}`}
+                icon={<IconPlay size={12} aria-hidden="true" />}
+                title={`Play ${row.name}`}
                 variant="quiet"
                 size="sm"
                 onClick={() => void auditionSample(row.opfs_path, row.name)}
@@ -489,6 +495,8 @@ export function BrowserPanel() {
                 <Button
                   label="Audition"
                   accessibleName={`Audition ${row.name}`}
+                  icon={<IconPlay size={12} aria-hidden="true" />}
+                  title={`Play ${row.name}`}
                   variant="quiet"
                   size="sm"
                   onClick={() => void auditionSample(row.opfs_path, row.name)}
