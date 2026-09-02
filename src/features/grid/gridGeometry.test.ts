@@ -8,6 +8,7 @@ import {
   automationValueToY,
   automationYToValue,
   eventsInRect,
+  isMarqueeTap,
   normaliseRect,
   cellsAlongSegment,
   eventAtCell,
@@ -442,5 +443,21 @@ describe('marquee selection (spec §8.5.2)', () => {
     // the point at value 0 falls outside it and the one at 0.5 sits on its edge.
     const picked = automationPointsInRect(points, { x0: 0, y0: 0, x1: 70, y1: 24 }, gridViewport, bounds, 48);
     expect(picked.map((p) => p.id)).toEqual(['p1']);
+  });
+});
+
+describe('isMarqueeTap (spec §8.5.2)', () => {
+  it('calls a drag that never left the slop radius a tap', () => {
+    expect(isMarqueeTap({ x0: 10, y0: 10, x1: 12, y1: 13 }, 4)).toBe(true);
+  });
+
+  /**
+   * Regression: the two dimensions were tested separately, so a sweep along a flat
+   * automation lane — long in x, a couple of pixels tall — was classified as a tap and
+   * threw away the very selection it had just made.
+   */
+  it('calls a long, thin sweep a marquee, not a tap', () => {
+    expect(isMarqueeTap({ x0: 0, y0: 20, x1: 300, y1: 22 }, 4)).toBe(false);
+    expect(isMarqueeTap({ x0: 20, y0: 0, x1: 22, y1: 300 }, 4)).toBe(false);
   });
 });

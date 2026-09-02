@@ -6,7 +6,7 @@ MUST reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the automation-authoring seam merged to `main` (`--no-ff`). All eight §12 phases were
 already complete; this was a defect closure against §7.8/§8.5.2/§8.5.10/§3.4, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1370 unit tests**, `test:e2e` real-browser
+`package.json` `config.phase` remains **"8"**. Suite: **1376 unit tests**, `test:e2e` real-browser
 smoke (dev + offline, **40/40 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
@@ -33,8 +33,9 @@ All nineteen stand unchanged. Two that bear on recent work:
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
 
-- **(ah) — automation authoring (§7.8, §8.5.2, §8.5.10).** Seven ⚑ items a new session should treat
-  as settled policy rather than as spec text:
+- **(ah) — automation authoring (§7.8, §8.5.2, §8.5.10).** The ⚑ items below are settled policy a
+  new session should treat as binding, not as spec text — §7.8 fixes the data model and the
+  thinning inputs and leaves each of these open:
   - **The Grid's automation lane scales to the REGISTRY range**, not to the points it holds.
     A lane whose address the registry does not recognise falls back to the data's own span and is
     **read-only** — hydration bypasses the §7.8 gate deliberately, so such a project still loads.
@@ -50,6 +51,10 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   - **A point drag stalls on an occupied tick** rather than deleting the point there. Drawing does
     replace, because it is a deliberate placement.
   - **Marquee select is interpreted per region** and takes notes on intersection, not containment.
+  - **A gesture with no move phase still records** — a keyboard step of a knob or fader goes
+    straight to `onCommit`, and §7.8 counts that as a movement.
+  - **The epsilon's range is passed IN by the store that owns the parameter**, because an insert
+    parameter's bounds belong to the effect in its slot and the recorder cannot see it.
 - **(ag) — sample assignment (issue #37).** Velocity bands are maintained rather than validated;
   zones follow a different rule because §6 lets them overlap; `dragDropPayload` is an armed
   selection, not a live drag.
@@ -105,9 +110,16 @@ New this work:
 - **`src/store/automationRecord.ts`** is the capture service. The engine publishes its playhead
   reader to it with `setAutomationClock` on start and `null` on dispose, exactly as it publishes the
   meter registry to `meterScope` — the recorder must never import the engine, which imports the
-  stores that import the recorder. `recordParamGesture(path, value, 'move' | 'end')` is called from
-  `useMixerStore.setTransient`/`commit` and `useProgramStore.setPadParamTransient`/`commitPadParam`.
-  A new gesture surface that goes through those actions is captured with no work of its own.
+  stores that import the recorder. `recordParamGesture(path, value, 'move' | 'end', range)` is
+  called from `useMixerStore.setTransient`/`commit` and
+  `useProgramStore.setPadParamTransient`/`commitPadParam`. A new gesture surface that goes through
+  those actions is captured with no work of its own. **Two ordering rules bite:** the `'end'` call
+  goes BEFORE the parameter's own `commit()` (an unkeyed commit closes the pass's coalesce run),
+  and `range` is the caller's, never looked up here.
+- **`resolveTargetRange(target, channels)`** in the catalogue is the ONE place that turns a §7.8
+  address into its bounds against the live mixer. `targetRange` alone answers null for every insert
+  parameter but `mix`, because those bounds belong to the effect in the slot (spec §5.7) — a caller
+  that falls back to 0..1 there clamps a 1–2000 ms delay time into a range it can never leave.
 - **The thinning maths is pure**, in `src/core/sequencer/automation.ts` beside the curve maths:
   `shouldRecordSample` and `mergeRecordedPoint`. Keep new capture rules there, not in the service.
 - **`PlayheadReading.isCapturing`** is recording AND past the count-in. Use it, not `isRecording`,
@@ -195,13 +207,16 @@ comments.
 
 **Honest scope notes for this work:**
 
-- **The seven ⚑ policies in §14 (ah) are judgement calls**, not spec text. §7.8 fixes the data model
+- **The ⚑ policies in §14 (ah) are judgement calls**, not spec text. §7.8 fixes the data model
   and the thinning inputs and leaves the rest open. Each rule lives in exactly one place if a human
   prefers a different one.
-- **Automation is not undoable as one pass.** A recorded gesture coalesces into one undo entry per
-  lane, sealed at the gesture's commit — not one entry per recording pass, because the note capture
-  interleaved with it breaks the coalescing run. §7.7's "one undo entry per recording pass" is about
-  notes and is unaffected.
+- **Automation is not undoable as one pass.** A recorded gesture on ONE parameter leaves two undo
+  entries: the pass, and the parameter's own commit. A gesture driving TWO parameters at once — an
+  XYFX drag — leaves about six, because the §4.5 command stack holds a single open coalesce key and
+  the two lanes' writes interleave, splitting each lane's run. The count still does not scale with
+  the number of points captured, which is what §3.3 is protecting, but per-lane coalescing would
+  need the shared command stack to hold a key per lane. §7.7's "one undo entry per recording pass"
+  is about notes and is unaffected.
 - **The point list has no tick field.** A point's value is editable from the keyboard; its tick is
   not, so moving a point in time is a pointer-only gesture. That matches the note list beside it,
   which also offers select and delete but no pitch or tick editing — the same gap, not a new one.
@@ -210,12 +225,13 @@ comments.
 - **Capture has no per-parameter arm.** Every registered parameter a gesture touches while recording
   is captured. §7.8 asks for exactly that and names no arming control, but a user who nudges a fader
   mid-take will find a lane they did not intend to write.
-- **Verified in a real browser** from the worktree at ports 5320/5321: a drawn lane at level 0
-  silenced the master (peak 0.00000) and the same lane at 1.2 did not (peak 0.2760); a recorded XYFX
-  gesture wrote 9 points, and the same 9 survived a save and a page reload.
+- **Verified in a real browser** from the worktree at ports 5320/5321, fourteen checks: a drawn
+  lane at level 0 silenced the master (peak 0.00000) and the same lane at 1.2 did not (peak 0.2760);
+  a thin sweep along the lane selected rather than clearing; a recorded XYFX gesture wrote 9 points,
+  cleared in 6 undos and redone, and the same 9 survived a save and a page reload.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1370**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**1376**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **40/40 steps**, ports overridden per #105) · `build` ·
 `build:factory`.

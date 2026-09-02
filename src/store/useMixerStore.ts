@@ -76,9 +76,12 @@ const SEND_PATH = /\.sendLevels\.([0-3])$/;
  * The canonical grammar is the §7.8 registry's (`mixer.<channelId>.level`,
  * `insert:<channelId>:slot<N>.<param>`), and it is parsed by the registry itself so the
  * grammar has exactly one owner (spec §13.6 naming freeze). The bare `<channelId>.<field>`
- * form is also accepted: it predates the registry and is still used where the channel is
- * already in hand. Insert ranges depend on the effect in the slot, so the strip is needed
- * to resolve them (spec §5.7).
+ * form is also accepted: it predates the registry, and a persisted Q-Link binding or an
+ * imported project may still carry one. No surface in the application writes it any more —
+ * the last, `AudioEnginePanel`'s master fader, moved to the canonical form because only
+ * that parses through the registry and so only that records automation (spec §7.8).
+ * Insert ranges depend on the effect in the slot, so the strip is needed to resolve them
+ * (spec §5.7).
  */
 function parseMixerPath(path: string, strip: ChannelStrip | undefined): ParsedPath | null {
   const target = parseParamTarget(path);
@@ -221,8 +224,9 @@ export const useMixerStore = create<MixerState>()(
       }));
       // spec §7.8: a gesture made while recording also writes automation. The tap is here
       // rather than in each mode because Q-Link, XYFX and every on-screen knob and fader
-      // reach the graph through this one action.
-      recordParamGesture(path, clamped, 'move');
+      // reach the graph through this one action. The range comes from the parse that
+      // already clamped the value — the recorder scales its epsilon by it.
+      recordParamGesture(path, clamped, 'move', parsed.range);
     },
 
     commit: (path, value) => {
@@ -244,14 +248,17 @@ export const useMixerStore = create<MixerState>()(
       // One commit = one undo entry (revert to the pre-gesture origin). The gesture's
       // many transient updates already coalesced into this single commit (spec §3.3),
       // so no stack-level coalesceKey is used here — two separate drags stay distinct.
+      // The released value closes the recorded pass on this lane (spec §7.8) — BEFORE the
+      // parameter's own commit, never after. The pass coalesces its points under one key,
+      // and the unkeyed commit below closes that run; sealing afterwards would leave the
+      // closing point stranded as a third undo entry (spec §3.3).
+      recordParamGesture(path, clamped, 'end', parsed.range);
       commit({
         label: 'Set mixer level',
         apply: () => write(clamped),
         revert: () => write(origin),
         dirtyKeys: [mixerChannelDirtyKey(parsed.channelId)],
       });
-      // The released value closes the recorded pass on this lane (spec §7.8).
-      recordParamGesture(path, clamped, 'end');
     },
 
     setMute: (channelId, mute) => {

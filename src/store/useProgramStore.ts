@@ -30,6 +30,7 @@ import {
   type KeygroupZone,
   type Pad,
   type Program,
+  type Range,
   type VelocityLayer,
 } from '@/core/project/schemas';
 import { recordParamGesture } from './automationRecord';
@@ -175,6 +176,8 @@ interface ResolvedPadLeaf {
   readonly leaf: string;
   readonly value: number;
   readonly current: number;
+  /** The §7.8 registered bounds the value was clamped to; the recorder scales by them. */
+  readonly range: Range;
 }
 
 /** Resolve a program address against the live programs, clamped to its registered range. */
@@ -199,6 +202,7 @@ function resolvePadLeaf(
     leaf: target.param,
     value: clamp(value, range[0], range[1]),
     current,
+    range,
   };
 }
 
@@ -567,7 +571,7 @@ export const useProgramStore = create<ProgramState>()(
       }));
       // spec §7.8: a gesture made while recording also writes automation — the same tap
       // the mixer's transient channel carries, for the pad-scope §10.3 Q-Link defaults.
-      recordParamGesture(path, resolved.value, 'move');
+      recordParamGesture(path, resolved.value, 'move', resolved.range);
     },
 
     commitPadParam: (path, value) => {
@@ -588,14 +592,15 @@ export const useProgramStore = create<ProgramState>()(
           },
         }));
       // One gesture = one undo entry back to the pre-gesture origin (spec §3.3, §4.5).
+      // Closes the recorded pass BEFORE the parameter's own commit, for the reason
+      // `useMixerStore.commit` records: an unkeyed commit closes the pass's coalesce run.
+      recordParamGesture(path, resolved.value, 'end', resolved.range);
       commit({
         label: 'Edit program parameter',
         apply: () => write(resolved.value),
         revert: () => write(origin),
         dirtyKeys: [dirtyKey.program(resolved.programId)],
       });
-      // The released value closes the recorded pass on this lane (spec §7.8).
-      recordParamGesture(path, resolved.value, 'end');
     },
   })),
 );

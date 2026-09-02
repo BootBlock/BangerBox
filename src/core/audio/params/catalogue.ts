@@ -12,7 +12,7 @@
  * Every path is built through the registry's own builders and gated through
  * {@link isAutomatable}, never hand-formatted (spec §13.6 naming freeze).
  */
-import type { ChannelStrip, Program } from '@/core/project/schemas';
+import type { ChannelStrip, Program, Range } from '@/core/project/schemas';
 import { EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
 import {
   channelLevelPath,
@@ -22,6 +22,8 @@ import {
   isAutomatable,
   programParamPath,
   PROGRAM_PARAM_RANGES,
+  targetRange,
+  type ParamTarget,
 } from './registry';
 
 /** One offerable address: the canonical §7.8 path and the words a picker shows for it. */
@@ -94,4 +96,23 @@ export function programAutomatableParams(program: Program): AutomatableParam[] {
     }
   }
   return params;
+}
+
+/**
+ * The value range a target actually holds, resolved against the live mixer (spec §7.8).
+ *
+ * {@link targetRange} alone cannot answer for an insert parameter: its bounds belong to the
+ * EFFECT in the slot (spec §5.7), and passing no `effectType` returns null for every insert
+ * param but `mix`. A caller that then falls back to 0..1 draws and clamps a delay time of
+ * 1–2000 ms into a range it can never leave — so the lookup lives here, once, and every
+ * picker and editor calls it rather than re-deriving the slot each time.
+ */
+export function resolveTargetRange(
+  target: ParamTarget,
+  channels: Record<string, ChannelStrip>,
+): Range | null {
+  if (target.kind !== 'insertParam') return targetRange(target);
+  // Slots are addressed 1-based in the §7.8 grammar (`slot2`).
+  const effectType = channels[target.channelId]?.inserts[target.slot - 1]?.effectType;
+  return targetRange(target, effectType ?? undefined);
 }

@@ -393,6 +393,17 @@ export function normaliseRect(from: { x: number; y: number }, to: { x: number; y
 }
 
 /**
+ * Whether a marquee drag was really a tap on empty space, which clears the selection
+ * rather than selecting nothing (spec §8.5.2). BOTH dimensions must be inside the slop:
+ * testing them separately would classify a deliberately thin sweep — along a flat
+ * automation lane, or down a chord's column of notes — as a tap and throw the selection
+ * away at the end of the drag that made it.
+ */
+export function isMarqueeTap(rect: GridRect, slopPx: number): boolean {
+  return rect.x1 - rect.x0 < slopPx && rect.y1 - rect.y0 < slopPx;
+}
+
+/**
  * Notes a marquee rectangle selects (spec §8.5.2). A note is taken when its drawn
  * rectangle *intersects* the marquee rather than being wholly contained by it: a note
  * running off the right of the viewport, or longer than the band the user swept, is still

@@ -23,9 +23,10 @@ import { automationLaneKey, type AutomationPoint, type MidiEvent } from '@/core/
 import {
   channelAutomatableParams,
   programAutomatableParams,
+  resolveTargetRange,
   type AutomatableParam,
 } from '@/core/audio/params/catalogue';
-import { isAutomatable, parseParamTarget, targetRange } from '@/core/audio/params/registry';
+import { isAutomatable, parseParamTarget } from '@/core/audio/params/registry';
 import { IconRemove } from '@/ui/icons';
 import { Button, EmptyState, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { announce } from '@/ui/primitives/LiveRegion';
@@ -58,6 +59,12 @@ const DEFAULT_DRAW_DURATION = PPQN / 4;
  * rather than thirty (issue #43).
  */
 const ZOOM_BUTTON_STEP = 1.5;
+
+/**
+ * Undo coalesce key for typing into a point's value field (spec §3.3). Suffixed with the
+ * point's id at the call site, so editing two points in turn is two undo entries.
+ */
+const AUTOMATION_FIELD_GESTURE = 'grid-automation-field';
 
 /** Curve of the span leaving a point (spec §7.8 `'step' | 'linear' | 'exp'`). */
 const CURVE_OPTIONS = [
@@ -112,6 +119,14 @@ export function GridMode() {
   const [automationTarget, setAutomationTarget] = useState<string>('');
   const [drawCurve, setDrawCurve] = useState<AutomationPoint['curve']>('linear');
   const [selectedPointIds, setSelectedPointIds] = useState<readonly string[]>([]);
+  /**
+   * The text in the value field currently being typed into, held alongside the point's
+   * own value rather than syncing the two in an effect (the established shape — see
+   * `AssignTargetDialog`). One slot is enough: only one field has focus at a time. Without
+   * it a controlled field cannot be cleared and retyped, because an empty string is not a
+   * value to write and the field would snap straight back to the point's number.
+   */
+  const [valueDraft, setValueDraft] = useState<{ id: string; text: string } | null>(null);
   const [viewport, setViewport] = useState({
     scrollTicks: 0,
     ticksPerPixel: DEFAULT_TICKS_PER_PIXEL,
@@ -215,7 +230,9 @@ export function GridMode() {
     if (activeTarget === '' || laneKey === null) return null;
     const points = automation[laneKey] ?? [];
     const target = parseParamTarget(activeTarget);
-    const range = target ? targetRange(target) : null;
+    // Resolved against the live mixer, because an insert parameter's bounds belong to the
+    // effect in the slot (spec §5.7) — `targetRange` alone answers null for all but `mix`.
+    const range = target ? resolveTargetRange(target, channels) : null;
     const label = laneChoices.find((choice) => choice.path === activeTarget)?.label ?? activeTarget;
     return {
       label,
@@ -224,7 +241,7 @@ export function GridMode() {
       editable: isAutomatable(activeTarget),
       selectedPointIds,
     };
-  }, [activeTarget, automation, laneChoices, laneKey, selectedPointIds]);
+  }, [activeTarget, automation, channels, laneChoices, laneKey, selectedPointIds]);
 
   /**
    * Whether a track-scope lane is in force for this target (spec §7.8: "track scope
@@ -771,14 +788,30 @@ export function GridMode() {
                         <input
                           type="number"
                           aria-label={`Value at tick ${point.tick}`}
-                          value={point.value}
+                          value={valueDraft?.id === point.id ? valueDraft.text : point.value}
                           min={selectedLane.bounds.min}
                           max={selectedLane.bounds.max}
                           step="any"
                           disabled={!selectedLane.editable}
-                          onChange={(event) =>
-                            handleAutomationMove(point.id, point.tick, Number(event.target.value))
-                          }
+                          // The raw string, not `Number(…)`: an empty field is a value the
+                          // user is part-way through typing, and `Number('')` is 0 — which
+                          // would rewrite the point to zero on the way to typing "0.8".
+                          onChange={(event) => {
+                            setValueDraft({ id: point.id, text: event.target.value });
+                            if (event.target.value.trim() === '') return;
+                            handleAutomationMove(
+                              point.id,
+                              point.tick,
+                              Number(event.target.value),
+                              `${AUTOMATION_FIELD_GESTURE}:${point.id}`,
+                            );
+                          }}
+                          // Typing is one gesture, so it is one undo entry; leaving the
+                          // field seals it, as a pointer release seals a drag (spec §3.3).
+                          onBlur={() => {
+                            setValueDraft(null);
+                            endUndoGesture();
+                          }}
                           className="w-20 rounded-bb-sm border border-bb-line bg-bb-raised px-1 py-1 text-bb-micro text-bb-text disabled:opacity-40"
                         />
                         <Button

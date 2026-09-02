@@ -9,8 +9,12 @@
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useMixerStore } from '@/store';
-import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
-import { channelAutomatableParams, type AutomatableParam } from '@/core/audio/params/catalogue';
+import { parseParamTarget } from '@/core/audio/params/registry';
+import {
+  channelAutomatableParams,
+  resolveTargetRange,
+  type AutomatableParam,
+} from '@/core/audio/params/catalogue';
 import type { ChannelStrip } from '@/core/project/schemas';
 import { EmptyState, FieldLabel, Toggle, XYSurface } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
@@ -66,7 +70,7 @@ export function XyfxMode() {
           // Slots are 1-based in the §7.8 grammar; an unset param reads as its range floor.
           return (
             strip.inserts[target.slot - 1]?.params[target.param] ??
-            targetRange(target, strip.inserts[target.slot - 1]?.effectType ?? undefined)?.[0] ??
+            resolveTargetRange(target, channels)?.[0] ??
             0
           );
       }
@@ -78,12 +82,7 @@ export function XyfxMode() {
   const rangeAt = (path: string | null): readonly [number, number] => {
     const target = path ? parseParamTarget(path) : null;
     if (!target) return UNIT_RANGE;
-    // Insert ranges depend on the effect in the slot, so the strip resolves them.
-    const effectType =
-      target.kind === 'insertParam'
-        ? (channels[target.channelId]?.inserts[target.slot - 1]?.effectType ?? undefined)
-        : undefined;
-    return targetRange(target, effectType) ?? UNIT_RANGE;
+    return resolveTargetRange(target, channels) ?? UNIT_RANGE;
   };
 
   const applyTransient = useCallback(

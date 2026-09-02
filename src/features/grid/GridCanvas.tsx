@@ -28,6 +28,7 @@ import {
   eventAtPoint,
   eventsInTickSpan,
   eventsInRect,
+  isMarqueeTap,
   nearestEventToTick,
   normaliseRect,
   noteToRow,
@@ -573,7 +574,10 @@ export function GridCanvas({
     return {
       x: event.clientX - rect.left - LABEL_GUTTER_PX,
       y: event.clientY - rect.top,
-      gridHeight: rect.height - lanesHeight(),
+      // Clamped as the draw loop clamps it: the lanes are 160 px with an automation lane
+      // open, and a canvas shorter than that would otherwise report a negative note grid
+      // and route every press into the automation lane at a nonsense value.
+      gridHeight: Math.max(0, rect.height - lanesHeight()),
       width: rect.width - LABEL_GUTTER_PX,
     };
   };
@@ -654,7 +658,7 @@ export function GridCanvas({
         const box = marquee.current;
         marquee.current = null;
         // A marquee that never moved is a tap on empty space, which clears the selection.
-        if (!box || box.x1 - box.x0 < TAP_SLOP_PX || box.y1 - box.y0 < TAP_SLOP_PX) {
+        if (!box || isMarqueeTap(box, TAP_SLOP_PX)) {
           onSelect([]);
           onSelectPoints([]);
           return;
@@ -739,13 +743,15 @@ export function GridCanvas({
       const tick = Math.max(0, snapTick(xToTick(point.x, view), snapTicks));
       const value = automationYToValue(laneY, lane.bounds, AUTOMATION_LANE_HEIGHT);
       onAutomationDraw(tick, value, AUTOMATION_GESTURE);
-      dragAutomationValue(canvas, pointerEvent, view, laneTop, () => newestPointAt(tick));
+      // The press itself already wrote, so an aborted drag has something to roll back even
+      // if the pointer never moved — the same rule `paintStroke` follows.
+      dragAutomationValue(canvas, pointerEvent, view, laneTop, () => newestPointAt(tick), true);
       return;
     }
 
     onSelectPoints([hit.id]);
     if (!lane.editable) return;
-    dragAutomationValue(canvas, pointerEvent, view, laneTop, () => hit.id);
+    dragAutomationValue(canvas, pointerEvent, view, laneTop, () => hit.id, false);
   };
 
   /**
@@ -757,13 +763,19 @@ export function GridCanvas({
   const newestPointAt = (tick: number): string | null =>
     latest.current.automation?.points.find((candidate) => candidate.tick === tick)?.id ?? null;
 
-  /** Drag a point in time and value until release; one drag is one undo entry (spec §3.3). */
+  /**
+   * Drag a point in time and value until release; one drag is one undo entry (spec §3.3).
+   * `wroteOnPress` says the press that began the drag already committed something — a
+   * freshly drawn point — so a cancelled gesture has to roll that back even if the pointer
+   * never moved (issue #43's rule: panning must not be a way to edit).
+   */
   const dragAutomationValue = (
     canvas: HTMLCanvasElement,
     pointerEvent: React.PointerEvent<HTMLCanvasElement>,
     view: GridViewport,
     laneTop: number,
     resolveId: () => string | null,
+    wroteOnPress: boolean,
   ) => {
     let moved = false;
     // Resolved once and held: a freshly drawn point is found by its tick, and the first
@@ -788,7 +800,7 @@ export function GridCanvas({
       move,
       end: onGestureEnd,
       cancel: () => {
-        if (!moved) return;
+        if (!moved && !wroteOnPress) return;
         onGestureEnd();
         onGestureCancel();
       },

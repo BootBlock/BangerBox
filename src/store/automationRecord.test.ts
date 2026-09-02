@@ -6,7 +6,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PlayheadReading } from '@/core/sequencer';
 import { AUTOMATION_MIN_TICK_SPACING } from '@/core/constants';
-import { createDefaultChannelStrip, createDefaultPad } from '@/core/project/schemas';
+import {
+  createDefaultChannelStrip,
+  createDefaultPad,
+  createEmptyInsertSlot,
+  LEVEL_RANGE,
+  type Range,
+} from '@/core/project/schemas';
 import { useMixerStore } from './useMixerStore';
 import { useProgramStore } from './useProgramStore';
 import { clearUndoHistory, useUndoStore } from './undo';
@@ -15,6 +21,8 @@ import { useTransportStore } from './useTransportStore';
 import { recordParamGesture, resetAutomationRecording, setAutomationClock } from './automationRecord';
 
 const PATH = 'mixer.master.level';
+/** The registered range the mixer store passes the recorder for a channel level (0..1.2). */
+const LEVEL: Range = LEVEL_RANGE;
 const LANE = `sequence:seq1:${PATH}`;
 
 let reading: PlayheadReading;
@@ -40,25 +48,25 @@ afterEach(() => {
 describe('recordParamGesture (spec §7.8)', () => {
   it('writes nothing when no engine has published a playhead', () => {
     setAutomationClock(null);
-    recordParamGesture(PATH, 0.5, 'move');
+    recordParamGesture(PATH, 0.5, 'move', LEVEL);
     expect(lane()).toEqual([]);
   });
 
   it('writes nothing while the transport is not capturing', () => {
     reading = { ...reading, isCapturing: false };
-    recordParamGesture(PATH, 0.5, 'move');
+    recordParamGesture(PATH, 0.5, 'move', LEVEL);
     expect(lane()).toEqual([]);
   });
 
   it('writes nothing during the count-in, when recording but not yet capturing', () => {
     reading = { ...reading, isRecording: true, isCapturing: false };
-    recordParamGesture(PATH, 0.5, 'move');
+    recordParamGesture(PATH, 0.5, 'move', LEVEL);
     expect(lane()).toEqual([]);
   });
 
   it('writes a sequence-scoped point at the playhead, owned by the active sequence', () => {
     reading = { ...reading, currentTick: 480 };
-    recordParamGesture(PATH, 0.5, 'move');
+    recordParamGesture(PATH, 0.5, 'move', LEVEL);
     expect(lane()).toEqual([
       expect.objectContaining({
         scope: 'sequence',
@@ -72,25 +80,25 @@ describe('recordParamGesture (spec §7.8)', () => {
   });
 
   it('thins by the minimum tick spacing (spec §7.8)', () => {
-    recordParamGesture(PATH, 0.1, 'move');
+    recordParamGesture(PATH, 0.1, 'move', LEVEL);
     reading = { ...reading, currentTick: AUTOMATION_MIN_TICK_SPACING - 1 };
-    recordParamGesture(PATH, 0.9, 'move');
+    recordParamGesture(PATH, 0.9, 'move', LEVEL);
     expect(lane()).toHaveLength(1);
 
     reading = { ...reading, currentTick: AUTOMATION_MIN_TICK_SPACING };
-    recordParamGesture(PATH, 0.9, 'move');
+    recordParamGesture(PATH, 0.9, 'move', LEVEL);
     expect(lane()).toHaveLength(2);
   });
 
   it('thins by the value epsilon, scaled to the target range (spec §7.8)', () => {
-    recordParamGesture(PATH, 0.5, 'move');
+    recordParamGesture(PATH, 0.5, 'move', LEVEL);
     reading = { ...reading, currentTick: 960 };
     // Level runs 0..1.2, so the epsilon is 0.005 × 1.2 = 0.006.
-    recordParamGesture(PATH, 0.5005, 'move');
+    recordParamGesture(PATH, 0.5005, 'move', LEVEL);
     expect(lane()).toHaveLength(1);
 
     reading = { ...reading, currentTick: 1920 };
-    recordParamGesture(PATH, 0.52, 'move');
+    recordParamGesture(PATH, 0.52, 'move', LEVEL);
     expect(lane()).toHaveLength(2);
   });
 
@@ -119,39 +127,39 @@ describe('recordParamGesture (spec §7.8)', () => {
     ]);
 
     reading = { ...reading, currentTick: 120 };
-    recordParamGesture(PATH, 0.8, 'move');
+    recordParamGesture(PATH, 0.8, 'move', LEVEL);
     reading = { ...reading, currentTick: 600 };
-    recordParamGesture(PATH, 0.9, 'move');
+    recordParamGesture(PATH, 0.9, 'move', LEVEL);
 
     // 240 and 480 fell inside the swept span and are gone; tick 0 predates the pass.
     expect(lane().map((point) => point.tick)).toEqual([0, 120, 600]);
   });
 
   it('records nothing for an unregistered address (spec §7.8 gate)', () => {
-    recordParamGesture('mixer.master.wobble', 0.5, 'move');
+    recordParamGesture('mixer.master.wobble', 0.5, 'move', LEVEL);
     expect(useSequenceStore.getState().automation).toEqual({});
   });
 
   it('records nothing when no sequence is active to own the lane', () => {
     useTransportStore.setState({ activeSequenceId: null });
-    recordParamGesture(PATH, 0.5, 'move');
+    recordParamGesture(PATH, 0.5, 'move', LEVEL);
     expect(useSequenceStore.getState().automation).toEqual({});
   });
 
   it("writes the gesture's released value on the commit phase", () => {
-    recordParamGesture(PATH, 0.5, 'move');
+    recordParamGesture(PATH, 0.5, 'move', LEVEL);
     reading = { ...reading, currentTick: 1000 };
-    recordParamGesture(PATH, 0.77, 'end');
+    recordParamGesture(PATH, 0.77, 'end', LEVEL);
     expect(lane().map((point) => point.value)).toEqual([0.5, 0.77]);
   });
 
   it('folds one recorded gesture into a single undo entry (spec §3.3)', () => {
     const before = useUndoStore.getState().undoDepth;
-    recordParamGesture(PATH, 0.1, 'move');
+    recordParamGesture(PATH, 0.1, 'move', LEVEL);
     reading = { ...reading, currentTick: 480 };
-    recordParamGesture(PATH, 0.4, 'move');
+    recordParamGesture(PATH, 0.4, 'move', LEVEL);
     reading = { ...reading, currentTick: 960 };
-    recordParamGesture(PATH, 0.8, 'end');
+    recordParamGesture(PATH, 0.8, 'end', LEVEL);
     expect(useUndoStore.getState().undoDepth - before).toBe(1);
 
     useUndoStore.getState().undo();
@@ -160,18 +168,18 @@ describe('recordParamGesture (spec §7.8)', () => {
 
   it('opens a fresh sweep when the loop wraps behind the last sample', () => {
     reading = { ...reading, currentTick: 900 };
-    recordParamGesture(PATH, 0.2, 'move');
+    recordParamGesture(PATH, 0.2, 'move', LEVEL);
     reading = { ...reading, currentTick: 0 };
-    recordParamGesture(PATH, 0.9, 'move');
+    recordParamGesture(PATH, 0.9, 'move', LEVEL);
     // The wrapped sample is accepted, and it replaces only its own tick.
     expect(lane().map((point) => point.tick)).toEqual([0, 900]);
   });
 
   it('forgets its passes when the transport stops', () => {
-    recordParamGesture(PATH, 0.2, 'move');
+    recordParamGesture(PATH, 0.2, 'move', LEVEL);
     resetAutomationRecording();
     // Tick 0 again: a live pass would refuse it for running backwards, a fresh one takes it.
-    recordParamGesture(PATH, 0.9, 'move');
+    recordParamGesture(PATH, 0.9, 'move', LEVEL);
     expect(lane().map((point) => point.value)).toEqual([0.9]);
   });
 });
@@ -204,6 +212,65 @@ describe('the transient/commit tap (spec §4.1, §7.8)', () => {
     expect(useSequenceStore.getState().automation).toEqual({});
     // The gesture still moved the parameter — capture is additive, never a replacement.
     expect(useMixerStore.getState().channels.master!.level).toBeCloseTo(0.7, 6);
+  });
+
+  /**
+   * Regression: the `'end'` capture used to run AFTER the parameter's own `commit()`, whose
+   * unkeyed entry closes the pass's coalesce run — so one recorded gesture left three undo
+   * entries and the first Ctrl+Z removed only the closing point.
+   */
+  it('leaves one undo entry for the pass and one for the parameter (spec §3.3)', () => {
+    const before = useUndoStore.getState().undoDepth;
+    useMixerStore.getState().setTransient(PATH, 0.2);
+    reading = { ...reading, currentTick: 480 };
+    useMixerStore.getState().setTransient(PATH, 0.5);
+    reading = { ...reading, currentTick: 960 };
+    useMixerStore.getState().commit(PATH, 0.9);
+    expect(useUndoStore.getState().undoDepth - before).toBe(2);
+
+    // The first undo reverts the parameter; the second reverts the WHOLE recorded pass.
+    useUndoStore.getState().undo();
+    expect(lane()).toHaveLength(3);
+    useUndoStore.getState().undo();
+    expect(lane()).toEqual([]);
+  });
+
+  /**
+   * Regression: `resetAutomationRecording` cleared its passes without sealing the undo
+   * gesture, so a second take on the same lane folded into the first take's entry.
+   */
+  it('keeps two takes on one lane as two undo entries', () => {
+    useMixerStore.getState().setTransient(PATH, 0.2);
+    resetAutomationRecording();
+    const between = useUndoStore.getState().undoDepth;
+    reading = { ...reading, currentTick: 480 };
+    useMixerStore.getState().setTransient(PATH, 0.9);
+    expect(useUndoStore.getState().undoDepth - between).toBe(1);
+  });
+
+  /**
+   * Regression: the epsilon was scaled by `targetRange(target)` with no `effectType`, which
+   * is null for every insert param but `mix` — so insert lanes thinned against an absolute
+   * 0.005 across ranges as wide as 20 kHz, which is no thinning at all.
+   */
+  it('thins an insert parameter against the range of the effect in its slot (spec §5.7)', () => {
+    const strip = createDefaultChannelStrip('master');
+    useMixerStore.getState().setChannels({
+      master: {
+        ...strip,
+        inserts: [{ ...createEmptyInsertSlot(), effectType: 'filter', enabled: true }],
+      },
+    });
+    const cutoff = 'insert:master:slot1.cutoff';
+    useMixerStore.getState().setTransient(cutoff, 5_000);
+    reading = { ...reading, currentTick: 480 };
+    // Cutoff runs 20..20 000, so the epsilon is 0.005 × 19 980 ≈ 99.9 Hz. A 50 Hz nudge is
+    // below it and must be thinned away; a 200 Hz one is not.
+    useMixerStore.getState().setTransient(cutoff, 5_050);
+    expect(useSequenceStore.getState().automation[`sequence:seq1:${cutoff}`]).toHaveLength(1);
+    reading = { ...reading, currentTick: 960 };
+    useMixerStore.getState().setTransient(cutoff, 5_250);
+    expect(useSequenceStore.getState().automation[`sequence:seq1:${cutoff}`]).toHaveLength(2);
   });
 
   it('captures a pad-scope program gesture, which §10.3 binds by default', () => {

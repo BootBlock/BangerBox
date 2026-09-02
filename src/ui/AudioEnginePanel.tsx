@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { getAudioEngine } from '@/core/project/session';
 import { useMixerStore } from '@/store';
+import { channelLevelPath } from '@/core/audio/params/registry';
 import { LEVEL_RANGE } from '@/core/project/schemas';
 import { faderLevelToDb } from '@/core/audio/params/faderLaw';
 import { Button, Fader, MeterCanvas, Pad, formatValueText } from './primitives';
@@ -38,8 +39,12 @@ export function AudioEnginePanel() {
 
   const setMaster = (value: number, commit: boolean) => {
     const store = useMixerStore.getState();
-    if (commit) store.commit('master.level', value);
-    else store.setTransient('master.level', value);
+    // The canonical §7.8 address, not the bare `master.level` this once passed. The store
+    // accepts both, but only the canonical form parses through the registry — so under the
+    // bare one this fader moved the graph and recorded no automation while recording.
+    const path = channelLevelPath('master');
+    if (commit) store.commit(path, value);
+    else store.setTransient(path, value);
   };
 
   const running = contextState === 'running';

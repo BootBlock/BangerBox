@@ -13,10 +13,10 @@
  * which imports the stores that import this.
  */
 import { AUTOMATION_MIN_TICK_SPACING, AUTOMATION_VALUE_EPSILON } from '@/core/constants';
-import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
+import { parseParamTarget } from '@/core/audio/params/registry';
 import type { PlayheadReading } from '@/core/sequencer';
 import { mergeRecordedPoint, shouldRecordSample, type RecordedSample } from '@/core/sequencer/automation';
-import { automationLaneKey, type AutomationPoint } from '@/core/project/schemas';
+import { automationLaneKey, type AutomationPoint, type Range } from '@/core/project/schemas';
 import { endUndoGesture } from './undo';
 import { useSequenceStore } from './useSequenceStore';
 import { useTransportStore } from './useTransportStore';
@@ -37,29 +37,34 @@ const passes = new Map<string, RecordedSample | null>();
 /** The engine publishes its playhead reader here on start, and null on teardown. */
 export function setAutomationClock(next: AutomationClock | null): void {
   clock = next;
-  if (next === null) passes.clear();
+  if (next === null) resetAutomationRecording();
 }
 
 /**
  * Forget every in-flight pass. Called when the transport stops or record-arm drops, so
  * the next pass opens with its own first point instead of thinning against the last one.
+ *
+ * Sealing the undo gesture is half the job, not an afterthought: a pass writes its points
+ * under one coalesce key (spec §3.3), and leaving that key open would fold the NEXT take
+ * on the same lane into the previous take's single undo entry.
  */
 export function resetAutomationRecording(): void {
+  const hadOpenPass = passes.size > 0;
   passes.clear();
+  if (hadOpenPass) endUndoGesture();
 }
 
 /**
  * Value epsilon for a target, scaled from the §2.6 fraction by the parameter's own
- * registered range (spec §7.8). An unregistered address never reaches here — the caller
- * has already parsed it — but a registered one with no resolvable range (an insert param
- * whose slot the recorder cannot see) falls back to the fraction itself, which is the
- * right order of magnitude for the 0..1 params that case covers.
+ * registered range (spec §7.8). A fraction rather than an absolute, because a lane may
+ * hold a gain in 0..1.2, a pan in -1..1 or a cutoff in 20..20 000 Hz.
+ *
+ * The range is supplied by the caller, not looked up here: the store that owns the
+ * parameter has already resolved it to clamp the value, and for an insert parameter it is
+ * the only layer that can — the bounds belong to the effect in the slot (spec §5.7), which
+ * this module would have to reach into another store to see.
  */
-function epsilonFor(path: string): number | null {
-  const target = parseParamTarget(path);
-  if (target === null) return null;
-  const range = targetRange(target);
-  if (range === null) return AUTOMATION_VALUE_EPSILON;
+function epsilonFor(range: Range): number {
   return AUTOMATION_VALUE_EPSILON * Math.abs(range[1] - range[0]);
 }
 
@@ -69,11 +74,16 @@ function epsilonFor(path: string): number | null {
  * whenever nothing is recording, which is the overwhelmingly common case, so the cost on
  * an ordinary fader drag is one SAB read.
  *
- * `phase` is `'move'` for a transient update and `'end'` for the gesture's commit. The
- * end phase writes the released value and seals the undo entry, so one recorded gesture
- * is one Ctrl+Z on top of the parameter's own commit (spec §3.3).
+ * `phase` is `'move'` for a transient update and `'end'` for the gesture's commit, and
+ * `range` is the parameter's registered bounds, which the caller has already resolved. A
+ * gesture may be all `'end'` and no `'move'` — a keyboard step is one — and that still
+ * writes a point.
+ *
+ * **Call the `'end'` phase BEFORE the parameter's own `commit()`, never after.** The pass
+ * writes its points under one coalesce key; an unkeyed commit in between closes that run,
+ * and the closing point would then land as a third undo entry of its own (spec §3.3).
  */
-export function recordParamGesture(path: string, value: number, phase: 'move' | 'end'): void {
+export function recordParamGesture(path: string, value: number, phase: 'move' | 'end', range: Range): void {
   const reading = clock?.();
   if (!reading?.isCapturing) return;
 
@@ -84,8 +94,10 @@ export function recordParamGesture(path: string, value: number, phase: 'move' | 
   const ownerId = useTransportStore.getState().activeSequenceId;
   if (ownerId === null) return;
 
-  const epsilon = epsilonFor(path);
-  if (epsilon === null) return; // unregistered address — never recorded (spec §7.8 gate)
+  // Unregistered addresses are never recorded (spec §7.8 gate). The legacy bare mixer form
+  // (`master.level`) lands here too, and refusing it is right: `setAutomationLane` would
+  // refuse the lane anyway, so a point written under it could never be scheduled.
+  if (parseParamTarget(path) === null) return;
 
   const key = automationLaneKey('sequence', ownerId, path);
   const tick = Math.max(0, Math.round(reading.currentTick));
@@ -95,19 +107,22 @@ export function recordParamGesture(path: string, value: number, phase: 'move' | 
   // position rather than refusing every sample for the rest of the take.
   if (previous !== null && tick < previous.tick) previous = null;
 
-  const limits = { minTickSpacing: AUTOMATION_MIN_TICK_SPACING, valueEpsilon: epsilon };
+  const limits = { minTickSpacing: AUTOMATION_MIN_TICK_SPACING, valueEpsilon: epsilonFor(range) };
   if (phase === 'move') {
     if (!shouldRecordSample(previous, tick, value, limits)) return;
-  } else {
+  } else if (previous !== null && tick <= previous.tick) {
     // The gesture's end is worth a point wherever the playhead has since moved on: it is
     // the value the user settled on, and thinning it away would leave the lane short of
-    // where the encoder actually stopped. A pass that never accepted a sample wrote
-    // nothing to close.
-    if (previous === null || tick <= previous.tick) {
-      passes.delete(key);
-      return;
-    }
+    // where the encoder actually stopped. Where it has not moved on, the pass has nothing
+    // left to write but still has its coalesce run to seal.
+    passes.delete(key);
+    endUndoGesture();
+    return;
   }
+  // A `previous` of null on the end phase is a gesture with NO move phase — an arrow-key
+  // step of a knob or fader, or a double-click reset, which `useContinuousControl` sends
+  // straight to `onCommit` (spec §4.5 "keyboard steps are discrete"). §7.8 asks for knob
+  // movements, and that is one; it opens and closes its pass in a single sample.
 
   const point: AutomationPoint = {
     id: crypto.randomUUID(),
