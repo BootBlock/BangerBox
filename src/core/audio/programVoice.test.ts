@@ -6,12 +6,14 @@ import {
   type KeygroupZone,
   type VelocityLayer,
 } from '@/core/project/schemas';
+import { createFakeAudioContext } from '@/test/mocks/audioContext';
 import {
   keygroupDetuneCents,
   programChannelId,
   resolveDrumVoice,
   resolveKeygroupVoice,
   resolveVoice,
+  resolvedVoiceToTrigger,
   selectKeygroupZone,
   selectVelocityLayer,
 } from './programVoice';
@@ -166,5 +168,59 @@ describe('resolveVoice dispatch (spec §6)', () => {
     const keys = createDefaultKeygroupProgram('Keys');
     keys.zones = [zone({ sampleId: 'pad' })];
     expect(resolveVoice(keys, 60, 100)?.sampleId).toBe('pad');
+  });
+});
+
+describe('resolvedVoiceToTrigger — the §6 layer flags the pool acts on (issue #84)', () => {
+  const { context } = createFakeAudioContext();
+  const buffer = context.createBuffer(1, 1000, 48_000);
+
+  function triggerFor(pad: ReturnType<typeof createDefaultPad>, note = 0) {
+    const program = { ...createDefaultDrumProgram('P', 'prog'), pads: [pad] };
+    const resolved = resolveVoice(program, note, 100);
+    if (!resolved) throw new Error('nothing resolved');
+    return resolvedVoiceToTrigger(resolved, {
+      id: 'v1',
+      buffer,
+      destination: context.createGain(),
+      when: 0,
+      velocity: 100,
+      programId: 'prog',
+    });
+  }
+
+  it('forwards warp so the pool can build the §5.7.9 granular source', () => {
+    const warped = { ...createDefaultPad(0), warp: true, layers: [layer({})] };
+    expect(triggerFor(warped).warp).toBe(true);
+    const plain = { ...createDefaultPad(0), warp: false, layers: [layer({})] };
+    expect(triggerFor(plain).warp).toBe(false);
+  });
+
+  it('mirrors a reversed layer’s trim into the reversed buffer’s frame numbering', () => {
+    const pad = {
+      ...createDefaultPad(0),
+      layers: [layer({ reverse: true, startFrame: 100, endFrame: 400 })],
+    };
+    const trigger = triggerFor(pad);
+    // Frames 100..400 of a 1000-frame sample are frames 600..900 of its reverse.
+    expect(trigger.startFrame).toBe(600);
+    expect(trigger.endFrame).toBe(900);
+  });
+
+  it('leaves a forward layer’s trim exactly as the §6 payload records it', () => {
+    const pad = {
+      ...createDefaultPad(0),
+      layers: [layer({ reverse: false, startFrame: 100, endFrame: 400 })],
+    };
+    const trigger = triggerFor(pad);
+    expect(trigger.startFrame).toBe(100);
+    expect(trigger.endFrame).toBe(400);
+  });
+
+  it('mirrors an untrimmed reversed layer to the whole sample, not to frame 0', () => {
+    const pad = { ...createDefaultPad(0), layers: [layer({ reverse: true })] };
+    const trigger = triggerFor(pad);
+    expect(trigger.startFrame).toBe(0);
+    expect(trigger.endFrame).toBe(1000);
   });
 });

@@ -9,7 +9,7 @@
 import { FdnReverbKernel } from '../../dsp/fdnReverbKernel';
 import { LookaheadLimiterKernel } from '../../dsp/lookaheadLimiterKernel';
 import { MultibandCompKernel } from '../../dsp/multibandCompKernel';
-import type { WorkletKernelName } from '../../dsp/kernelModules';
+import type { DspEffectKernelName } from '../../dsp/kernelModules';
 import type { DspEffectMessage, DspEffectProcessorOptions } from './dspEffectProtocol';
 
 const MAX_CHANNELS = 2;
@@ -21,7 +21,7 @@ interface HostedKernel {
 }
 
 function createKernel(
-  kernel: WorkletKernelName,
+  kernel: DspEffectKernelName,
   module: WebAssembly.Module,
   rate: number,
   maxBlock: number,
@@ -38,7 +38,7 @@ function createKernel(
 
 /** Push the full parameter set into every channel kernel (spec §5.7 param mapping). */
 function applyParams(
-  kernel: WorkletKernelName,
+  kernel: DspEffectKernelName,
   instances: readonly HostedKernel[],
   params: Record<string, number>,
 ): void {
@@ -70,7 +70,7 @@ function applyParams(
 
 class DspEffectProcessor extends AudioWorkletProcessor {
   private kernels: HostedKernel[] | null;
-  private readonly kernelName: WorkletKernelName;
+  private readonly kernelName: DspEffectKernelName;
   private readonly params: Record<string, number>;
 
   constructor(options: AudioWorkletNodeOptions) {

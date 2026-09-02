@@ -80,6 +80,15 @@ export class MixerGraph {
     return [this.master, ...this.returns, ...this.tracks.values(), ...this.pads.values()];
   }
 
+  /**
+   * Push a tempo change to every insert on every strip (spec §7.2). Only the §5.7 synced
+   * delay acts on it today; the fan-out lives here rather than in the bridge so a strip
+   * created later cannot be missed — the bridge holds no list of strips, the graph does.
+   */
+  setTempo(bpm: number, when: number): void {
+    for (const channel of this.allChannels()) channel.setInsertTempo(bpm, when);
+  }
+
   /** Destroy a pad channel (program change / pad clear) — spec §5.3 routes through here. */
   removePadChannel(channelId: string): void {
     const channel = this.pads.get(channelId);

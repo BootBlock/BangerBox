@@ -5,11 +5,14 @@
  * matching the effect's reported latency, so dry and wet stay phase-coherent — native
  * effects report 0). Params flow through the core's dezipper ramps (spec §4.3).
  *
+ * `bpm` is the transport tempo a tempo-synced core locks to (spec §5.7 delay, §7.2); the
+ * sync layer keeps it current through {@link InsertHandle.setTempo} (spec §4.3).
+ *
  * Topology (enabled): input ─┬─→ effect ─→ wetGain ─┐
  *                            └─→ pdcDelay ─→ dryGain ─┴─→ output
  * Bypassed: input ─────────────────────────────────→ output (unprocessed).
  */
-import type { EffectType } from '@/core/project/schemas';
+import { DEFAULT_BPM, type EffectType } from '@/core/project/schemas';
 import { buildEffectCore, type EffectCore } from './effects';
 import { defaultEffectParams } from './effectParams';
 import { cancelParams } from '../params/ramps';
@@ -25,9 +28,10 @@ export function createInsert(
   context: BaseAudioContext,
   effectType: EffectType,
   params: Record<string, number> = {},
+  bpm = DEFAULT_BPM,
 ): InsertHandle {
   const merged = { ...defaultEffectParams(effectType), ...params };
-  const core: EffectCore = buildEffectCore(context, effectType, merged);
+  const core: EffectCore = buildEffectCore(context, effectType, merged, bpm);
 
   const input = context.createGain();
   const output = context.createGain();
@@ -78,6 +82,9 @@ export function createInsert(
       if (name === 'mix') setMix(value);
       else core.setParam(name, value, when);
     },
+    // Forwarded rather than absorbed: only the core knows whether it has a tempo-synced
+    // parameter, and an effect without one leaves `setTempo` undefined (spec §5.7).
+    setTempo: (nextBpm, when) => core.setTempo?.(nextBpm, when),
     destroy: () => {
       cancelParams(dryGain.gain, wetGain.gain, pdcDelay.delayTime);
       input.disconnect();

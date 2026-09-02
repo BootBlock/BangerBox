@@ -31,6 +31,7 @@ import { Metronome } from './metronome';
 import { PreviewChannel } from './preview';
 import { resolvedVoiceToTrigger, resolveVoice, type ResolvedVoice } from './programVoice';
 import { SampleCache } from './sampleCache';
+import { ReversedBufferCache } from './voiceBuffer';
 import { VoicePool } from './voicePool';
 
 /** Identity of the demo pad/track used by the test UI + smoke (not shipped). */
@@ -57,6 +58,8 @@ export class AudioEngine {
   private readonly meterSinks: GainNode[] = [];
   /** Decoded program sample buffers keyed by sampleId (spec §9.4 decode-once). */
   private readonly programBuffers = new Map<string, AudioBuffer>();
+  /** Reversed copies for §6 reversed layers, one per decoded buffer (spec §6). */
+  private readonly reversedBuffers: ReversedBufferCache;
   /** Pad/program channels whose §6 mixer has been pushed to the graph (apply once). */
   private readonly channelMixerApplied = new Set<string>();
   /** Preloaded demo sample the scheduler dispatch triggers per note (the demo instrument). */
@@ -74,6 +77,7 @@ export class AudioEngine {
     this.metronome = new Metronome(context, this.graph.monitorBus);
     this.preview = new PreviewChannel(context, this.graph.monitorBus);
     this.sampleCache = new SampleCache(context);
+    this.reversedBuffers = new ReversedBufferCache(context);
     this.bridge = createAudioBridge({
       graph: this.graph,
       context,
@@ -91,6 +95,10 @@ export class AudioEngine {
           .getState()
           .commitRecordedTake(trackId, events, useTransportStore.getState().recordMode),
       onErased: (trackId, eventIds) => useSequenceStore.getState().removeEvents(trackId, eventIds),
+      // spec §7.9: the song reached its end with looping off, so the main thread stops the
+      // transport exactly as though the user had pressed stop. The worker has already closed
+      // its open notes and flushed the take, so nothing is lost by stopping here.
+      onSongEnded: () => useTransportStore.getState().stop(),
     });
   }
 
@@ -308,8 +316,11 @@ export class AudioEngine {
     const projectId = useProjectStore.getState().projectId || DEMO_PROGRAM_ID;
     const programId = useSequenceStore.getState().tracks[trackId]?.programId ?? trackId;
     const channel = this.ensureProgramChannel(trackId, resolved);
-    const play = (buffer: AudioBuffer): void => {
+    const play = (decoded: AudioBuffer): void => {
       this.scheduledNotes++;
+      // spec §6 `VelocityLayer.reverse`: the layer plays a reversed copy of its sample, and
+      // `resolvedVoiceToTrigger` mirrors the trim into that copy's frame numbering.
+      const buffer = resolved.reverse ? this.reversedBuffers.get(decoded) : decoded;
       this.voicePool.trigger(
         resolvedVoiceToTrigger(resolved, {
           id: crypto.randomUUID(),
@@ -318,6 +329,9 @@ export class AudioEngine {
           when: event.when,
           velocity: event.velocity ?? 100,
           programId,
+          // A §6 tempo-synced LFO is resolved against the tempo the transport is at when
+          // the note sounds (spec §6, §7.2).
+          bpm: useTransportStore.getState().bpm,
         }),
       );
     };

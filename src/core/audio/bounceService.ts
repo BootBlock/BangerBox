@@ -21,6 +21,8 @@ import { useProgramStore, useSequenceStore, useTransportStore } from '@/store';
 import { resolveVoice, resolvedVoiceToTrigger } from './programVoice';
 import { decodeWav } from './wav';
 import { encodeWavInWorker, saveChannelsAsSample } from './sampleImport';
+import { prepareVoiceWorklets } from './context';
+import { ReversedBufferCache } from './voiceBuffer';
 import { VoicePool } from './voicePool';
 
 export interface BounceContext {
@@ -63,12 +65,17 @@ async function renderSegments(segments: readonly Segment[], ctx: BounceContext):
   const frames = Math.ceil((totalSeconds + TAIL_SECONDS) * ctx.projectSampleRate);
 
   const offline = new OfflineAudioContext(2, Math.max(1, frames), ctx.projectSampleRate);
+  // Register the §5.7.9 warp source on this context before any voice is built, so a warp
+  // pad bounces the way it plays rather than falling back to coupled repitch (spec §9.5:
+  // the bounce renders through the same VoicePool).
+  await prepareVoiceWorklets(offline);
   const master = offline.createGain();
   master.connect(offline.destination);
   const pool = new VoicePool(offline);
 
   const programs = useProgramStore.getState().programs;
   const bufferCache = new Map<string, AudioBuffer>();
+  const reversedBuffers = new ReversedBufferCache(offline);
 
   const decodeSample = async (sampleId: string): Promise<AudioBuffer | null> => {
     const cached = bufferCache.get(sampleId);
@@ -109,8 +116,10 @@ async function renderSegments(segments: readonly Segment[], ctx: BounceContext):
       for (const event of events) {
         const resolved = resolveVoice(program, event.note, event.velocity);
         if (!resolved) continue;
-        const buffer = await decodeSample(resolved.sampleId);
-        if (!buffer) continue;
+        const decoded = await decodeSample(resolved.sampleId);
+        if (!decoded) continue;
+        // spec §6 `VelocityLayer.reverse`, exactly as live playback applies it.
+        const buffer = resolved.reverse ? reversedBuffers.get(decoded) : decoded;
         pool.trigger(
           resolvedVoiceToTrigger(resolved, {
             // Ids stay unique across repeats of the same sequence in a song.
@@ -120,6 +129,9 @@ async function renderSegments(segments: readonly Segment[], ctx: BounceContext):
             when: segment.startSeconds + event.tickStart * secondsPerTick,
             velocity: event.velocity,
             programId: program.id,
+            // The segment's own tempo, so a §6 synced LFO renders at the rate the live
+            // scheduler would have played it at (spec §6, §7.9).
+            bpm: segment.bpm,
           }),
         );
       }

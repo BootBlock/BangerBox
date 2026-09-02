@@ -103,6 +103,7 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     scheduler.sendAutomationDiff(scope, ownerId, targetPath, points);
   }
   pushGrooves(scheduler);
+  scheduler.setSongLoop(useTransportStore.getState().songLoopEnabled);
   pushTransport(scheduler);
 
   let prevTrackGrooves = useSequenceStore.getState().trackGrooveIds;
@@ -137,6 +138,11 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     useTransportStore.subscribe(
       (s) => `${s.activeSequenceId}:${s.playbackMode}`,
       () => pushMeta(scheduler),
+    ),
+    // spec §7.9: what the worker does when it reaches `songTotalTicks`.
+    useTransportStore.subscribe(
+      (s) => s.songLoopEnabled,
+      (enabled) => scheduler.setSongLoop(enabled),
     ),
     // Transport play/record is the last thing forwarded so the worker already has state.
     useTransportStore.subscribe(

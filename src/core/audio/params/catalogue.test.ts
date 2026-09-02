@@ -35,6 +35,7 @@ describe('channelAutomatableParams (spec §7.8)', () => {
     const inserts = params.filter((p) => p.path.startsWith('insert:'));
     expect(inserts.map((p) => p.path)).toEqual([
       'insert:track:t1:slot1.time',
+      'insert:track:t1:slot1.sync',
       'insert:track:t1:slot1.feedback',
       'insert:track:t1:slot1.tone',
       'insert:track:t1:slot1.mix',

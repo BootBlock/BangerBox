@@ -8,8 +8,16 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { clamp, clampInt } from '@/core/math';
-import { BPM_RANGE, LOOP_TICK_MIN, METRONOME_LEVEL_RANGE, SWING_RANGE } from '@/core/project/schemas';
+import { dirtyKey, markDirty } from '@/core/project/dirty';
+import {
+  BPM_RANGE,
+  DEFAULT_BPM,
+  LOOP_TICK_MIN,
+  METRONOME_LEVEL_RANGE,
+  SWING_RANGE,
+} from '@/core/project/schemas';
 import type { ArpConfig } from '@/core/sequencer';
+import { useProjectStore } from './useProjectStore';
 
 export type RecordMode = 'overdub' | 'replace';
 export type PlaybackMode = 'sequence' | 'song';
@@ -36,6 +44,13 @@ interface TransportState {
   loopEnabled: boolean;
   loopStartTick: number; // 960 PPQN
   loopEndTick: number;
+  /**
+   * Song mode wraps at the end instead of stopping there (spec §4.2, §7.9). Off by
+   * default, so a song stops at its end. Unlike the rest of this store it is arrangement
+   * state rather than a performance gesture, so it persists in the project payload
+   * (spec §9.3) and its setter marks the project dirty.
+   */
+  songLoopEnabled: boolean;
   coarsePosition: CoarsePosition;
   /**
    * Arpeggiator on/off and its settings (spec §7.3). Live performance state, so it lives
@@ -53,6 +68,7 @@ interface TransportState {
   setBpm: (bpm: number) => void;
   setSwing: (amount: number, division?: SwingDivision) => void;
   setLoop: (loop: { enabled?: boolean; startTick?: number; endTick?: number }) => void;
+  setSongLoopEnabled: (enabled: boolean) => void;
   setMetronomeEnabled: (enabled: boolean) => void;
   setMetronomeLevel: (level: number) => void;
   setCountInBars: (bars: CountInBars) => void;
@@ -83,12 +99,13 @@ export const useTransportStore = create<TransportState>()(
     recordMode: 'overdub',
     playbackMode: 'sequence',
     activeSequenceId: null,
-    bpm: 120,
+    bpm: DEFAULT_BPM,
     swingAmount: 50,
     swingDivision: 16,
     loopEnabled: false,
     loopStartTick: 0,
     loopEndTick: 0,
+    songLoopEnabled: false,
     coarsePosition: { bar: 1, beat: 1 },
     arpEnabled: false,
     arpConfig: DEFAULT_ARP_CONFIG,
@@ -114,6 +131,13 @@ export const useTransportStore = create<TransportState>()(
           loopEndTick: endTick,
         };
       }),
+    // The only setting in this store that outlives the session: it belongs to the
+    // arrangement (spec §7.9), so it is written back to the project payload (spec §9.3).
+    setSongLoopEnabled: (songLoopEnabled) => {
+      set({ songLoopEnabled });
+      const { projectId } = useProjectStore.getState();
+      if (projectId !== '') markDirty(dirtyKey.project(projectId));
+    },
     setMetronomeEnabled: (enabled) => set({ metronomeEnabled: enabled }),
     setMetronomeLevel: (level) =>
       set({ metronomeLevel: clamp(level, METRONOME_LEVEL_RANGE[0], METRONOME_LEVEL_RANGE[1]) }),

@@ -5,18 +5,24 @@ import { useSequenceStore } from '../useSequenceStore';
 import { useTransportStore } from '../useTransportStore';
 import { subscribeSequencerSync } from './sequencerSync';
 
+/**
+ * A scheduler stub that grows its own spies on first access. A hand-listed set of mocks
+ * silently omits any sender added later, so the subscriber under test would throw (or worse,
+ * a new forward would go unasserted) — the same drift that hid the §7.5 groove wire break
+ * (issue #71).
+ */
 function fakeScheduler() {
-  return {
-    setSequenceMeta: vi.fn(),
-    setSongSequence: vi.fn(),
-    setTempo: vi.fn(),
-    setSwing: vi.fn(),
-    setLoop: vi.fn(),
-    setMetronome: vi.fn(),
-    setTransport: vi.fn(),
-    sendEventsDiff: vi.fn(),
-    sendAutomationDiff: vi.fn(),
-  } as unknown as SchedulerClient & Record<string, ReturnType<typeof vi.fn>>;
+  const spies = new Map<string, ReturnType<typeof vi.fn>>();
+  return new Proxy({} as Record<string, ReturnType<typeof vi.fn>>, {
+    get: (_target, property: string | symbol) => {
+      if (typeof property !== 'string') return undefined;
+      const existing = spies.get(property);
+      if (existing) return existing;
+      const spy = vi.fn();
+      spies.set(property, spy);
+      return spy;
+    },
+  }) as unknown as SchedulerClient & Record<string, ReturnType<typeof vi.fn>>;
 }
 
 const SEQ = createDefaultSequence('proj', 0, 'Seq', 'S');
@@ -41,6 +47,7 @@ function seed() {
     countInBars: 0,
     activeSequenceId: 'S',
     playbackMode: 'sequence',
+    songLoopEnabled: false,
   });
 }
 

@@ -108,3 +108,32 @@ describe('songWindowSlices (spec §7.9 boundary-spanning lookahead)', () => {
     expect(slices[0]).toMatchObject({ seqFrom: 100, seqTo: 500 });
   });
 });
+
+describe('entries that contribute nothing (spec §7.9)', () => {
+  it('skips an entry with repeats: 0 rather than sounding it once', () => {
+    const map = buildSongMap([entry('e1', 0, 'A', 0), entry('e2', 1, 'B', 1)], sequences, 100);
+    expect(map.map((segment) => segment.sequenceId)).toEqual(['B']);
+    // The skipped entry still consumes its index, so `songAdvanced` stays addressable
+    // against the position-sorted list rather than against the segments that survived.
+    expect(map[0]!.entryIndex).toBe(1);
+  });
+
+  it('gives a song whose entries all contribute nothing a total of zero ticks', () => {
+    const map = buildSongMap([entry('e1', 0, 'A', 0), entry('e2', 1, 'missing', 4)], sequences, 100);
+    expect(map).toHaveLength(0);
+    expect(songTotalTicks(map)).toBe(0);
+    expect(songTotalSeconds(map)).toBe(0);
+  });
+
+  it('indexes songAdvanced against the POSITION-SORTED list, not the raw array', () => {
+    // Entries out of position order, with the first-by-position naming a missing sequence.
+    const map = buildSongMap(
+      [entry('e2', 1, 'B', 1), entry('e1', 0, 'missing', 1), entry('e3', 2, 'A', 1)],
+      sequences,
+      100,
+    );
+    // Sorted: [missing, B, A] → indices 0, 1, 2. The missing entry consumes index 0.
+    expect(map.map((segment) => segment.entryIndex)).toEqual([1, 2]);
+    expect(map.map((segment) => segment.sequenceId)).toEqual(['B', 'A']);
+  });
+});

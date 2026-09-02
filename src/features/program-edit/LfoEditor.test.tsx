@@ -69,25 +69,25 @@ describe('LfoEditor (spec §8.5.5, §6)', () => {
     expect(committed[0].rate).toBe(createDefaultLfo().rate);
   });
 
-  it('leaves the rate editable when synced, and says why (engine ignores sync today)', async () => {
+  it('disables the Hz rate once a note division decides it (spec §6)', async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    const rate = screen.getByLabelText('LFO 1 rate (Hz)');
-
-    expect(screen.queryByRole('list', { name: 'LFO 1 engine notes' })).not.toBeInTheDocument();
-    expect(rate).toBeEnabled();
+    expect(screen.getByLabelText('LFO 1 rate (Hz)')).toBeEnabled();
 
     await user.selectOptions(screen.getByLabelText('LFO 1 sync'), '1/16');
-    const notes = screen.getByRole('list', { name: 'LFO 1 engine notes' });
-    expect(notes).toHaveTextContent(/Tempo sync is saved but not yet applied/);
-    // Sync is stored but unapplied, so the Hz rate is still the audible one — it stays live.
-    expect(rate).toBeEnabled();
-    await user.clear(rate);
-    await user.type(rate, '3');
-    expect(screen.getByLabelText('LFO 1 rate (Hz)')).toHaveValue(3);
+    // The division and the transport tempo decide the rate now (issue #107), so a live Hz
+    // field would offer a value nothing reads.
+    expect(screen.getByLabelText('LFO 1 rate (Hz)')).toBeDisabled();
+    // The other LFO is untouched — sync is per LFO.
+    expect(screen.getByLabelText('LFO 2 rate (Hz)')).toBeEnabled();
+  });
 
-    // The note belongs to the LFO that is synced, not to both.
-    expect(screen.queryByRole('list', { name: 'LFO 2 engine notes' })).not.toBeInTheDocument();
+  it('no longer warns that sync, phase or free-running are unapplied', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.selectOptions(screen.getByLabelText('LFO 1 sync'), '1/16');
+    await user.click(screen.getByLabelText('LFO 1 retrigger'));
+    expect(screen.queryByRole('list', { name: 'LFO 1 engine notes' })).not.toBeInTheDocument();
   });
 
   it('flags the approximated shapes rather than pretending they are exact', async () => {

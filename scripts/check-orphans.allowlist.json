@@ -12,11 +12,6 @@
       "reason": "Issue #104 — resample-to-pad (§9.5) is implemented but unreachable from any surface."
     },
     {
-      "file": "src/core/audio/grooveService.ts",
-      "export": "extractGrooveFromSample",
-      "reason": "Issue #71 — the non-destructive groove path is dead end to end; the module header already cites the issue."
-    },
-    {
       "file": "src/core/audio/detuneSchedule.ts",
       "export": "baseDetuneAt",
       "reason": "Internal caller: detuneAt, plus the swing and cursor-rate paths. Exported so the tuning arithmetic is testable without an AudioContext."
@@ -227,11 +222,6 @@
       "reason": "Composed into drumProgramSchema; the §11.1 accept/reject fixture parses it directly through the schemas barrel."
     },
     {
-      "file": "src/core/project/schemas/program.ts",
-      "export": "createDefaultLfo",
-      "reason": "Internal caller: createDefaultPad and createDefaultKeygroupProgram."
-    },
-    {
       "file": "src/core/project/schemas/sequence.ts",
       "export": "sequenceSchema",
       "reason": "The §11.1 accept/reject fixture parses it through the barrel, and the live Sequence type is inferred from it."
@@ -285,11 +275,6 @@
       "file": "src/core/sequencer/songMap.ts",
       "export": "songTotalTicks",
       "reason": "Internal caller: songSecondsToTick."
-    },
-    {
-      "file": "src/core/sequencer/songMap.ts",
-      "export": "songTotalSeconds",
-      "reason": "Internal caller: songTickToSeconds."
     },
     {
       "file": "src/core/sequencer/songMap.ts",

@@ -6,8 +6,10 @@
  * `InsertSlotState.params: Record<string, number>` (spec §4.2) and stays automatable
  * (spec §7.8). Pure and dependency-light so it is trivially unit-testable (spec §2.5).
  */
+import { BPM_RANGE, NOTE_DIVISIONS, type NoteDivision } from '@/core/project/schemas';
 import type { EffectType } from '@/core/project/schemas';
 import type { Range } from '@/core/project/schemas';
+import { noteDivisionSeconds } from '@/core/sequencer/ppqn';
 
 /** The wrapper-level dry/wet mix shared by every insert (spec §5.7). */
 export const MIX_RANGE: Range = [0, 1];
@@ -16,6 +18,41 @@ export const MIX_RANGE: Range = [0, 1];
 export const FILTER_TYPES = ['lp', 'hp', 'bp', 'notch'] as const;
 /** Saturator curve index encoding (spec §5.7 `saturator.curve` soft/hard/tube). */
 export const SATURATOR_CURVES = ['soft', 'hard', 'tube'] as const;
+
+/**
+ * Delay time modes (spec §5.7 "time: free 1–2000 ms **or** synced division (1/32–1/2,
+ * dotted/triplet)"). Index 0 is `free`, which keeps the `time` parameter's milliseconds;
+ * every other index names a §6 note division the delay follows at the transport tempo.
+ *
+ * The list is derived from `NOTE_DIVISIONS` rather than restated, so the two cannot drift
+ * (spec §13.6). `1/1` is dropped because §5.7 bounds the synced set at 1/2.
+ */
+const DELAY_SYNC_MODES: readonly ('free' | NoteDivision)[] = [
+  'free',
+  ...NOTE_DIVISIONS.filter((division) => division !== '1/1'),
+];
+
+/** The note division for a `sync` index, or null for free time (spec §5.7). */
+export function delaySyncDivision(index: number): NoteDivision | null {
+  const mode = DELAY_SYNC_MODES[Math.round(index)];
+  return mode === undefined || mode === 'free' ? null : mode;
+}
+
+/** Longest free delay time in milliseconds (spec §5.7). */
+const MAX_FREE_DELAY_MS = 2_000;
+
+/**
+ * `maxDelayTime` for the delay's `DelayNode`, in seconds: the longest §5.7 synced division
+ * at the slowest §4.2 tempo. A `DelayNode` fixes its line length at construction, and a
+ * synced delay that silently truncated at 40 bpm would be worse than none — so the worst
+ * case is allocated once and derived here rather than guessed at the call site.
+ */
+export const DELAY_MAX_SECONDS = Math.max(
+  MAX_FREE_DELAY_MS / 1000,
+  ...DELAY_SYNC_MODES.filter((mode): mode is NoteDivision => mode !== 'free').map((division) =>
+    noteDivisionSeconds(division, BPM_RANGE[0]),
+  ),
+);
 
 /** Native `BiquadFilterType` for each `filter`/eq band role. */
 export const FILTER_TYPE_TO_BIQUAD: Record<(typeof FILTER_TYPES)[number], BiquadFilterType> = {
@@ -45,8 +82,12 @@ export const EFFECT_PARAM_RANGES: Record<EffectType, Record<string, Range>> = {
     resonance: [0.1, 20],
   },
   delay: {
-    // spec §5.7: free time 1–2000 ms (synced division arrives with the tempo map, §7.9).
-    time: [1, 2_000],
+    // spec §5.7: free time 1–2000 ms, used whenever `sync` is 0 (free).
+    time: [1, MAX_FREE_DELAY_MS],
+    // spec §5.7: the synced division, index-encoded into DELAY_SYNC_MODES like the
+    // filter's type and the saturator's curve, so the whole surface stays automatable
+    // through `InsertSlotState.params: Record<string, number>` (spec §4.2, §7.8).
+    sync: [0, DELAY_SYNC_MODES.length - 1],
     feedback: [0, 0.95],
     tone: [200, 18_000],
     mix: MIX_RANGE,
@@ -97,6 +138,19 @@ export const EFFECT_PARAM_RANGES: Record<EffectType, Record<string, Range>> = {
   },
 };
 
+/**
+ * The labels behind an index-encoded parameter (spec §5.7): the `filter` type, the
+ * `saturator` curve, and the `delay` sync division. These params are integers so the whole
+ * effect surface fits `InsertSlotState.params` and stays automatable (spec §7.8), but a knob
+ * reading "7" tells a user nothing — the editor renders a choice control for anything named
+ * here, and a knob for everything else.
+ */
+export const EFFECT_PARAM_CHOICES: Partial<Record<EffectType, Record<string, readonly string[]>>> = {
+  filter: { type: FILTER_TYPES },
+  saturator: { curve: SATURATOR_CURVES },
+  delay: { sync: DELAY_SYNC_MODES },
+};
+
 /** Neutral starting parameters for a freshly added insert of `effectType` (spec §5.7). */
 export function defaultEffectParams(effectType: EffectType): Record<string, number> {
   switch (effectType) {
@@ -116,7 +170,7 @@ export function defaultEffectParams(effectType: EffectType): Record<string, numb
     case 'filter':
       return { type: 0, cutoff: 2_000, resonance: 1 };
     case 'delay':
-      return { time: 350, feedback: 0.35, tone: 6_000, mix: 0.35 };
+      return { time: 350, sync: 0, feedback: 0.35, tone: 6_000, mix: 0.35 };
     case 'compressor':
       return { threshold: -18, ratio: 4, attack: 5, release: 120, knee: 12, makeup: 0 };
     case 'saturator':

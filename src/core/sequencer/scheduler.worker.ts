@@ -2,15 +2,17 @@
 /**
  * The sequencer scheduling Web Worker (spec §7.1.1 — a standard Web Worker, never the UI
  * thread, never an AudioWorklet). This file is a thin message shell (spec §11.3): all timing
- * logic lives in the pure {@link SchedulerCore}, driven here by the {@link ClockModel} and a
+ * logic lives in the pure {@link SchedulerCore} and all request handling in
+ * {@link applySchedulerRequest}, driven here by the {@link ClockModel} and a
  * `SCHEDULER_INTERVAL_MS` wake loop. Each wake it estimates context time, ticks the core,
  * writes the playhead SAB (spec §7.1.4), and posts the resulting batches/notifications.
  * Inbound messages are Zod-guarded exactly like the DB worker (spec §1.3 #11).
  */
 import { SCHEDULER_INTERVAL_MS } from '@/core/constants';
 import { ClockModel } from './clockSync';
-import { parseSchedulerRequest, type SchedulerRequest, type SchedulerResponse } from './messages';
+import { parseSchedulerRequest, type SchedulerResponse } from './messages';
 import { PlayheadWriter } from './playheadSab';
+import { applySchedulerRequest, type SchedulerRequestSink } from './schedulerDispatch';
 import { SchedulerCore } from './schedulerCore';
 
 const scope = globalThis as unknown as DedicatedWorkerGlobalScope;
@@ -24,82 +26,26 @@ function post(response: SchedulerResponse): void {
   scope.postMessage(response);
 }
 
+const sink: SchedulerRequestSink = {
+  core,
+  toContextTime: (timestamp) => clock.estimateContextTime(timestamp),
+  onInit: (playheadSab) => {
+    playhead = new PlayheadWriter(playheadSab);
+    startLoop();
+  },
+  onClockSync: (contextTime, performanceTime) => {
+    const { snapped } = clock.applySync(contextTime, performanceTime);
+    // spec §7.1.2: drift beyond 2 ms snaps and logs.
+    if (snapped) console.warn('[scheduler] clock drift beyond 2 ms — offset snapped');
+  },
+};
+
 scope.addEventListener('message', (event: MessageEvent) => {
   const request = parseSchedulerRequest(event.data);
   if (!request) return; // Zod guard (locked decision §1.3 #11): drop malformed traffic.
-  handle(request);
+  applySchedulerRequest(sink, request);
+  if (request.kind === 'transport') wake();
 });
-
-function handle(request: SchedulerRequest): void {
-  switch (request.kind) {
-    case 'init':
-      playhead = new PlayheadWriter(request.playheadSab);
-      startLoop();
-      return;
-    case 'clockSync': {
-      const { snapped } = clock.applySync(request.contextTime, request.performanceTime);
-      // spec §7.1.2: drift beyond 2 ms snaps and logs.
-      if (snapped) console.warn('[scheduler] clock drift beyond 2 ms — offset snapped');
-      return;
-    }
-    case 'transport':
-      core.setTransport(request.isPlaying, request.isRecording, request.startTick);
-      wake();
-      return;
-    case 'tempo':
-      core.setTempo(request.bpm);
-      return;
-    case 'swing':
-      core.setSwing(request.amount, request.division);
-      return;
-    case 'groove':
-      core.setGroove(request.trackId, request.template);
-      return;
-    case 'loop':
-      core.setLoop({ enabled: request.enabled, startTick: request.startTick, endTick: request.endTick });
-      return;
-    case 'eventsDiff':
-      core.applyEventsDiff(request.trackId, request.sequenceId, request.upserts, request.deletes);
-      return;
-    case 'automationDiff':
-      core.applyAutomationDiff(request.scope, request.ownerId, request.targetPath, request.points);
-      return;
-    case 'songSequence':
-      core.setSongSequence(request.orderedSequenceIds);
-      return;
-    case 'sequenceMeta':
-      core.setSequenceMeta(
-        request.sequences,
-        request.projectBpm,
-        request.activeSequenceId,
-        request.playbackMode,
-      );
-      return;
-    case 'liveNote': {
-      // The BLE/UI timestamp is in the performance.now() domain — map it to context time.
-      const when = clock.estimateContextTime(request.timestamp);
-      core.pushLiveNote(request.note, request.velocity, request.on, when, request.trackId);
-      return;
-    }
-    case 'noteRepeat':
-      core.setNoteRepeat(request.enabled, request.division);
-      return;
-    case 'arp':
-      core.setArpeggiator(request.enabled, {
-        mode: request.mode,
-        octaves: request.octaves,
-        gate: request.gate,
-        division: request.division,
-      });
-      return;
-    case 'metronome':
-      core.setMetronome(request.enabled, request.countInBars);
-      return;
-    case 'liveErase':
-      core.setLiveErase(request.trackId, request.note, request.active);
-      return;
-  }
-}
 
 function startLoop(): void {
   if (timer !== null) return;
@@ -123,6 +69,9 @@ function wake(): void {
   }
   for (const tick of result.loopWrapped) post({ kind: 'loopWrapped', tick });
   for (const entryIndex of result.songAdvanced) post({ kind: 'songAdvanced', entryIndex });
+  // §7.9: the flushes above already ran, so a take in progress is persisted before the
+  // main thread is told to stop — the ordering the spec calls for, not an accident of order.
+  if (result.songEnded) post({ kind: 'songEnded' });
 
   playhead?.write(core.playheadTick(now), core.isPlaying, core.isRecording, core.isCapturing(now));
 }

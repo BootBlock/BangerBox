@@ -3,6 +3,7 @@ import { PPQN } from '@/core/constants';
 import type { TimeSignature } from '@/core/project/schemas';
 import {
   barsToTicks,
+  noteDivisionSeconds,
   secondsPerTick,
   secondsToTicks,
   tickToBarBeatTick,
@@ -65,5 +66,41 @@ describe('tickToBarBeatTick (spec §4.2 coarse readout)', () => {
     // 6/8: eighth-note beats, six per bar.
     expect(tickToBarBeatTick(PPQN / 2, SIX_EIGHT)).toEqual({ bar: 1, beat: 2, tick: 0 });
     expect(tickToBarBeatTick(6 * (PPQN / 2), SIX_EIGHT)).toEqual({ bar: 2, beat: 1, tick: 0 });
+  });
+});
+
+describe('noteDivisionSeconds (spec §6 LFO sync, §5.7 synced delay, §7.2)', () => {
+  // At 60 bpm a quarter note is exactly one second, so a division's seconds ARE its length
+  // in quarter notes — which makes each expectation readable as musical arithmetic.
+  const beats = (division: Parameters<typeof noteDivisionSeconds>[0]) => noteDivisionSeconds(division, 60);
+
+  it('spans a whole note, and halves with each step down', () => {
+    expect(beats('1/1')).toBeCloseTo(4, 9);
+    expect(beats('1/2')).toBeCloseTo(2, 9);
+    expect(beats('1/4')).toBeCloseTo(1, 9);
+    expect(beats('1/8')).toBeCloseTo(0.5, 9);
+    expect(beats('1/16')).toBeCloseTo(0.25, 9);
+    expect(beats('1/32')).toBeCloseTo(0.125, 9);
+  });
+
+  it('makes a dotted division half again as long', () => {
+    expect(beats('1/4.')).toBeCloseTo(1.5, 9);
+    expect(beats('1/8.')).toBeCloseTo(0.75, 9);
+    expect(beats('1/2.')).toBeCloseTo(3, 9);
+  });
+
+  it('fits three triplets in the space of two straight divisions', () => {
+    expect(beats('1/8T') * 3).toBeCloseTo(beats('1/8') * 2, 9);
+    expect(beats('1/16T') * 3).toBeCloseTo(beats('1/16') * 2, 9);
+    // Three eighth-note triplets therefore fill exactly one quarter note.
+    expect(beats('1/8T') * 3).toBeCloseTo(1, 9);
+  });
+
+  it('scales with the tempo through the §7.2 relation', () => {
+    // At 120 bpm a quarter note is 0.5 s, so an eighth is 0.25 s and a dotted eighth 0.375 s.
+    expect(noteDivisionSeconds('1/4', 120)).toBeCloseTo(0.5, 9);
+    expect(noteDivisionSeconds('1/8', 120)).toBeCloseTo(0.25, 9);
+    expect(noteDivisionSeconds('1/8.', 120)).toBeCloseTo(0.375, 9);
+    expect(noteDivisionSeconds('1/4', 240)).toBeCloseTo(0.25, 9);
   });
 });

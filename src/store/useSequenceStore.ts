@@ -369,8 +369,20 @@ export const useSequenceStore = create<SequenceState>()(
     },
 
     // --- Groove (spec §7.5) ---------------------------------------------------------
-    setGrooveTemplate: (id, template) =>
-      set((state) => ({ grooveTemplates: { ...state.grooveTemplates, [id]: template } })),
+    // Templates and assignments both live in the §9.3 project payload, so both mark the
+    // project dirty rather than the track: a groove that vanished on reload would leave the
+    // Grid's picker empty and the track silently un-grooved.
+    setGrooveTemplate: (id, template) => {
+      const prev = get().grooveTemplates;
+      const next = { ...prev, [id]: template };
+      const write = (value: Record<string, GrooveTemplate>) => set({ grooveTemplates: value });
+      commit({
+        label: 'Save groove template',
+        apply: () => write(next),
+        revert: () => write(prev),
+        dirtyKeys: [dirtyKey.project(useProjectStore.getState().projectId)],
+      });
+    },
 
     assignTrackGroove: (trackId, templateId) => {
       const prev = get().trackGrooveIds;
@@ -382,8 +394,8 @@ export const useSequenceStore = create<SequenceState>()(
         label: templateId === null ? 'Clear track groove' : 'Apply groove to track',
         apply: () => write(next),
         revert: () => write(prev),
-        // The assignment rides with the track it shapes (spec §9.3 tracks).
-        dirtyKeys: [dirtyKey.track(trackId)],
+        // The assignment persists beside the templates in the §9.3 project payload.
+        dirtyKeys: [dirtyKey.project(useProjectStore.getState().projectId)],
       });
     },
   })),

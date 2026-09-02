@@ -161,6 +161,14 @@ class FakeAnalyserNode extends FakeAudioNode {
     array.fill(0);
   }
 }
+/** A `PeriodicWave` stand-in recording the coefficients it was built from (spec §6). */
+export class FakePeriodicWave {
+  constructor(
+    readonly real: Float32Array,
+    readonly imag: Float32Array,
+  ) {}
+}
+
 class FakeOscillatorNode extends FakeAudioNode {
   type: OscillatorType = 'sine';
   readonly frequency = new FakeAudioParam(440);
@@ -168,11 +176,19 @@ class FakeOscillatorNode extends FakeAudioNode {
   onended: (() => void) | null = null;
   started = false;
   stopped = false;
+  startedAt: number | null = null;
+  /** The §6 phase-shifted wave, when one was set instead of a native `type`. */
+  periodicWave: FakePeriodicWave | null = null;
   constructor(context: FakeAudioContext) {
     super(context, 'oscillator');
   }
-  start(_when?: number): void {
+  setPeriodicWave(wave: FakePeriodicWave): void {
+    this.periodicWave = wave;
+    this.type = 'custom';
+  }
+  start(when?: number): void {
     this.started = true;
+    this.startedAt = when ?? 0;
   }
   stop(_when?: number): void {
     this.stopped = true;
@@ -237,6 +253,12 @@ class FakeAudioBuffer {
   getChannelData(channel: number): Float32Array {
     return this.channels[channel] ?? new Float32Array(this.length);
   }
+  copyFromChannel(destination: Float32Array, channel: number, offset = 0): void {
+    destination.set(this.getChannelData(channel).subarray(offset, offset + destination.length));
+  }
+  copyToChannel(source: Float32Array, channel: number, offset = 0): void {
+    this.getChannelData(channel).set(source, offset);
+  }
 }
 
 export class FakeAudioContext {
@@ -285,6 +307,9 @@ export class FakeAudioContext {
   }
   createOscillator(): FakeOscillatorNode {
     return new FakeOscillatorNode(this);
+  }
+  createPeriodicWave(real: Float32Array, imag: Float32Array): FakePeriodicWave {
+    return new FakePeriodicWave(real, imag);
   }
   createConstantSource(): FakeConstantSourceNode {
     return new FakeConstantSourceNode(this);

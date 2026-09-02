@@ -3,14 +3,12 @@
  * `lfos` tuple carried by both `Pad` and `KeygroupProgram`. Until this existed a user could
  * route `lfo1` in the mod matrix and hear a modulation with no way to shape it (issue #56).
  *
- * The engine implements a subset of the §6 model: `VoicePool.wireLfos` runs each oscillator
- * at the free-running `rate` in Hz and applies neither `sync` nor `phaseOffset`, and gives
- * every voice its own oscillator so `retrigger: false` is not honoured either; `lfoOscillator`
- * approximates `sampleHold` and `drift` with a square and a sine. Every field is still edited
- * here — it is part of the §6 payload and round-trips through save/load and `.mpcweb` — but
- * the panel names the ones the current engine ignores rather than implying an audible change
- * the user will not get. That is also why `rate` stays enabled when a note division is
- * selected: sync is stored, not applied, so the Hz value really is what is heard today.
+ * The engine applies `rate`, `sync`, `shape`, `phaseOffset` and `retrigger` (issue #107);
+ * `lfoOscillator` still approximates `sampleHold` and `drift` with a square and a sine, and
+ * the panel names those two rather than implying a shape the user will not get.
+ *
+ * `rate` is disabled while a note division is selected, because the division is what decides
+ * the rate then — leaving the field live would offer a value nothing reads.
  */
 import { LFO_PHASE_RANGE, LFO_RATE_RANGE, NOTE_DIVISIONS, type LfoConfig } from '@/core/project/schemas';
 import { ControlGroup, NumberField, SelectField, ToggleField } from './controls';
@@ -30,20 +28,11 @@ const SHAPES: readonly { value: LfoConfig['shape']; label: string }[] = [
   { value: 'drift', label: 'Drift' },
 ];
 
-/** The parts of this LFO's settings the current engine stores but does not render audibly. */
+/** The parts of this LFO's settings the current engine stores but does not render exactly. */
 function engineCaveats(lfo: LfoConfig): string[] {
   const caveats: string[] = [];
-  if (lfo.sync !== 'free') {
-    caveats.push('Tempo sync is saved but not yet applied — the rate in Hz is what you hear.');
-  }
   if (lfo.shape === 'sampleHold') caveats.push('Sample & hold is approximated by a square wave.');
   if (lfo.shape === 'drift') caveats.push('Drift is approximated by a sine wave.');
-  if (lfo.phaseOffset !== 0) {
-    caveats.push('Phase offset is saved but not yet applied to the oscillator.');
-  }
-  if (!lfo.retrigger) {
-    caveats.push('Free-running is saved but not yet applied — each voice starts its own LFO.');
-  }
   return caveats;
 }
 
@@ -69,6 +58,9 @@ function LfoPanel({
         min={LFO_RATE_RANGE[0]}
         max={LFO_RATE_RANGE[1]}
         step={0.01}
+        // A synced LFO takes its rate from the division and the transport tempo (spec §6),
+        // so the Hz field is not what is heard while one is chosen.
+        disabled={lfo.sync !== 'free'}
         onChange={(rate) => set({ rate })}
       />
       <SelectField

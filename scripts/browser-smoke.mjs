@@ -345,6 +345,99 @@ async function assertShellAndSelfTest(page, label) {
     }
   });
 
+  // The five §5/§7 settings that were reachable to set and changed nothing you could hear
+  // (issues #84, #107, #70). Each is proven by an offline render through the real path.
+  await step(`${label}: a reversed layer plays backwards (spec §6, issue #84)`, async () => {
+    const { forward, reversed } = await page.evaluate(() =>
+      globalThis.__bangerboxAudioProbe.reversedLayerHalves(),
+    );
+    // The sample is silent for its first half and a tone for its second, so playing it
+    // backwards has to move the energy from one half of the render to the other.
+    if (!(forward.second > forward.first * 4)) {
+      throw new Error(
+        `forward playback did not put the burst last (first ${forward.first}, second ${forward.second})`,
+      );
+    }
+    if (!(reversed.first > reversed.second * 4)) {
+      throw new Error(`reverse was not applied (first ${reversed.first}, second ${reversed.second})`);
+    }
+  });
+
+  await step(`${label}: warp decouples pitch from duration (spec §5.7.9, issue #84)`, async () => {
+    const { plain, warped } = await page.evaluate(() =>
+      globalThis.__bangerboxAudioProbe.warpDecouplesPitch(),
+    );
+    if (!(plain.frequency > 0) || !(warped.frequency > 0)) {
+      throw new Error(`warp render silent (plain ${plain.frequency}, warped ${warped.frequency})`);
+    }
+    // Both are tuned +12 semitones, so both sound an octave up…
+    const ratio = warped.frequency / plain.frequency;
+    if (!(ratio > 0.85 && ratio < 1.18)) {
+      throw new Error(`warp changed the pitch (warped/plain ${ratio.toFixed(3)}, expected ~1)`);
+    }
+    // …but only the plain voice pays for it in duration: coupled repitch halves the sample.
+    const lengthRatio = warped.seconds / plain.seconds;
+    if (!(lengthRatio > 1.6)) {
+      throw new Error(
+        `warp did not preserve duration: warped ${warped.seconds.toFixed(3)} s vs plain ` +
+          `${plain.seconds.toFixed(3)} s (expected about twice as long)`,
+      );
+    }
+  });
+
+  await step(`${label}: a synced LFO follows the tempo (spec §6, issue #107)`, async () => {
+    const rates = await page.evaluate(() => globalThis.__bangerboxAudioProbe.syncedLfoRates());
+    // A 1/4-synced LFO is 1 Hz at 60 bpm and 4 Hz at 240 bpm; the free one ignores both.
+    if (!(rates.atSlowTempo > 0.5 && rates.atSlowTempo < 1.6)) {
+      throw new Error(`1/4 sync at 60 bpm measured ${rates.atSlowTempo} Hz (expected ~1)`);
+    }
+    if (!(rates.atFastTempo > 3.2 && rates.atFastTempo < 4.8)) {
+      throw new Error(`1/4 sync at 240 bpm measured ${rates.atFastTempo} Hz (expected ~4)`);
+    }
+    if (!(rates.free > 0.1 && rates.free < 0.5)) {
+      throw new Error(`free-running LFO measured ${rates.free} Hz (expected ~0.25)`);
+    }
+  });
+
+  await step(`${label}: an LFO phase offset rotates its wave (spec §6, issue #107)`, async () => {
+    const { unshifted, quarterTurn } = await page.evaluate(() =>
+      globalThis.__bangerboxAudioProbe.lfoPhaseStart(),
+    );
+    // This is also the check on `createPeriodicWave`'s basis (spec §2.7): a sine starts at
+    // zero, and the same sine rotated a quarter turn starts at its positive peak.
+    if (Math.abs(unshifted) > 0.05) {
+      throw new Error(`an unshifted sine started at ${unshifted} (expected ~0)`);
+    }
+    if (!(quarterTurn > 0.9)) {
+      throw new Error(`a quarter-turn sine started at ${quarterTurn} (expected ~+1)`);
+    }
+  });
+
+  await step(`${label}: the delay follows a synced division (spec §5.7, issue #70)`, async () => {
+    const measure = (options) =>
+      page.evaluate((opts) => globalThis.__bangerboxAudioProbe.delayEcho(opts), options);
+    // Index 3 of DELAY_SYNC_MODES is '1/4' (index 0 is 'free'): 0.5 s at 120 bpm, 1 s at 60.
+    const free = await measure({ sync: 0, bpm: 120 });
+    if (Math.abs(free.echoSeconds - 0.35) > 0.02) {
+      throw new Error(`a free 350 ms delay echoed at ${free.echoSeconds.toFixed(3)} s`);
+    }
+    const fast = await measure({ sync: 3, bpm: 120 });
+    if (Math.abs(fast.echoSeconds - 0.5) > 0.02) {
+      throw new Error(`a 1/4 delay at 120 bpm echoed at ${fast.echoSeconds.toFixed(3)} s (expected 0.5)`);
+    }
+    const slow = await measure({ sync: 3, bpm: 60 });
+    if (Math.abs(slow.echoSeconds - 1) > 0.03) {
+      throw new Error(`a 1/4 delay at 60 bpm echoed at ${slow.echoSeconds.toFixed(3)} s (expected 1.0)`);
+    }
+    // …and a tempo change retunes a delay that is already built (spec §4.3 sync layer).
+    const retuned = await measure({ sync: 3, bpm: 120, retuneToBpm: 60 });
+    if (Math.abs(retuned.echoSeconds - 1) > 0.03) {
+      throw new Error(
+        `a tempo change did not retune the delay: echoed at ${retuned.echoSeconds.toFixed(3)} s`,
+      );
+    }
+  });
+
   // Phase 7 exit criteria (spec §12): the 12-mode surface mounts for real and every mode
   // is reachable, with no console errors from any of them (spec §8.5, §3.4 no dead modes).
   await step(`${label}: all 12 modes mount from the rail (spec §8.5)`, async () => {

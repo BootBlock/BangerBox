@@ -8,6 +8,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultChannelStrip, EFFECT_TYPES, type EffectType } from '@/core/project/schemas';
+import { EFFECT_PARAM_CHOICES } from '@/core/audio/inserts/effectParams';
 import { useMixerStore, useUIStore } from '@/store';
 import { InsertPanel } from './InsertPanel';
 
@@ -74,5 +75,27 @@ describe('InsertPanel replace (spec §8.5.6)', () => {
     await user.selectOptions(screen.getByLabelText('Replace insert 1'), 'filter');
     expect(focusPaths().every((path) => path.startsWith('insert:track:1:slot1.'))).toBe(true);
     expect(focusPaths()).toContain('insert:track:1:slot1.cutoff');
+  });
+});
+
+describe('index-encoded parameters (spec §5.7)', () => {
+  it('offers the delay’s synced divisions by name rather than by index', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const sync = screen.getByLabelText('Delay 1 sync');
+
+    // spec §5.7 bounds the synced set at 1/2, so the whole note is deliberately absent.
+    expect(screen.getByRole('option', { name: 'free' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '1/8.' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '1/1' })).not.toBeInTheDocument();
+
+    const dottedEighth = EFFECT_PARAM_CHOICES.delay!.sync!.indexOf('1/8.');
+    await user.selectOptions(sync, dottedEighth.toString());
+    expect(stripNow().inserts[0]!.params.sync).toBe(dottedEighth);
+  });
+
+  it('keeps a knob for the parameters that really are continuous', () => {
+    renderPanel();
+    expect(screen.getByTestId('insert-param-0-feedback').tagName).not.toBe('SELECT');
   });
 });

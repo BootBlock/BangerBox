@@ -18,7 +18,14 @@ import type {
   TrackCreate,
   TrackPatch,
 } from '@/core/storage/repositories';
-import { useHardwareStore, useMixerStore, useProgramStore, useProjectStore, useSequenceStore } from '@/store';
+import {
+  useHardwareStore,
+  useMixerStore,
+  useProgramStore,
+  useProjectStore,
+  useSequenceStore,
+  useTransportStore,
+} from '@/store';
 import { UnflushableKeyError } from './autosave';
 import { projectPayloadSchema, type ChannelStrip, type MidiEvent, type Sequence } from './schemas';
 
@@ -98,7 +105,17 @@ async function flushProject(repositories: Repositories, id: string): Promise<voi
   const returns: ChannelStrip[] = [0, 1, 2, 3]
     .map((index) => channels[`return:${index}`])
     .filter((strip): strip is ChannelStrip => strip !== undefined);
-  const payload = projectPayloadSchema.parse({ master: channels.master, returns });
+  const sequence = useSequenceStore.getState();
+  const payload = projectPayloadSchema.parse({
+    master: channels.master,
+    returns,
+    // spec §7.5 / §9.3: a groove applied non-destructively has to survive a reload, or the
+    // shaping the user hears is undone by closing the project.
+    grooveTemplates: sequence.grooveTemplates,
+    trackGrooveIds: sequence.trackGrooveIds,
+    // Arrangement state, not a transport gesture (spec §7.9) — see `useTransportStore`.
+    songLoopEnabled: useTransportStore.getState().songLoopEnabled,
+  });
   await repositories.projects.update(id, {
     name: project.projectName,
     sample_rate: project.sampleRate,

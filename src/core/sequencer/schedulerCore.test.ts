@@ -28,6 +28,7 @@ function run(core: SchedulerCore, times: number[]): SchedulerTickResult {
     erased: [],
     loopWrapped: [],
     songAdvanced: [],
+    songEnded: false,
   };
   for (const t of times) {
     const r = core.tick(t);
@@ -36,6 +37,7 @@ function run(core: SchedulerCore, times: number[]): SchedulerTickResult {
     merged.erased.push(...r.erased);
     merged.loopWrapped.push(...r.loopWrapped);
     merged.songAdvanced.push(...r.songAdvanced);
+    merged.songEnded ||= r.songEnded;
   }
   return merged;
 }

@@ -9,19 +9,34 @@
  */
 import { clamp } from '@/core/math';
 import type { EffectType } from '@/core/project/schemas';
-import { getKernelModule, type WorkletKernelName } from '@/core/dsp/kernelModules';
+import { getKernelModule, type DspEffectKernelName } from '@/core/dsp/kernelModules';
 import { dbToGain } from '../params/faderLaw';
 import { cancelParams, rampParamTarget, setParamNow } from '../params/ramps';
 import type { DspEffectMessage } from '../worklets/dspEffectProtocol';
 import { DSP_EFFECT_PROCESSOR } from '../worklets/dspEffectProtocol';
+import { noteDivisionSeconds } from '@/core/sequencer/ppqn';
 import { makeReverbImpulse, makeSaturatorCurve } from './dspCurves';
-import { EFFECT_PARAM_RANGES, FILTER_TYPES, FILTER_TYPE_TO_BIQUAD, SATURATOR_CURVES } from './effectParams';
+import {
+  DELAY_MAX_SECONDS,
+  delaySyncDivision,
+  EFFECT_PARAM_RANGES,
+  FILTER_TYPES,
+  FILTER_TYPE_TO_BIQUAD,
+  SATURATOR_CURVES,
+} from './effectParams';
 
 export interface EffectCore {
   readonly input: AudioNode;
   readonly output: AudioNode;
   readonly latencySamples: number;
   setParam: (name: string, value: number, when: number) => void;
+  /**
+   * The transport tempo changed (spec §7.2). Only an effect with a tempo-synced parameter
+   * implements it — today the delay's synced division (spec §5.7). It is a separate entry
+   * point rather than a `bpm` param because tempo is not the effect's own state: it belongs
+   * to the transport, and reaches the graph through the §4.3 sync layer like any other.
+   */
+  setTempo?: (bpm: number, when: number) => void;
   destroy: () => void;
 }
 
@@ -109,8 +124,23 @@ function buildFilter(context: BaseAudioContext, params: Record<string, number>):
   };
 }
 
-function buildDelay(context: BaseAudioContext, params: Record<string, number>): EffectCore {
-  const delay = context.createDelay(2); // free time max 2000 ms (spec §5.7)
+/**
+ * spec §5.7: the delay follows either its free `time` in milliseconds or a note division
+ * locked to the transport tempo. A `sync` index of 0 means free; anything else names a
+ * division through {@link delaySyncDivision}.
+ *
+ * A tempo change retunes a synced delay IMMEDIATELY, over the standard `PARAM_RAMP_MS`
+ * dezipper, rather than waiting for the next repeat. Waiting would leave the delay out of
+ * time for up to one whole division — two seconds at a slow tempo — and a `DelayNode` has
+ * no repeat boundary to wait for anyway: its line is read continuously, so "the next
+ * repeat" is not a moment the graph can observe. The ramp is what keeps the retune from
+ * clicking, and it pitches the tail as the line length changes, which is the familiar
+ * behaviour of every hardware delay with a tempo knob.
+ */
+function buildDelay(context: BaseAudioContext, params: Record<string, number>, bpm: number): EffectCore {
+  // The line is sized for the longest synced division at the slowest tempo (spec §5.7);
+  // a `DelayNode` cannot grow later, and truncating a synced delay would mistime it.
+  const delay = context.createDelay(DELAY_MAX_SECONDS);
   const feedback = context.createGain();
   const tone = context.createBiquadFilter();
   tone.type = 'lowpass';
@@ -119,8 +149,18 @@ function buildDelay(context: BaseAudioContext, params: Record<string, number>): 
   tone.connect(feedback);
   feedback.connect(delay);
 
+  let freeMs = clampParam('delay', 'time', params.time ?? 350);
+  let syncIndex = Math.round(clampParam('delay', 'sync', params.sync ?? 0));
+  let tempo = bpm;
+
+  /** The effective delay time in seconds: the synced division, else the free time. */
+  const delaySeconds = (): number => {
+    const division = delaySyncDivision(syncIndex);
+    return division === null ? freeMs / 1000 : noteDivisionSeconds(division, tempo);
+  };
+
   const now = context.currentTime;
-  setParamNow(delay.delayTime, clampParam('delay', 'time', params.time ?? 350) / 1000, now);
+  setParamNow(delay.delayTime, delaySeconds(), now);
   setParamNow(feedback.gain, clampParam('delay', 'feedback', params.feedback ?? 0.35), now);
   setParamNow(tone.frequency, clampParam('delay', 'tone', params.tone ?? 6_000), now);
 
@@ -129,10 +169,20 @@ function buildDelay(context: BaseAudioContext, params: Record<string, number>): 
     output: delay,
     latencySamples: 0,
     setParam: (name, value, when) => {
-      if (name === 'time') rampParamTarget(delay.delayTime, clampParam('delay', 'time', value) / 1000, when);
-      else if (name === 'feedback') {
+      if (name === 'time') {
+        freeMs = clampParam('delay', 'time', value);
+        rampParamTarget(delay.delayTime, delaySeconds(), when);
+      } else if (name === 'sync') {
+        syncIndex = Math.round(clampParam('delay', 'sync', value));
+        rampParamTarget(delay.delayTime, delaySeconds(), when);
+      } else if (name === 'feedback') {
         rampParamTarget(feedback.gain, clampParam('delay', 'feedback', value), when);
       } else if (name === 'tone') rampParamTarget(tone.frequency, clampParam('delay', 'tone', value), when);
+    },
+    setTempo: (nextBpm, when) => {
+      tempo = nextBpm;
+      // A free delay is in milliseconds and owes the tempo nothing.
+      if (delaySyncDivision(syncIndex) !== null) rampParamTarget(delay.delayTime, delaySeconds(), when);
     },
     destroy: () => {
       cancelParams(delay.delayTime, feedback.gain, tone.frequency);
@@ -283,7 +333,7 @@ function buildReverb(context: BaseAudioContext, params: Record<string, number>):
  */
 function buildWorkletEffect(
   context: BaseAudioContext,
-  kernel: WorkletKernelName,
+  kernel: DspEffectKernelName,
   effectType: EffectType,
   module: WebAssembly.Module,
   params: Record<string, number>,
@@ -331,11 +381,15 @@ function buildPassthrough(context: BaseAudioContext): EffectCore {
   };
 }
 
-/** Build the native DSP core for `effectType` (spec §5.7). */
+/**
+ * Build the native DSP core for `effectType` (spec §5.7). `bpm` is the transport tempo the
+ * synced delay locks to (spec §7.2); effects with no tempo-synced parameter ignore it.
+ */
 export function buildEffectCore(
   context: BaseAudioContext,
   effectType: EffectType,
   params: Record<string, number>,
+  bpm: number,
 ): EffectCore {
   switch (effectType) {
     case 'eq4':
@@ -343,7 +397,7 @@ export function buildEffectCore(
     case 'filter':
       return buildFilter(context, params);
     case 'delay':
-      return buildDelay(context, params);
+      return buildDelay(context, params, bpm);
     case 'compressor':
       return buildCompressor(context, params);
     case 'saturator':

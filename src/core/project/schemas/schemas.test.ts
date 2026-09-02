@@ -135,8 +135,38 @@ describe('sequence & track schemas', () => {
 
 describe('projectPayloadSchema', () => {
   it('preserves unknown keys for forward compatibility (spec §9.3 .loose)', () => {
-    const parsed = projectPayloadSchema.parse({ grooveTemplates: [{ id: 'g' }] });
-    expect(parsed).toHaveProperty('grooveTemplates');
+    const parsed = projectPayloadSchema.parse({ somethingALaterBuildWrote: [{ id: 'g' }] });
+    expect(parsed).toHaveProperty('somethingALaterBuildWrote');
+  });
+
+  it('carries the §7.5 groove templates and their track assignments', () => {
+    const parsed = projectPayloadSchema.parse({
+      grooveTemplates: {
+        Shuffle: {
+          ppqn: 960,
+          lengthTicks: 3840,
+          division: 16,
+          points: [{ gridTick: 0, offsetTicks: 30, velocityScale: 0.8 }],
+        },
+      },
+      trackGrooveIds: { t1: 'Shuffle' },
+    });
+    expect(parsed.grooveTemplates?.Shuffle?.points[0]?.offsetTicks).toBe(30);
+    expect(parsed.trackGrooveIds?.t1).toBe('Shuffle');
+  });
+
+  it('rejects a malformed template rather than storing one the scheduler cannot read', () => {
+    expect(() =>
+      projectPayloadSchema.parse({ grooveTemplates: { Bad: { ppqn: 960, division: 5, points: [] } } }),
+    ).toThrow();
+  });
+
+  it('loads a project written before any of these fields existed', () => {
+    const parsed = projectPayloadSchema.parse({});
+    expect(parsed.grooveTemplates).toBeUndefined();
+    expect(parsed.trackGrooveIds).toBeUndefined();
+    // spec §7.9's own default: a song stops at its end.
+    expect(parsed.songLoopEnabled).toBeUndefined();
   });
 });
 

@@ -11,7 +11,13 @@
  * owning sequence, needed to select a segment's tracks in song mode, §7.9), `liveErase`
  * request + `erased` response (MPC live erase, §7.7), and `ScheduledEvent.accented`
  * (metronome beat-1 accent, §5.9), and the `arp` request (keygroup arpeggiator, §7.3;
- * spec §14 2026-07-17 (g)). New kinds extend the union; existing ones never change.
+ * spec §14 2026-07-17 (g)). The `songLoop` request and the `songEnded` response carry
+ * §7.9's end of song. New kinds extend the union; existing ones never change.
+ *
+ * The Zod unions below are NOT cast to their TypeScript counterparts: the annotation on
+ * each `const` is the only thing that makes the compiler check the two for exhaustiveness,
+ * and a redundant `as` suppressed exactly that — which is how `groove` reached production
+ * as a typed sender with no schema member and every groove message was dropped (issue #71).
  */
 import { z } from 'zod';
 import {
@@ -21,7 +27,7 @@ import {
   type MidiEvent,
 } from '@/core/project/schemas';
 import type { NoteRepeatDivision } from './noteRepeat';
-import type { GrooveTemplate } from './groove';
+import { grooveTemplateSchema, type GrooveTemplate } from './groove';
 import type { ArpMode } from './arpeggiator';
 
 /** Protocol version — bumped on any breaking change to the message shapes (spec §7.1.3). */
@@ -89,6 +95,7 @@ export type SchedulerRequest =
       readonly points: readonly AutomationPoint[];
     }
   | { readonly kind: 'songSequence'; readonly orderedSequenceIds: readonly string[] }
+  | { readonly kind: 'songLoop'; readonly enabled: boolean }
   | {
       readonly kind: 'sequenceMeta';
       readonly sequences: Readonly<Record<string, SchedulerSequenceMeta>>;
@@ -123,7 +130,8 @@ export type SchedulerResponse =
   | { readonly kind: 'recorded'; readonly trackId: string; readonly events: readonly MidiEvent[] }
   | { readonly kind: 'erased'; readonly trackId: string; readonly eventIds: readonly string[] }
   | { readonly kind: 'loopWrapped'; readonly tick: number }
-  | { readonly kind: 'songAdvanced'; readonly entryIndex: number };
+  | { readonly kind: 'songAdvanced'; readonly entryIndex: number }
+  | { readonly kind: 'songEnded' };
 
 // --- Zod guards (locked decision §1.3 #11) ----------------------------------------
 
@@ -172,6 +180,11 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
   }),
   z.object({ kind: z.literal('loop'), enabled: z.boolean(), startTick: z.number(), endTick: z.number() }),
   z.object({
+    kind: z.literal('groove'),
+    trackId: z.string(),
+    template: grooveTemplateSchema.nullable(),
+  }),
+  z.object({
     kind: z.literal('eventsDiff'),
     trackId: z.string(),
     sequenceId: z.string(),
@@ -186,6 +199,7 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
     points: z.array(automationPointSchema),
   }),
   z.object({ kind: z.literal('songSequence'), orderedSequenceIds: z.array(z.string()) }),
+  z.object({ kind: z.literal('songLoop'), enabled: z.boolean() }),
   z.object({
     kind: z.literal('sequenceMeta'),
     sequences: z.record(z.string(), sequenceMetaSchema),
@@ -221,7 +235,7 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
     note: z.number().int(),
     active: z.boolean(),
   }),
-]) as z.ZodType<SchedulerRequest>;
+]);
 
 const scheduledEventSchema = z.object({
   kind: z.enum(['noteOn', 'noteOff', 'click', 'automationRamp']),
@@ -243,7 +257,8 @@ const schedulerResponseSchema: z.ZodType<SchedulerResponse> = z.discriminatedUni
   z.object({ kind: z.literal('erased'), trackId: z.string(), eventIds: z.array(z.string()) }),
   z.object({ kind: z.literal('loopWrapped'), tick: z.number() }),
   z.object({ kind: z.literal('songAdvanced'), entryIndex: z.number().int() }),
-]) as z.ZodType<SchedulerResponse>;
+  z.object({ kind: z.literal('songEnded') }),
+]);
 
 /** Validate an inbound request inside the worker (spec §1.3 #11). */
 export function parseSchedulerRequest(value: unknown): SchedulerRequest | null {
