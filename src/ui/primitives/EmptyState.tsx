@@ -14,7 +14,8 @@
  *
  * `hint` is for a step the user can take *from this surface*. Where the app has no such
  * step yet, omit it — a description that is merely unhelpful is better than an
- * instruction that cannot be followed (see #37 and #40 for the two gaps that leaves).
+ * instruction that cannot be followed. The two gaps that once forced the omission (#37,
+ * #40) are closed, so a panel with nothing to suggest is now the exception, not the rule.
  */
 
 export interface EmptyStateProps {
