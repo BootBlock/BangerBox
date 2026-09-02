@@ -1,175 +1,187 @@
-# BangerBox — Phase Handover (after §9.8 Factory Content & Demo Projects)
+# BangerBox — Phase Handover (after the §8.5.7 sample-assignment seam)
 
-Generated at the close of the §9.8 work per Protocol Alpha (spec §13.1). A new session MUST
-read `docs/todo/_spec.md` in full **and** this document before writing any code, and MUST
+Generated at the close of the issue #37 work per Protocol Alpha (spec §13.1). A new session
+MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and MUST
 reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** §9.8 merged to `main` (`--no-ff`). All eight §12 phases were already complete; this
-was a standalone spec section, not a new phase, so `package.json` `config.phase` remains
-**"8"**. Suite: **823 unit tests** (the Phase 0–8 suites plus the §9.8 additions), `test:e2e`
-real-browser smoke — dev AND offline — plus `lint`, `type-check`, `verify` (**no open stubs**),
-and `build`.
+**State:** the sample-assignment seam merged to `main` (`--no-ff`). All eight §12 phases were
+already complete; this was a defect closure against §8.5.7/§8.5.5/§8.5.4, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1318 unit tests**, `test:e2e` real-browser
+smoke (dev + offline, **40/40 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+(**no open stubs**).
 
-**The Phase 8 live-hardware sign-off is still outstanding** and still requires the human
-developer — see §11 below. Nothing in this work touched it.
+**The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
+human developer. Nothing in this work touched it.
 
 **Bundle size and load time remain deliberately unconstrained** (§11.5, §14 2026-07-18 (j)).
-The factory packs add ~3.2 MB of _runtime-fetched_ content that is deliberately NOT precached;
-do not "optimise" this by widening the precache glob (§9.8 forbids it).
+
+**This document was stale for a long stretch** — it claimed 829 tests while §14 (ab) recorded
+1014 — because it was regenerated only at phase exits and the work since Phase 8 has all been
+issue-shaped. Regenerate it whenever a §14 entry lands, not only at a phase boundary.
 
 ---
 
 ## 1. Locked Decisions (§1.3) — restated verbatim in effect
 
-Unchanged from the Phase 8 handover, all nineteen. Two notes specific to this work:
+All nineteen stand unchanged. Two that bear on recent work:
 
-- **#2 (Node ≥ 24)** now load-bearing beyond tooling: the factory generator imports the app's
-  own TypeScript modules and relies on **Node's native type stripping**, plus the build-time
-  resolution hook described in §4 (§14 2026-07-18 (s)). `build:factory` therefore MUST run as
-  `node --import ./scripts/factory/register.mjs …`; invoking `scripts/build-factory.mjs`
-  bare fails to resolve `@/`.
-- **#12 (fflate)** now also packs the factory archives, through the app's own `packMpcweb`.
-  No new dependency was added; the §2.2 closed matrix is intact.
+- **#2 (Node ≥ 24)** is load-bearing beyond tooling: `build:factory` imports the app's own
+  TypeScript through Node's native type stripping, so it MUST run as
+  `node --import ./scripts/factory/register.mjs …`.
+- **#10 (no component library)** governs the two dialogs added for assignment: both are the
+  bespoke `Modal` primitive, and the pad choosers inside them are plain buttons, never `Pad`.
 
 ## 2. Spec deviations / corrections in effect
 
-All Phase 0–8 entries stand unchanged. New:
+Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
 
-- **§14 2026-07-18 (q) — §9.8 (read the changelog for full detail).** Nine recorded decisions.
-  **Three are flagged ⚑ for human ratification and a new session should treat them as open:**
-  - **Kit-merge transactionality is by compensation, not by construction.** §9.6's guarantee
-    is structural (nothing visible until the new project opens) and cannot apply to a merge
-    into a live project. A crash between write and unwind can still leave residue.
-  - **The §9.7 gate measures the unpacked payload, not the catalogue's `bytes` field.**
-  - **The house demo's "Q-Link-mapped filter sweep" ships as an automated `filter` insert,
-    not a stored binding** — Q-Link bindings live in `app_settings`, outside the §9.6
-    snapshot, so a `.mpcweb` pack structurally cannot carry one.
-  - Also: deterministic ids in the build script (departing from §1.3.1 for build artefacts
-    only), the catalogue as a bare JSON array, and `OWNED_CACHES` in `sw.ts`.
+- **(ag) — sample assignment (issue #37).** Three ⚑ items a new session should treat as settled
+  policy rather than as spec text, since §6 and §8.5.7 do not fix them:
+  - **Velocity bands are maintained, not validated.** Adding a layer re-splits 0..127 across the
+    pad's layers; removing one grows the neighbour over the freed band. Overlap and silent
+    velocity are therefore impossible by construction. `maxLayers` defaults to
+    `DEFAULT_MAX_VELOCITY_LAYERS = 4`, with `MAX_VELOCITY_LAYERS = 8` as the Zod hard cap.
+  - **Zones follow a different rule.** §6 lets zones overlap and `selectKeygroupZone` takes the
+    first covering zone, so a new zone takes the widest uncovered key range and halves the widest
+    existing zone only when none is free. Nothing else moves, so a hand mapping survives.
+  - **`dragDropPayload` is an armed selection, not a live drag.** A pointer drag cannot cross two
+    §8.5 modes; the payload is armed in Browser and spent in Program Edit.
+- **(af)** `check:stubs` gained a phase-prose gate (issue #12).
+- **(ae)** §11.2 no longer claims a `src/test/fixtures/` directory (issue #10).
+- **(ad)** the three real-browser smokes run in CI (issue #15).
+- **(ac)** the Looper gained its §8.5.8 controls (issue #3).
+- **(ab)** the Prettier backlog was cleared and `format:check` joined CI (issue #11).
+- **(aa)** `Button` and `FieldLabel` became primitives (issue #49).
+- **(z)** `Toast` became a real §2.5 primitive (issue #9).
+- **(y)** the worker-computed peak pyramid and the Browser waveform micro-preview (issue #8).
+- **(x), (w), (v), (u), (t)** the declick and pitch-summing work (issues #85, #87).
+- **(u)** factory samples de-duplicate into `/global_library/` (issue #81).
+- **(q), (p)** §9.8 factory content. **Three ⚑ decisions there remain unratified** (issue #78).
 
 ## 3. Toolchain facts
 
-- Installed majors unchanged. **No new dependencies.**
-- `package.json` `config.phase` = **"8"** (unchanged — §9.8 is a spec section, not a phase).
-- **`npm run build:factory`** (new) builds `public/factory/`; it runs ahead of `build`, after
-  `build:wasm`. `public/factory/` is **gitignored**, like `src/core/dsp/dist/`.
-- The browser smoke self-heals both artefacts: it runs `build:wasm` and `build:factory` if
-  absent, so a fresh checkout can run `test:e2e` directly.
-- **Lint trap (cost a cycle):** `react-hooks/set-state-in-effect` fires when an effect calls
-  _any_ function that reaches `setState`, not merely a synchronous `setState` in the effect
-  body — extracting the work into a `useCallback` does NOT satisfy it. The established
-  pattern is an **inline async IIFE with a `cancelled` flag** (see `BrowserPanel` and
-  `FactorySection`); reuse it rather than rediscovering this.
-- Prettier: the new files are formatted. The repo's pre-existing `format:check` debt
-  (~25 tracked files) is untouched and still needs its own formatting-only commit.
+- Installed majors unchanged. **No new dependencies** since Phase 0's closed §2.2 matrix.
+- `npm run build:factory` writes the gitignored `public/factory/`; it runs ahead of `build`,
+  after `build:wasm`. The browser smoke self-heals both artefacts.
+- **Lint trap (has cost two sessions):** `react-hooks/set-state-in-effect` fires when an effect
+  reaches _any_ function that calls `setState`, not only a synchronous call in the effect body,
+  and extracting the work into a `useCallback` does NOT satisfy it. The established shape is an
+  **inline async IIFE with a `cancelled` flag** — see `BrowserPanel`, `FactorySection` and
+  `SamplePicker`. Where state only needs resetting when a dialog closes, prefer an **override
+  held alongside a derived default** (see `AssignTargetDialog`) to an effect that syncs the two.
+- **Run `lint` AFTER `format:check --write`, not before.** Prettier joins short `if` bodies onto
+  one line, which trips `curly`; a lint run from before the formatting pass proves nothing.
+- `format:check` is currently green across the repo. Nothing else runs Prettier — no pre-commit
+  hook, and a local `git merge` never checks formatting — so re-run it after every merge.
 
 ## 4. Established patterns (reuse, do not reinvent)
 
-Everything from Phases 0–8 still stands. New this work:
+Everything from Phases 0–8 and the §9.8 factory chain still stands. New this work:
 
-**The factory chain (spec §9.8) — one direction, reusing the §9.6 pipeline:**
-`fetchFactoryCatalogue` → `fetchPack` → `unpackMpcwebInWorker` → `remapSnapshot` →
-storage gate → (`installUnpackedAsNewProject` | `installKitPack`) → stores.
+**The assignment seam (spec §8.5.7, §8.5.5, §8.5.4):**
 
-- **`scripts/factory/`** — the build is modular, not one file: `prng.mjs` (mulberry32 +
-  `hashSeed` + `derivedId`), `synth.mjs` (synthesis primitives), `kits.mjs` (the three kits),
-  `packs.mjs` (kit + demo assembly), `snapshot.mjs` (§6/§9.3 shapes + the zip). `build-factory.mjs`
-  is the entry and exports `buildFactory(appVersion)` for in-memory use by tests.
-- **Determinism discipline (§9.8):** every PRNG is seeded from the _sample's own name_, so
-  adding or reordering a sample cannot change any other sample's bytes. Ids are derived, not
-  random. Timestamps are pinned to `FACTORY_EPOCH_MS`. Zip entry `mtime` is fixed and entry
-  order is sorted. **If you add content, do not reach for `Math.random()` or `Date.now()` —
-  `factoryPacks.test.ts` builds twice and compares bytes, and will fail.**
-- **The generator uses the app's own modules — do not reintroduce copies** (§14 2026-07-18 (s)).
-  `scripts/factory/resolve-hook.mjs` + `register.mjs` supply the `@/` alias and extensionless
-  `.ts` resolution that Node lacks, so `snapshot.mjs` calls the real `createDefaultPad`,
-  `createDefaultChannelStrip`, `createDefaultDrumProgram`, `packMpcweb`, `samplePath` and
-  `encodeWav`. Build-time only; Vitest goes through Vite and needs no hook.
-- **THE TRAP, if you import more app factories:** several mint ids with `crypto.randomUUID()`
-  (`createDefaultPad` and `createDefaultChannelStrip` do, for insert slots). Calling them is
-  right — it is how future §6 fields arrive automatically — but every id they generate MUST be
-  re-stamped via `restampInsertIds` or the equivalent, or rebuilds stop being byte-identical.
-  This is exactly the defect that made the salvaged branch's own determinism test unpassable.
-- `factoryPacks.test.ts` remains the guard: it unpacks every built archive with the **real**
-  `unpackMpcweb`, validates payloads with the **real** `programSchema`, and builds twice
-  comparing bytes.
-- **`factoryCatalogue.ts`** (pure) — the catalogue Zod schema. `file` is constrained to a bare
-  `*.mpcweb` filename: the catalogue is network input concatenated into a fetch URL, so the
-  path-traversal guard lives at the schema.
-- **`factoryMerge.ts`** (pure) — `buildKitMerge` (re-parent programs, discard arrangement).
-  Pure so the discard rules are testable without a database. It contributes no sample rows:
-  factory audio installs globally, see `sampleSharing.ts`.
-- **`sampleSharing.ts`** (pure apart from a repository read) — content-addressed
-  de-duplication (§9.1, §9.8). Hashes each sample, reuses an identical one already in
-  `/global_library/`, and rewrites the snapshot so programs point at whichever copy is stored.
-  Factory installs only; a user import stays project-scoped.
-- **`factoryService.ts`** — the only module here that touches OPFS, repositories or stores.
-  `installKitPack` records every written path and inserted row and unwinds them in reverse on
-  failure, best-effort per item so one failed cleanup cannot abort the rest.
-- **`installUnpackedAsNewProject`** (extracted from `importMpcweb`) — the single new-project
-  install path, shared by user import and factory `demo`. Do not add a third.
-- **`sw.ts`:** `FACTORY_CACHE = 'bangerbox-factory-v1'`, cache-first, and **`OWNED_CACHES`** —
-  `activate` previously deleted every cache but the precache, which would have evicted factory
-  content on every update. Only successful responses are cached, so a transient failure stays
-  retryable.
-- **`FactorySection.tsx`** — the §8.5 item 7 surface, mounted inside `BrowserPanel`.
+- **`useProgramStore` owns every §6 rule.** `addPadLayer`, `setLayerSample`, `removePadLayer`,
+  `addKeygroupZone`, `setZoneSample` and `removeKeygroupZone` each record exactly one undo entry
+  and return `AssignResult` — `{ ok: true }` or `{ ok: false, reason }`, where `reason` is a
+  **finished sentence** the UI shows verbatim. Returning `void` would leave every caller
+  reporting "nothing happened", which is how a control reads as broken. Add new assignment rules
+  here, never at a call site.
+- **`src/core/project/sampleAssign.ts`** is the thin service over those actions: it writes the
+  success and refusal copy once, announces through the single §8.2 `LiveRegion`, and owns the two
+  composite chop operations (`assignSlicesToPads`, `createProgramFromSlices`) that need
+  `commitAsOne` so a chop is one Ctrl+Z. It imports `announce` from
+  `@/ui/primitives/LiveRegion`, **not** the barrel — the barrel would pull React and motion into
+  every consumer of `@/core/project`, as `engine.ts` already avoids for `meterScope`.
+- **Two dialogs, because the two directions differ.** `SamplePicker` (target known, sample
+  missing) is opened by Program Edit's layer and zone lists and queries BOTH §9.1 roots directly
+  rather than following `useBrowserStore.currentPath`. `AssignTargetDialog` (sample known, target
+  missing) is opened by a Browser row. Its **"Choose on the pad grid…"** is the ONLY route by
+  which `dragDropPayload` becomes armed in normal use — do not delete it thinking the drag
+  covers it, because a pointer drag cannot cross two §8.5 modes.
+- **Drop targets** on the Program Edit pad grid and the keygroup zone panel serve a drag that
+  begins and ends inside one mode. `onDragOver` must `preventDefault()` or the drop never fires.
+- **Banners are not live regions.** §8.2 allows one, the shell's. The armed banners carry their
+  news to assistive tech through the pad `aria-label`s instead, which read "Assign to pad N"
+  while a sample is armed.
+- **`sampleCandidatePaths(projectId, sampleId)`** (in `opfs.ts`) returns both §9.1 roots, project
+  first. A §6 payload records only an id and §9.3 permits either root, so live playback
+  (`AudioEngine.loadProgramSample`) and the §9.5 bounce both try both. Any new code that turns a
+  `sampleId` into a path MUST use this rather than rebuilding the project path.
 
 ## 5. Repository catalogue — unchanged. No repository or DDL change.
-
-`installKitPack` uses the existing `programs.create` / `samples.create` / `.remove`.
 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1**. **No migration added.**
 
 ## 7. Worker / worklet / message protocol versions — all unchanged.
 
-The pack worker's `pack`/`unpack` request shapes are untouched; factory packs are ordinary
-`.mpcweb` archives and go through the same two messages.
+`SCHEDULER_PROTOCOL_VERSION` is still 1 and still inert (issue #96).
 
-## 8. Stores — all eight implemented (§4.2). No field or action added.
+## 8. Stores — all eight implemented (§4.2)
 
-`installKitPack` calls the existing `useProgramStore.addProgram`.
+Changes this work, both additive and both recorded in §14 (ag):
+
+- **`useProgramStore`** gains the six assignment actions above and the exported `AssignResult`.
+- **`useUIStore.dragDropPayload`** gains `rootNote`, so a sample armed for a keygroup zone lands
+  at its own §9.3 unity pitch rather than at an assumed middle C.
 
 ## 9. Component tree topography (as implemented)
 
-Unchanged from Phase 8 except **Browser → `FactorySection`**: catalogue list with per-pack
-title, description, kind badge, size, cache state and an install button labelled by mode
-(Merge for a kit, Open for a demo) · a retryable error row when the catalogue fetch fails ·
-a distinct empty state, so "no packs in this build" and "the fetch failed" never look alike.
+Unchanged except:
+
+- **Browser →** each sample row's `Assign…` button (draggable, and a tap opens
+  `AssignTargetDialog`) · `AssignTargetDialog` mounted at panel level.
+- **Program Edit → `PadEditor`:** armed-sample banner above the pad grid; every pad is a drop
+  target and assigns on press while a sample is armed.
+- **Program Edit → `LayersEditor`:** "Add sample…" in the section header, "Change sample" and
+  "Remove layer N" per row, `SamplePicker` mounted at section level.
+- **Program Edit → `KeygroupEditor`:** the same three, plus "Remove zone N"; the zones section is
+  itself the drop target.
+- **Sample Edit → Chop:** a "Slices to" `SegmentControl` (pads / new program / library only).
 
 ## 10. Kernel inventory — unchanged (the §5.6.4 set is complete).
 
 ## 11. Outstanding / deliberate technical debt
 
-**`check:stubs` reports ZERO open stubs.**
+**`check:stubs` reports ZERO open stubs.** Outstanding work lives in GitHub issues, not in code
+comments; the list below names the issues rather than restating them.
 
 **STILL OUTSTANDING FROM PHASE 8 — READ THIS FIRST:**
 
-- **The live hardware session sign-off (§12) is NOT done and cannot be self-certified.** It
+- **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
-  Unchanged by this work; see the Phase 8 handover for what to watch for.
 
-**Honest scope notes for §9.8:**
+**Nearest neighbours to this work, in rough order of how much they block a musician:**
 
-- **The three ⚑ decisions in §14 (p) are unratified.** They are judgement calls where §9.8 is
-  silent or where §9.6's guarantee does not transfer; a human should confirm them.
-- **Factory content is v1 breadth, not depth.** Three kits (40 samples) and three demos, all
-  drum programs — no keygroup/melodic factory content, which §9.8 does not ask for.
-- **Samples are duplicated per demo project**, as §9.8 permits for v1. `/global_library/`
-  de-duplication (§9.1) is deferred and would meaningfully cut the 3.2 MB payload.
-- **A kit merge is not undoable.** §4.5 lists what is undoable and pack installation is not
-  among them; it is also not obviously a "mutation" in the §4.5 sense. Worth a human decision
-  — a user who merges the wrong kit into a project currently has only "Purge unused samples".
-- **The synthesised kits are functional, not designed.** They are correct, click-free and
-  licence-safe, but nobody has listened to them critically. Human listening QA (§13.5's final
-  polish gate) has not happened, and the tuning constants in `scripts/factory/kits.mjs` are
-  the obvious place to iterate.
-- Phase 7/8's remaining notes all still stand (recording Q-Link/XYFX gestures as automation;
-  groove-template persistence; Looper mic source/overdub; Sample Edit drag handles and peak
-  pyramid cache; Browser folder tree; Grid automation-lane drawing and marquee select; the
-  `transientDetect` FFT upgrade; the full insert/mixer graph in the bounce).
+- **#7.8 automation authoring is the next seam.** `setAutomationLane` in `useSequenceStore` has
+  no caller outside `persist.test.ts`, so no user can create an automation point by any route —
+  the same shape of gap as #37 was.
+- **#84** Reverse and Warp are persisted but never applied at playback, and **#107** the same for
+  `LfoConfig.sync`/`phaseOffset`/`retrigger`. Both are now reachable to set and still inert.
+- **#71** the non-destructive groove path is dead end to end.
+- **#104** song and stem bounces write a WAV no user can reach.
+- **#101** song mode never ends; **#93** tempo and swing edits are never persisted.
+- **#34** several live regions compete with the single §8.2 announcer. This work deliberately
+  added none, but it did not fix the existing ones.
+- **#54** destructive edits have no confirmation and long operations show no progress. Layer and
+  zone removal inherit that: undo is the only safety net.
 
-## 12. Verification commands (all green at handover, inside the worktree)
+**Honest scope notes for the assignment work:**
 
-`npm run build` · `test` (**829**) · `test:e2e` (dev + offline, **21/21 steps**) ·
-`test:e2e:quick` · `lint` · `type-check` · `verify` (**no open stubs**) · `build:factory`.
-(The main checkout has no `node_modules`; `npm install` before re-running.)
+- **The three ⚑ policies in §14 (ag) are judgement calls**, not spec text. A human may prefer
+  different band or zone placement; the rules are in one place (`useProgramStore`) if so.
+- **A pointer drag is only useful within one mode.** §8.5.7 asks for drag-to-pad and the handlers
+  exist, but the route users will take is the armed selection. Read `SamplePicker`'s header
+  before "fixing" this.
+- **Assignment does not audition on assign.** A user picks a sample, hears it in the picker if
+  they press Audition, and hears the pad by striking it. There is no confirm-by-ear step.
+- **Nothing enforces contiguity outside the assignment actions.** The velocity spinners and the
+  §8.5.5 range bar can still open a gap deliberately, which §6 permits.
+- **#105 did not block this work.** The browser smoke ran from the worktree with
+  `BANGERBOX_SMOKE_PORT` / `BANGERBOX_SMOKE_PREVIEW_PORT` overridden (5310/5311); the issue's
+  premise may be narrower than its title, or already fixed.
+
+## 12. Verification commands (all green at handover, inside the worktree and after the merge)
+
+`npm run type-check` · `lint` · `test` (**1318**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **40/40 steps**, ports overridden per #105) · `build` ·
+`build:factory`.

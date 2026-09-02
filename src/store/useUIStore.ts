@@ -33,10 +33,23 @@ export interface ModalState {
   readonly id: string;
 }
 
-/** Payload carried while dragging a sample from the Browser onto a pad (spec §8.5.7). */
+/**
+ * The sample armed for assignment onto a pad or zone (spec §8.5.7).
+ *
+ * Named for the drag §8.5.7 describes, and it does carry one — but a pointer drag from the
+ * Browser to a pad cannot complete on this shell, since the two are separate §8.5 modes and
+ * only one is on screen. So it doubles as an armed selection the user makes in Browser and
+ * spends in Program Edit, which is the route that actually works and the only one available
+ * on a touch device.
+ *
+ * `rootNote` rides along because a keygroup zone needs the sample's unity pitch (spec §9.3
+ * `samples.root_note`); without it an armed sample landed as a zone would play at an assumed
+ * middle C, so a kick rooted at 36 would sound two octaves sharp.
+ */
 export interface DragDropPayload {
   readonly sampleId: string;
   readonly name: string;
+  readonly rootNote: number;
 }
 
 export type ToastTone = 'info' | 'success' | 'warning' | 'error';

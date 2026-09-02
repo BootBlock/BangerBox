@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bouncePath, globalLibraryPath, samplePath, splitOpfsPath } from './opfs';
+import { bouncePath, globalLibraryPath, sampleCandidatePaths, samplePath, splitOpfsPath } from './opfs';
 
 // Handle-level operations need real OPFS and are proven by the browser smoke
 // (spec §11.4, §13.5); the pure path layer is unit-tested here.
@@ -8,6 +8,16 @@ describe('OPFS path building (spec §9.1)', () => {
     expect(samplePath('p1', 's1')).toBe('/projects/p1/samples/s1.wav');
     expect(bouncePath('p1', 'mixdown')).toBe('/projects/p1/bounces/mixdown.wav');
     expect(globalLibraryPath('s2')).toBe('/global_library/s2.wav');
+  });
+
+  // A §6 program payload records only a sampleId, and §9.3 lets that row live in either root.
+  // Reconstructing the project path alone made every global-library sample assigned to a pad
+  // silent, with no error — the read failed and the note was skipped.
+  it('offers both §9.1 roots for a sample a program plays, project first', () => {
+    expect(sampleCandidatePaths('p1', 's1')).toEqual([
+      '/projects/p1/samples/s1.wav',
+      '/global_library/s1.wav',
+    ]);
   });
 
   it('splits canonical paths into segments', () => {

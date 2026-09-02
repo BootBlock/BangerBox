@@ -29,6 +29,12 @@ export {
   type FactoryPackKind,
 } from './factoryCatalogue';
 export {
+  assignSampleToTarget,
+  assignSlicesToPads,
+  createProgramFromSlices,
+  type AssignTarget,
+} from './sampleAssign';
+export {
   startProjectSession,
   stopProjectSession,
   startAudioEngine,
