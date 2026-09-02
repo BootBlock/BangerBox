@@ -1,9 +1,19 @@
+/**
+ * Grid automation authoring — spec §8.5.2 (per-track automation lane selector) and §7.8
+ * (two scopes, the registry gate, the curve field). These are the regression tests for
+ * the authoring seam: before it existed the lane was a read-out, `setAutomationLane` had
+ * no caller anywhere in the application, and no user could create a point by any route.
+ */
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AutomationPoint } from '@/core/project/schemas';
-import { useSequenceStore, useTransportStore } from '@/store';
+import { createDefaultChannelStrip } from '@/core/project/schemas';
+import { useMixerStore, useSequenceStore, useTransportStore } from '@/store';
 import { GridMode } from './GridMode';
+
+const TRACK_LEVEL = 'mixer.track:t1.level';
+const MASTER_LEVEL = 'mixer.master.level';
 
 const track = (id: string, position: number) => ({
   id,
@@ -12,13 +22,16 @@ const track = (id: string, position: number) => ({
   position,
   name: `Track ${position + 1}`,
   type: 'drum' as const,
-  muted: false,
-  soloed: false,
 });
 
-const point = (ownerId: string, targetPath: string, value: number): AutomationPoint => ({
-  id: `${ownerId}-${targetPath}-${value}`,
-  scope: 'track',
+const point = (
+  scope: AutomationPoint['scope'],
+  ownerId: string,
+  targetPath: string,
+  value: number,
+): AutomationPoint => ({
+  id: `${scope}-${ownerId}-${targetPath}-${value}`,
+  scope,
   ownerId,
   targetPath,
   tick: 0,
@@ -27,49 +40,65 @@ const point = (ownerId: string, targetPath: string, value: number): AutomationPo
 });
 
 /**
- * Two tracks with a lane each, plus a sequence-scoped lane. The filter under test has to
- * separate all three — the old `key.includes(':')` clause admitted every one of them.
+ * Two tracks with a mixer strip each, plus lanes in both §7.8 scopes. The scope and owner
+ * filters have to separate all of them — a match on the target path alone would admit
+ * every one.
  */
 function seed() {
   useSequenceStore.setState({
     tracks: { t1: track('t1', 0), t2: track('t2', 1) },
     events: { t1: [], t2: [] },
     automation: {
-      'track:t1:volume': [point('t1', 'volume', 0.4)],
-      'track:t1:pan': [point('t1', 'pan', -1)],
-      'track:t2:volume': [point('t2', 'volume', 0.9)],
-      'sequence:seq1:tempo': [{ ...point('seq1', 'tempo', 120), scope: 'sequence' }],
+      [`track:t1:${TRACK_LEVEL}`]: [point('track', 't1', TRACK_LEVEL, 0.4)],
+      [`track:t2:${MASTER_LEVEL}`]: [point('track', 't2', MASTER_LEVEL, 0.9)],
+      'sequence:seq1:legacy.path': [point('sequence', 'seq1', 'legacy.path', 0.5)],
     },
+  });
+  useMixerStore.getState().setChannels({
+    master: createDefaultChannelStrip('master'),
+    'track:t1': createDefaultChannelStrip('track:t1'),
+    'track:t2': createDefaultChannelStrip('track:t2'),
   });
   useTransportStore.setState({ activeSequenceId: 'seq1' });
 }
 
-describe('GridMode automation lane selector (spec §8.5.2, §7.8)', () => {
-  beforeEach(seed);
-  afterEach(() => {
-    useSequenceStore.setState({ tracks: {}, events: {}, automation: {} });
-    useTransportStore.setState({ activeSequenceId: null });
-  });
+function laneOptions(): (string | null)[] {
+  return within(screen.getByLabelText('Automation lane'))
+    .getAllByRole('option')
+    .map((option) => option.textContent);
+}
 
-  it("offers only the selected track's own lanes", () => {
+function lane(key: string): AutomationPoint[] {
+  return useSequenceStore.getState().automation[key] ?? [];
+}
+
+beforeEach(seed);
+afterEach(() => {
+  useSequenceStore.setState({ tracks: {}, events: {}, automation: {} });
+  useMixerStore.getState().setChannels({});
+  useTransportStore.setState({ activeSequenceId: null });
+});
+
+describe('the automation lane picker (spec §8.5.2, §7.8)', () => {
+  it('offers registered parameters, not only lanes that already have points', () => {
     render(<GridMode />);
-    const select = screen.getByLabelText('Automation lane');
-    const options = within(select)
-      .getAllByRole('option')
-      .map((option) => option.textContent);
-    // Track 1 is selected by default: its two lanes, and neither track 2's nor the
-    // sequence's.
-    expect(options).toEqual(['None', 'pan', 'volume']);
+    // The catalogue's own paths: the selected track's strip and the master strip.
+    expect(laneOptions()).toContain('Track 1 · level');
+    expect(laneOptions()).toContain('Master · pan');
   });
 
-  it('follows the track selector', async () => {
+  it('hides the other scope from the track picker', () => {
+    render(<GridMode />);
+    // Track 2's own lane is on the master path, which every track can address, so the
+    // check that matters is that the sequence scope's legacy lane is not offered here.
+    expect(laneOptions().some((label) => label?.startsWith('legacy.path'))).toBe(false);
+  });
+
+  it('follows the scope selector to the sequence lanes', async () => {
     const user = userEvent.setup();
     render(<GridMode />);
-    await user.selectOptions(screen.getByLabelText('Track to edit'), 't2');
-    const options = within(screen.getByLabelText('Automation lane'))
-      .getAllByRole('option')
-      .map((option) => option.textContent);
-    expect(options).toEqual(['None', 'volume']);
+    await user.click(screen.getByRole('radio', { name: 'Sequence' }));
+    expect(laneOptions().some((label) => label?.startsWith('legacy.path'))).toBe(true);
   });
 
   it('describes the chosen lane in text, since the canvas is aria-hidden (spec §8.2)', async () => {
@@ -77,30 +106,130 @@ describe('GridMode automation lane selector (spec §8.5.2, §7.8)', () => {
     render(<GridMode />);
     expect(screen.queryByTestId('grid-automation-summary')).toBeNull();
 
-    await user.selectOptions(screen.getByLabelText('Automation lane'), 'track:t1:volume');
+    await user.selectOptions(screen.getByLabelText('Automation lane'), TRACK_LEVEL);
     expect(screen.getByTestId('grid-automation-summary')).toHaveTextContent('1 point, flat at 0.4');
   });
 
-  /**
-   * Switching track used to leave the previous track's key selected. Resolving it would
-   * draw one track's automation over another's notes, so it falls back to None.
-   */
+  it('says an empty lane is empty rather than showing nothing at all', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    await user.selectOptions(screen.getByLabelText('Automation lane'), MASTER_LEVEL);
+    expect(screen.getByTestId('grid-automation-summary')).toHaveTextContent('empty');
+    expect(screen.getByTestId('grid-automation-empty')).toBeInTheDocument();
+  });
+
   it('drops a lane the newly selected track does not own', async () => {
     const user = userEvent.setup();
     render(<GridMode />);
-    await user.selectOptions(screen.getByLabelText('Automation lane'), 'track:t1:pan');
-    expect(screen.getByTestId('grid-automation-summary')).toHaveTextContent('flat at -1');
+    await user.selectOptions(screen.getByLabelText('Automation lane'), TRACK_LEVEL);
+    expect(screen.getByTestId('grid-automation-summary')).toHaveTextContent('flat at 0.4');
 
     await user.selectOptions(screen.getByLabelText('Track to edit'), 't2');
+    // `mixer.track:t1.level` is not among track 2's parameters, so the picker clears.
     expect(screen.getByLabelText<HTMLSelectElement>('Automation lane').value).toBe('');
     expect(screen.queryByTestId('grid-automation-summary')).toBeNull();
   });
 
-  it('says so rather than offering an empty list when the track has no lanes', async () => {
+  it('says so rather than offering an empty list when nothing is automatable yet', () => {
+    useMixerStore.getState().setChannels({});
     useSequenceStore.setState({ automation: {} });
     render(<GridMode />);
     const select = screen.getByLabelText<HTMLSelectElement>('Automation lane');
     expect(select.disabled).toBe(true);
-    expect(select.textContent).toBe('No lanes');
+    expect(select.textContent).toBe('No parameters');
+  });
+});
+
+describe('authoring automation points (spec §7.8)', () => {
+  it('creates a point on an empty lane — the gap this seam closes', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    await user.selectOptions(screen.getByLabelText('Automation lane'), MASTER_LEVEL);
+    expect(lane(`track:t1:${MASTER_LEVEL}`)).toEqual([]);
+
+    await user.click(screen.getByTestId('grid-automation-add'));
+
+    const written = lane(`track:t1:${MASTER_LEVEL}`);
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({ scope: 'track', ownerId: 't1', targetPath: MASTER_LEVEL });
+    // Level runs 0..1.2, so a new point lands at the middle of the registered range.
+    expect(written[0]!.value).toBeCloseTo(0.6, 6);
+  });
+
+  it('writes a sequence-scope point under the sequence, not the track', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    await user.click(screen.getByRole('radio', { name: 'Sequence' }));
+    await user.selectOptions(screen.getByLabelText('Automation lane'), MASTER_LEVEL);
+    await user.click(screen.getByTestId('grid-automation-add'));
+
+    expect(lane(`sequence:seq1:${MASTER_LEVEL}`)).toHaveLength(1);
+    expect(lane(`track:t1:${MASTER_LEVEL}`)).toEqual([]);
+  });
+
+  it('edits a point value from the keyboard, since the canvas is a pointer surface', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    await user.selectOptions(screen.getByLabelText('Automation lane'), TRACK_LEVEL);
+
+    const field = screen.getByLabelText('Value at tick 0');
+    await user.clear(field);
+    await user.type(field, '0.8');
+    expect(lane(`track:t1:${TRACK_LEVEL}`)[0]!.value).toBeCloseTo(0.8, 6);
+  });
+
+  it('deletes the selected points', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    await user.selectOptions(screen.getByLabelText('Automation lane'), TRACK_LEVEL);
+
+    await user.click(screen.getByRole('button', { name: /^tick 0/ }));
+    await user.click(screen.getByTestId('grid-automation-delete'));
+    expect(lane(`track:t1:${TRACK_LEVEL}`)).toEqual([]);
+  });
+
+  it('re-curves the selected points and sets what a new one takes (spec §7.8)', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    await user.selectOptions(screen.getByLabelText('Automation lane'), TRACK_LEVEL);
+
+    await user.click(screen.getByRole('button', { name: /^tick 0/ }));
+    await user.click(screen.getByRole('radio', { name: 'Exp' }));
+    expect(lane(`track:t1:${TRACK_LEVEL}`)[0]!.curve).toBe('exp');
+
+    await user.click(screen.getByTestId('grid-automation-add'));
+    expect(lane(`track:t1:${TRACK_LEVEL}`)[1]!.curve).toBe('exp');
+  });
+
+  it('refuses to edit a lane the registry does not recognise (spec §7.8 gate)', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    await user.click(screen.getByRole('radio', { name: 'Sequence' }));
+    await user.selectOptions(screen.getByLabelText('Automation lane'), 'legacy.path');
+
+    expect(screen.getByTestId('grid-automation-readonly')).toBeInTheDocument();
+    expect(screen.getByTestId<HTMLButtonElement>('grid-automation-add').disabled).toBe(true);
+    // The lane is still readable — a project carrying one must not lose it.
+    expect(screen.getByTestId('grid-automation-summary')).toHaveTextContent('1 point');
+  });
+
+  it('says which scope wins when both hold the same target (spec §7.8)', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    // Track 2 owns a track-scope lane on the master level, so a sequence lane on the same
+    // target is overridden at schedule time.
+    await user.click(screen.getByRole('radio', { name: 'Sequence' }));
+    await user.selectOptions(screen.getByLabelText('Automation lane'), MASTER_LEVEL);
+    expect(screen.getByTestId('grid-automation-override')).toHaveTextContent(
+      'A track lane for this parameter overrides this sequence lane',
+    );
+  });
+
+  it('says nothing about precedence when no track lane holds the target', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    await user.click(screen.getByRole('radio', { name: 'Sequence' }));
+    await user.selectOptions(screen.getByLabelText('Automation lane'), 'mixer.master.pan');
+    expect(screen.queryByTestId('grid-automation-override')).toBeNull();
   });
 });

@@ -20,6 +20,9 @@ describe('engine constants registry (spec §2.6)', () => {
     // Storage quota hard-stop (spec §9.7) — added to the registry in Phase 1
     // because §2.6 mandates all behaviour constants live here.
     expect(constants.QUOTA_HARD_STOP_RATIO).toBe(0.9);
+    // Automation capture thinning (spec §7.8) — see §14 2026-09-02 (ah).
+    expect(constants.AUTOMATION_MIN_TICK_SPACING).toBe(120);
+    expect(constants.AUTOMATION_VALUE_EPSILON).toBe(0.005);
   });
 
   it('exports no constants beyond the §2.6 registry (naming freeze)', () => {
@@ -38,6 +41,8 @@ describe('engine constants registry (spec §2.6)', () => {
         'CC_THROTTLE_MS',
         'UNDO_LIMIT',
         'QUOTA_HARD_STOP_RATIO', // spec §9.7
+        'AUTOMATION_MIN_TICK_SPACING', // spec §7.8, changelog 2026-09-02 (ah)
+        'AUTOMATION_VALUE_EPSILON', // spec §7.8, changelog 2026-09-02 (ah)
       ].sort(),
     );
   });

@@ -18,14 +18,19 @@ import { getAudioEngine } from '@/core/project/session';
 import { secondsToTicks } from '@/core/sequencer/ppqn';
 import { useTransportStore } from '@/store';
 import {
-  automationBounds,
+  automationPointAtLanePoint,
+  automationPointsInRect,
   automationPolyline,
   automationValueToY,
+  automationYToValue,
   cellsAlongSegment,
   eventAtCell,
   eventAtPoint,
   eventsInTickSpan,
+  eventsInRect,
+  isMarqueeTap,
   nearestEventToTick,
+  normaliseRect,
   noteToRow,
   resizeHandleAtPoint,
   rowToNote,
@@ -36,6 +41,8 @@ import {
   velocityAtLaneY,
   xToTick,
   yToRow,
+  type AutomationBounds,
+  type GridRect,
   type GridViewport,
 } from './gridGeometry';
 
@@ -44,10 +51,11 @@ const VELOCITY_LANE_HEIGHT = 64;
 
 /**
  * Height of the automation lane drawn beneath the velocity lane when one is selected
- * (spec §8.5.2 per-track automation lane selector). Shorter than the velocity lane: it is
- * a read-out of the lane's shape, not a drag target, so it costs the notes less room.
+ * (spec §8.5.2 per-track automation lane selector). Taller than it was while the lane was
+ * only a read-out: it is now a drag target, and a 48 px lane gives a value drag barely
+ * more travel than a fingertip is wide.
  */
-const AUTOMATION_LANE_HEIGHT = 48;
+const AUTOMATION_LANE_HEIGHT = 96;
 
 export type GridTool = 'draw' | 'erase' | 'select';
 
@@ -62,13 +70,30 @@ export interface GridCanvasProps {
   /** Row labels shown at the left — pad names for drums, note names for keygroups. */
   rowLabel: (note: number) => string;
   /**
-   * The automation lane to draw beneath the velocity lane, or null for none (spec §8.5.2,
-   * §7.8). Read-only: the selector picks which lane is visible, and the lane's points are
-   * shown against the same timeline as the notes so their shape can be read in context.
+   * The automation lane drawn beneath the velocity lane, or null for none (spec §8.5.2,
+   * §7.8). `bounds` is the value span the lane is drawn and edited against — the mode
+   * takes it from the §7.8 registry so a drag writes real parameter values, not a
+   * fraction of whatever the lane already happened to contain.
+   *
+   * `editable` is false for a lane whose target the registry does not recognise: it can
+   * still be read, because a project may carry one, but §7.8 forbids adding points to it.
    */
-  automation: { readonly label: string; readonly points: readonly AutomationPoint[] } | null;
+  automation: {
+    readonly label: string;
+    readonly points: readonly AutomationPoint[];
+    readonly bounds: AutomationBounds;
+    readonly editable: boolean;
+    readonly selectedPointIds: readonly string[];
+  } | null;
   selectedIds: readonly string[];
   onSelect: (ids: readonly string[]) => void;
+  /** Selected automation points, which the marquee and lane taps set (spec §8.5.2). */
+  onSelectPoints: (ids: readonly string[]) => void;
+  /** Add a point to the selected lane (spec §7.8); `value` is already in lane units. */
+  onAutomationDraw: (tick: number, value: number, coalesceKey?: string) => void;
+  /** Move an existing point in time and value (spec §7.8). */
+  onAutomationMove: (id: string, tick: number, value: number, coalesceKey?: string) => void;
+  onAutomationErase: (ids: readonly string[], coalesceKey?: string) => void;
   /** `coalesceKey` is set while dragging, so the whole gesture is one undo entry. */
   onDraw: (note: number, tickStart: number, durationTicks: number, coalesceKey?: string) => void;
   onErase: (id: string, coalesceKey?: string) => void;
@@ -108,6 +133,8 @@ const MOVE_GESTURE = 'grid-move';
 const RESIZE_GESTURE = 'grid-resize';
 /** A velocity drag likewise: one gesture is one undo entry, not one per pointer sample. */
 const VELOCITY_GESTURE = 'grid-velocity';
+/** Automation drags coalesce the same way (spec §7.8 lanes, §3.3 gesture end). */
+const AUTOMATION_GESTURE = 'grid-automation';
 
 /**
  * How far the pointer may wander and still count as a tap rather than a drag. Without
@@ -133,6 +160,10 @@ export function GridCanvas({
   automation,
   selectedIds,
   onSelect,
+  onSelectPoints,
+  onAutomationDraw,
+  onAutomationMove,
+  onAutomationErase,
   onDraw,
   onErase,
   onGestureEnd,
@@ -153,6 +184,12 @@ export function GridCanvas({
     latest.current = { events, viewport, selectedIds, rowLabel, automation };
   });
   const visible = useRef(true);
+  /**
+   * The live marquee rectangle in canvas-local pixels, or null (spec §8.5.2). A ref, not
+   * React state: the rAF loop reads it every frame, and routing a drag through a state
+   * update would re-render the whole mode per pointer sample (spec §3.3, §8.4).
+   */
+  const marquee = useRef<GridRect | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -311,7 +348,7 @@ export function GridCanvas({
         context.lineTo(cssWidth, laneTop + 0.5);
         context.stroke();
 
-        const bounds = automationBounds(lane.points);
+        const bounds = lane.bounds;
         context.fillStyle = colours.muted;
         context.font = '10px ui-sans-serif, system-ui, sans-serif';
         context.fillText(lane.label, 4, laneTop + laneHeight / 2, LABEL_GUTTER_PX - 8);
@@ -337,14 +374,21 @@ export function GridCanvas({
           context.stroke();
 
           // Breakpoints are marked so a lane of two points is not mistaken for a ramp
-          // drawn between somewhere and somewhere else.
-          context.fillStyle = colours.focus;
+          // drawn between somewhere and somewhere else. They are also the drag handles, so
+          // they are drawn large enough to aim at (spec §8.5.2).
           for (const point of lane.points) {
             const x = LABEL_GUTTER_PX + tickToX(point.tick, view);
             const y = laneTop + automationValueToY(point.value, bounds, laneHeight);
+            const chosen = lane.selectedPointIds.includes(point.id);
+            context.fillStyle = chosen ? colours.accentStrong : colours.focus;
             context.beginPath();
-            context.arc(x, y, 2.5, 0, Math.PI * 2);
+            context.arc(x, y, chosen ? 5 : 3.5, 0, Math.PI * 2);
             context.fill();
+            if (chosen) {
+              context.strokeStyle = colours.text;
+              context.lineWidth = 1.5;
+              context.stroke();
+            }
           }
         }
         context.restore();
@@ -366,6 +410,19 @@ export function GridCanvas({
           context.lineTo(x + 0.5, cssHeight);
           context.stroke();
         }
+      }
+
+      // --- Marquee (spec §8.5.2 select) --------------------------------------------
+      const band = marquee.current;
+      if (band) {
+        const { x0, y0, x1, y1 } = band;
+        context.fillStyle = colours.focus;
+        context.globalAlpha = 0.15;
+        context.fillRect(x0, y0, x1 - x0, y1 - y0);
+        context.globalAlpha = 1;
+        context.strokeStyle = colours.focus;
+        context.lineWidth = 1;
+        context.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0, y1 - y0);
       }
     };
     frame = requestAnimationFrame(draw);
@@ -517,7 +574,10 @@ export function GridCanvas({
     return {
       x: event.clientX - rect.left - LABEL_GUTTER_PX,
       y: event.clientY - rect.top,
-      gridHeight: rect.height - lanesHeight(),
+      // Clamped as the draw loop clamps it: the lanes are 160 px with an automation lane
+      // open, and a canvas shorter than that would otherwise report a negative note grid
+      // and route every press into the automation lane at a nonsense value.
+      gridHeight: Math.max(0, rect.height - lanesHeight()),
       width: rect.width - LABEL_GUTTER_PX,
     };
   };
@@ -569,6 +629,184 @@ export function GridCanvas({
     });
   };
 
+  /**
+   * Run a marquee selection (spec §8.5.2). The rectangle is interpreted per region rather
+   * than as one flat area: notes are taken from the part of it over the note grid, and
+   * automation points from the part over the lane. A drag spanning both therefore selects
+   * both, and a drag confined to one selects only what it covers — which is what the two
+   * regions showing different things means.
+   */
+  const beginMarquee = (
+    pointerEvent: React.PointerEvent<HTMLCanvasElement>,
+    origin: { x: number; y: number },
+    view: GridViewport,
+    gridHeight: number,
+  ) => {
+    const canvas = pointerEvent.currentTarget;
+    const lane = automation;
+    const laneTop = gridHeight + VELOCITY_LANE_HEIGHT;
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      marquee.current = normaliseRect(
+        { x: origin.x + LABEL_GUTTER_PX, y: origin.y },
+        { x: moveEvent.clientX - rect.left, y: moveEvent.clientY - rect.top },
+      );
+    };
+    beginDrag(canvas, pointerEvent.pointerId, {
+      move,
+      end: () => {
+        const box = marquee.current;
+        marquee.current = null;
+        // A marquee that never moved is a tap on empty space, which clears the selection.
+        if (!box || isMarqueeTap(box, TAP_SLOP_PX)) {
+          onSelect([]);
+          onSelectPoints([]);
+          return;
+        }
+        const gutterless = {
+          x0: box.x0 - LABEL_GUTTER_PX,
+          x1: box.x1 - LABEL_GUTTER_PX,
+          y0: box.y0,
+          y1: box.y1,
+        };
+        onSelect(
+          box.y0 < gridHeight
+            ? eventsInRect(
+                latest.current.events,
+                { ...gutterless, y1: Math.min(box.y1, gridHeight) },
+                view,
+              ).map((event) => event.id)
+            : [],
+        );
+        onSelectPoints(
+          lane && box.y1 > laneTop
+            ? automationPointsInRect(
+                lane.points,
+                {
+                  ...gutterless,
+                  y0: Math.max(0, box.y0 - laneTop),
+                  y1: box.y1 - laneTop,
+                },
+                view,
+                lane.bounds,
+                AUTOMATION_LANE_HEIGHT,
+              ).map((automationPoint) => automationPoint.id)
+            : [],
+        );
+      },
+      // A second finger turning the drag into a pan takes the marquee with it: nothing
+      // was written, so there is nothing to roll back, only the rectangle to drop.
+      cancel: () => {
+        marquee.current = null;
+      },
+    });
+  };
+
+  /**
+   * Press inside the automation lane (spec §8.5.2, §7.8). Draw adds or drags a point,
+   * select marquees or drags one, erase removes it. A lane the registry does not
+   * recognise is read-only, so a press on it selects but never writes.
+   */
+  const handleAutomationPointerDown = (
+    pointerEvent: React.PointerEvent<HTMLCanvasElement>,
+    point: { x: number; y: number; gridHeight: number; width: number },
+    view: GridViewport,
+  ) => {
+    const lane = automation;
+    if (!lane) return;
+    const laneTop = point.gridHeight + VELOCITY_LANE_HEIGHT;
+    const laneY = point.y - laneTop;
+    const canvas = pointerEvent.currentTarget;
+    const hit = automationPointAtLanePoint(
+      lane.points,
+      point.x,
+      laneY,
+      view,
+      lane.bounds,
+      AUTOMATION_LANE_HEIGHT,
+    );
+
+    if (tool === 'erase') {
+      if (hit && lane.editable) onAutomationErase([hit.id]);
+      return;
+    }
+
+    if (!hit && tool === 'select') {
+      beginMarquee(pointerEvent, point, view, point.gridHeight);
+      return;
+    }
+
+    if (!hit) {
+      if (!lane.editable) return;
+      // Draw on empty lane: the new point lands on the snap grid at the pressed value,
+      // and the same press then drags it, so one gesture places it exactly (spec §8.5.2).
+      const tick = Math.max(0, snapTick(xToTick(point.x, view), snapTicks));
+      const value = automationYToValue(laneY, lane.bounds, AUTOMATION_LANE_HEIGHT);
+      onAutomationDraw(tick, value, AUTOMATION_GESTURE);
+      // The press itself already wrote, so an aborted drag has something to roll back even
+      // if the pointer never moved — the same rule `paintStroke` follows.
+      dragAutomationValue(canvas, pointerEvent, view, laneTop, () => newestPointAt(tick), true);
+      return;
+    }
+
+    onSelectPoints([hit.id]);
+    if (!lane.editable) return;
+    dragAutomationValue(canvas, pointerEvent, view, laneTop, () => hit.id, false);
+  };
+
+  /**
+   * The id of the point the current draw press just created. Read back from live props
+   * rather than returned by the store action: the action commits through Zustand and the
+   * new id only reaches this component on the next render, which is after the pointer has
+   * already begun to move.
+   */
+  const newestPointAt = (tick: number): string | null =>
+    latest.current.automation?.points.find((candidate) => candidate.tick === tick)?.id ?? null;
+
+  /**
+   * Drag a point in time and value until release; one drag is one undo entry (spec §3.3).
+   * `wroteOnPress` says the press that began the drag already committed something — a
+   * freshly drawn point — so a cancelled gesture has to roll that back even if the pointer
+   * never moved (issue #43's rule: panning must not be a way to edit).
+   */
+  const dragAutomationValue = (
+    canvas: HTMLCanvasElement,
+    pointerEvent: React.PointerEvent<HTMLCanvasElement>,
+    view: GridViewport,
+    laneTop: number,
+    resolveId: () => string | null,
+    wroteOnPress: boolean,
+  ) => {
+    let moved = false;
+    // Resolved once and held: a freshly drawn point is found by its tick, and the first
+    // drag sample moves it off that tick, so re-resolving would lose the point mid-drag.
+    let id: string | null = null;
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const lane = latest.current.automation;
+      id ??= resolveId();
+      if (!lane || id === null) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = moveEvent.clientX - rect.left - LABEL_GUTTER_PX;
+      const laneY = moveEvent.clientY - rect.top - laneTop;
+      moved = true;
+      onAutomationMove(
+        id,
+        Math.max(0, snapTick(xToTick(x, view), snapTicks)),
+        automationYToValue(laneY, lane.bounds, AUTOMATION_LANE_HEIGHT),
+        AUTOMATION_GESTURE,
+      );
+    };
+    beginDrag(canvas, pointerEvent.pointerId, {
+      move,
+      end: onGestureEnd,
+      cancel: () => {
+        if (!moved && !wroteOnPress) return;
+        onGestureEnd();
+        onGestureCancel();
+      },
+    });
+  };
+
   const handlePointerDown = (pointerEvent: React.PointerEvent<HTMLCanvasElement>) => {
     const touch = pointerEvent.pointerType === 'touch';
     if (touch) {
@@ -588,10 +826,11 @@ export function GridCanvas({
     const point = pointFrom(pointerEvent);
     const view: GridViewport = { ...viewport, width: point.width, height: point.gridHeight };
 
-    // --- Automation lane: a read-out, not a drag target — a press on it does nothing
-    // rather than falling through to the velocity lane above it and pinning a note to
-    // velocity 1 (spec §8.5.2).
-    if (automation && point.y >= point.gridHeight + VELOCITY_LANE_HEIGHT) return;
+    // --- Automation lane (spec §8.5.2, §7.8) ----------------------------------------
+    if (automation && point.y >= point.gridHeight + VELOCITY_LANE_HEIGHT) {
+      handleAutomationPointerDown(pointerEvent, point, view);
+      return;
+    }
 
     // --- Velocity lane: drag a note's velocity (spec §8.5.2 velocity lane) -----------
     if (point.y >= point.gridHeight) {
@@ -752,7 +991,9 @@ export function GridCanvas({
         else onDraw(strokeNote, strokeTick, defaultDurationTicks, DRAW_GESTURE);
       });
     } else {
-      onSelect([]);
+      // Select on empty grid: drag a marquee, or clear the selection with a plain tap
+      // (spec §8.5.2 select). The tap case is the marquee that never left the slop radius.
+      beginMarquee(pointerEvent, point, view, point.gridHeight);
     }
   };
 

@@ -7,11 +7,13 @@
  * subscribes to this store and sends it, so the actions stay pure state (spec §3.1).
  */
 import { create } from 'zustand';
+import { z } from 'zod';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { clamp, clampInt } from '@/core/math';
 import { dirtyKey } from '@/core/project/dirty';
 import {
   automationLaneKey,
+  automationPointSchema,
   BPM_RANGE,
   LENGTH_BARS_RANGE,
   SWING_RANGE,
@@ -21,9 +23,24 @@ import {
   type SongEntry,
   type Track,
 } from '@/core/project/schemas';
+import { isAutomatable } from '@/core/audio/params/registry';
 import type { GrooveTemplate } from '@/core/sequencer/groove';
 import { commit } from './commit';
 import { useProjectStore } from './useProjectStore';
+
+/**
+ * Outcome of an automation edit — the same shape, and for the same reason, as
+ * `useProgramStore`'s `AssignResult`: the store is the only layer that knows which §7.8
+ * rule refused, so it returns a finished sentence the UI shows verbatim rather than
+ * leaving the caller to report "nothing happened".
+ */
+export type AutomationEditResult = { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
+const AUTOMATION_EDITED: AutomationEditResult = { ok: true };
+
+function refuseAutomation(reason: string): AutomationEditResult {
+  return { ok: false, reason };
+}
 
 /** Snapshot passed to hydration (spec §4.4). */
 export interface SequenceHydration {
@@ -74,13 +91,24 @@ interface SequenceState extends Required<SequenceHydration> {
   /** Remove events; `coalesceKey` groups an erase drag as one undo entry (spec §3.3). */
   removeEvents: (trackId: string, ids: readonly string[], coalesceKey?: string) => void;
 
-  /** Atomically replace one automation lane (owner + target path — spec §7.8). */
+  /**
+   * Atomically replace one automation lane (owner + target path — spec §7.8). This is the
+   * ONLY route by which an automation point enters the model, so it is where §7.8's two
+   * gates live: the target must be a registered automatable address, and every point must
+   * satisfy {@link automationPointSchema}. Hydration bypasses it deliberately (a project
+   * saved against an older registry still loads, and the lane simply cannot be edited).
+   *
+   * `coalesceKey` folds a continuous gesture — dragging a point, or a recording pass
+   * writing thinned samples — into one undo entry (spec §3.3); the caller seals it with
+   * `endUndoGesture`.
+   */
   setAutomationLane: (
     scope: AutomationPoint['scope'],
     ownerId: string,
     targetPath: string,
     points: readonly AutomationPoint[],
-  ) => void;
+    coalesceKey?: string,
+  ) => AutomationEditResult;
 
   setSongEntries: (entries: readonly SongEntry[]) => void;
 
@@ -289,10 +317,23 @@ export const useSequenceStore = create<SequenceState>()(
     },
 
     // --- Automation (spec §7.8) ---------------------------------------------------
-    setAutomationLane: (scope, ownerId, targetPath, points) => {
+    setAutomationLane: (scope, ownerId, targetPath, points, coalesceKey) => {
+      // spec §7.8: only registered, automatable parameters accept points.
+      if (!isAutomatable(targetPath)) {
+        return refuseAutomation(`'${targetPath}' is not an automatable parameter.`);
+      }
+      // Every point is stamped with the lane it is being written into rather than trusted
+      // to name it: a point that claimed another lane would persist under this lane's key
+      // (spec §9.3 `automation_points`) and read back as the other one's.
+      const stamped = points.map((point) => ({ ...point, scope, ownerId, targetPath }));
+      const parsed = z.array(automationPointSchema).safeParse(stamped);
+      if (!parsed.success) {
+        return refuseAutomation('That automation point is outside what the lane accepts.');
+      }
+
       const key = automationLaneKey(scope, ownerId, targetPath);
       const prev = get().automation[key];
-      const next = [...points].sort((a, b) => a.tick - b.tick);
+      const next = parsed.data.sort((a, b) => a.tick - b.tick);
       const setLane = (value: AutomationPoint[] | undefined) =>
         set((state) => {
           const automation = { ...state.automation };
@@ -302,10 +343,14 @@ export const useSequenceStore = create<SequenceState>()(
         });
       commit({
         label: 'Edit automation',
-        apply: () => setLane(next),
+        // An emptied lane is deleted rather than stored empty: the §4.3 sync layer keys
+        // its diffs off the lane map, and a lane of no points is the absence of a lane.
+        apply: () => setLane(next.length > 0 ? next : undefined),
         revert: () => setLane(prev),
         dirtyKeys: [dirtyKey.automation(scope, ownerId, targetPath)],
+        ...(coalesceKey !== undefined ? { coalesceKey } : {}),
       });
+      return AUTOMATION_EDITED;
     },
 
     // --- Song mode (spec §7.9) ----------------------------------------------------

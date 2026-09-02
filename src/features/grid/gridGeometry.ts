@@ -329,3 +329,117 @@ export function resizeHandleAtPoint(
   }
   return null;
 }
+
+/**
+ * Lane y pixel → automation value — the inverse of {@link automationValueToY}, and the
+ * half that makes the lane an editor rather than a read-out (spec §8.5.2, §7.8). The
+ * result is clamped into the bounds, so a drag past either edge pins to it instead of
+ * writing a value the parameter cannot hold.
+ */
+export function automationYToValue(laneY: number, bounds: AutomationBounds, laneHeight: number): number {
+  const travel = laneHeight - 8;
+  const fraction = Math.min(1, Math.max(0, 1 - (laneY - 4) / travel));
+  return bounds.min + fraction * (bounds.max - bounds.min);
+}
+
+/** Grab radius in pixels around an automation breakpoint (drawn at 3.5 px). */
+const AUTOMATION_HANDLE_PX = 10;
+
+/**
+ * The automation point under a lane-local position, or null. Nearest wins within the grab
+ * radius: breakpoints are small and often close together, so a rectangular hit test would
+ * be unusable and first-in-order would grab the wrong one on a dense lane.
+ */
+export function automationPointAtLanePoint(
+  points: readonly AutomationPoint[],
+  x: number,
+  laneY: number,
+  viewport: GridViewport,
+  bounds: AutomationBounds,
+  laneHeight: number,
+  radiusPx: number = AUTOMATION_HANDLE_PX,
+): AutomationPoint | null {
+  let best: AutomationPoint | null = null;
+  let bestDistance = Infinity;
+  for (const point of points) {
+    const distance = Math.hypot(
+      tickToX(point.tick, viewport) - x,
+      automationValueToY(point.value, bounds, laneHeight) - laneY,
+    );
+    if (distance <= radiusPx && distance < bestDistance) {
+      best = point;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/** A marquee rectangle in canvas-local pixels, normalised so x0 ≤ x1 and y0 ≤ y1. */
+export interface GridRect {
+  readonly x0: number;
+  readonly y0: number;
+  readonly x1: number;
+  readonly y1: number;
+}
+
+/** Normalise two drag corners into a rectangle (spec §8.5.2 marquee select). */
+export function normaliseRect(from: { x: number; y: number }, to: { x: number; y: number }): GridRect {
+  return {
+    x0: Math.min(from.x, to.x),
+    y0: Math.min(from.y, to.y),
+    x1: Math.max(from.x, to.x),
+    y1: Math.max(from.y, to.y),
+  };
+}
+
+/**
+ * Whether a marquee drag was really a tap on empty space, which clears the selection
+ * rather than selecting nothing (spec §8.5.2). BOTH dimensions must be inside the slop:
+ * testing them separately would classify a deliberately thin sweep — along a flat
+ * automation lane, or down a chord's column of notes — as a tap and throw the selection
+ * away at the end of the drag that made it.
+ */
+export function isMarqueeTap(rect: GridRect, slopPx: number): boolean {
+  return rect.x1 - rect.x0 < slopPx && rect.y1 - rect.y0 < slopPx;
+}
+
+/**
+ * Notes a marquee rectangle selects (spec §8.5.2). A note is taken when its drawn
+ * rectangle *intersects* the marquee rather than being wholly contained by it: a note
+ * running off the right of the viewport, or longer than the band the user swept, is still
+ * plainly one they dragged across, and requiring containment would silently miss it.
+ */
+export function eventsInRect(
+  events: readonly MidiEvent[],
+  rect: GridRect,
+  viewport: GridViewport,
+): MidiEvent[] {
+  return events.filter((event) => {
+    const startX = tickToX(event.tickStart, viewport);
+    const endX = tickToX(event.tickStart + event.durationTicks, viewport);
+    if (endX < rect.x0 || startX > rect.x1) return false;
+    const row = noteToRow(event.note, viewport);
+    const top = rowToY(row, viewport);
+    return top + viewport.rowHeight >= rect.y0 && top <= rect.y1;
+  });
+}
+
+/**
+ * Automation points a marquee rectangle selects (spec §8.5.2), with `rect` given in
+ * lane-local coordinates — the caller has already subtracted the lane's top edge, since
+ * only it knows where the lane sits under the note grid and velocity lane.
+ */
+export function automationPointsInRect(
+  points: readonly AutomationPoint[],
+  rect: GridRect,
+  viewport: GridViewport,
+  bounds: AutomationBounds,
+  laneHeight: number,
+): AutomationPoint[] {
+  return points.filter((point) => {
+    const x = tickToX(point.tick, viewport);
+    if (x < rect.x0 || x > rect.x1) return false;
+    const y = automationValueToY(point.value, bounds, laneHeight);
+    return y >= rect.y0 && y <= rect.y1;
+  });
+}

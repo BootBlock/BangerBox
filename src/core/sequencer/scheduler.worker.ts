@@ -124,5 +124,5 @@ function wake(): void {
   for (const tick of result.loopWrapped) post({ kind: 'loopWrapped', tick });
   for (const entryIndex of result.songAdvanced) post({ kind: 'songAdvanced', entryIndex });
 
-  playhead?.write(core.playheadTick(now), core.isPlaying, core.isRecording);
+  playhead?.write(core.playheadTick(now), core.isPlaying, core.isRecording, core.isCapturing(now));
 }

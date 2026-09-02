@@ -9,6 +9,7 @@
  * registry. Every owned resource is released by {@link dispose} (spec §3.2).
  */
 import { useProgramStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
+import { resetAutomationRecording, setAutomationClock } from '@/store/automationRecord';
 import { createDefaultEnvelope } from '@/core/project/schemas';
 import { sampleCandidatePaths } from '@/core/storage/opfs';
 import {
@@ -102,6 +103,9 @@ export class AudioEngine {
     await this.preloadDemoInstrument();
     this.scheduler.start();
     this.startPlayheadPump();
+    // Publish the playhead to the automation recorder (spec §7.8) the way the meter
+    // registry is published to `meterScope` — the recorder must not import the engine.
+    setAutomationClock(() => this.playheadReader.read());
     this.initialised = true;
   }
 
@@ -224,6 +228,7 @@ export class AudioEngine {
     }
     this.playheadRaf = null;
     this.scheduler.dispose();
+    setAutomationClock(null);
     meterScope.setRegistry(null);
     for (const node of this.meterNodes) node.disconnect();
     for (const sink of this.meterSinks) sink.disconnect();
@@ -391,6 +396,7 @@ export class AudioEngine {
   /** Read the playhead SAB each frame and refresh the coarse readout ≤ 4×/s (spec §7.1.4). */
   private startPlayheadPump(): void {
     if (typeof requestAnimationFrame !== 'function') return;
+    let wasCapturing = false;
     const pump = (): void => {
       const reading = this.playheadReader.read();
       const now = performance.now();
@@ -398,6 +404,11 @@ export class AudioEngine {
         this.lastCoarseAt = now;
         this.publishCoarsePosition(reading.currentTick);
       }
+      // A pass that has ended must not thin the next one against its last sample
+      // (spec §7.8) — the playhead is the only place the count-in and the stop are both
+      // visible, so the recorder is reset from here rather than from the transport store.
+      if (wasCapturing && !reading.isCapturing) resetAutomationRecording();
+      wasCapturing = reading.isCapturing;
       this.playheadRaf = requestAnimationFrame(pump);
     };
     this.playheadRaf = requestAnimationFrame(pump);

@@ -76,3 +76,64 @@ export function automationRampForWindow(
   if (value === null) return null;
   return { targetPath, value, when: tickToSeconds(fromTick), rampEnd: tickToSeconds(toTick) };
 }
+
+// --- Recording live gestures into a lane (spec §7.8) -------------------------------
+
+/**
+ * Thinning limits for automation capture (spec §7.8 "thinned by minimum tick spacing +
+ * value epsilon"). Both must be cleared before a sample becomes a point: spacing alone
+ * would still record a stationary encoder once per window, and epsilon alone would record
+ * every jitter of a noisy analogue pot (spec §10.4) at scheduler resolution.
+ */
+export interface AutomationThinLimits {
+  readonly minTickSpacing: number;
+  /** Absolute value distance — the caller scales the §2.6 fraction by the target's range. */
+  readonly valueEpsilon: number;
+}
+
+/** The last sample a lane actually recorded, against which the next one is thinned. */
+export interface RecordedSample {
+  readonly tick: number;
+  readonly value: number;
+}
+
+/**
+ * Whether a live gesture sample earns a point (spec §7.8). The first sample of a pass
+ * always does — a lane has to start somewhere, and thinning against nothing would drop
+ * the very move the user made. A sample at or before the previous tick is refused: a loop
+ * wrap rewinds the playhead, and the caller re-opens the pass with a null `previous`
+ * rather than letting it write backwards over what it has just recorded.
+ */
+export function shouldRecordSample(
+  previous: RecordedSample | null,
+  tick: number,
+  value: number,
+  limits: AutomationThinLimits,
+): boolean {
+  if (previous === null) return true;
+  if (tick <= previous.tick) return false;
+  if (tick - previous.tick < limits.minTickSpacing) return false;
+  return Math.abs(value - previous.value) >= limits.valueEpsilon;
+}
+
+/**
+ * Merge a recorded point into a lane, overwriting the span the pass has just swept
+ * (spec §7.8). `sweptFromTick` is the tick the previous sample of this same pass landed
+ * on, or null when the point opens a pass: everything strictly after it and up to and
+ * including the new point is replaced, so a second pass over a region rewrites that
+ * region instead of interleaving two takes into a staircase.
+ *
+ * A point opening a pass replaces only its own tick, so re-recording one corner of a lane
+ * cannot silently wipe the automation before it.
+ */
+export function mergeRecordedPoint(
+  points: readonly AutomationPoint[],
+  point: AutomationPoint,
+  sweptFromTick: number | null,
+): AutomationPoint[] {
+  const from = sweptFromTick;
+  const superseded = (candidate: AutomationPoint): boolean =>
+    from === null ? candidate.tick === point.tick : candidate.tick > from && candidate.tick <= point.tick;
+  const kept = points.filter((candidate) => !superseded(candidate));
+  return [...kept, point].sort((a, b) => a.tick - b.tick);
+}
