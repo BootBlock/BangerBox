@@ -32,6 +32,7 @@ import {
   type Program,
   type VelocityLayer,
 } from '@/core/project/schemas';
+import { recordParamGesture } from './automationRecord';
 import { commit } from './commit';
 
 /**
@@ -564,6 +565,9 @@ export const useProgramStore = create<ProgramState>()(
           ),
         },
       }));
+      // spec §7.8: a gesture made while recording also writes automation — the same tap
+      // the mixer's transient channel carries, for the pad-scope §10.3 Q-Link defaults.
+      recordParamGesture(path, resolved.value, 'move');
     },
 
     commitPadParam: (path, value) => {
@@ -590,6 +594,8 @@ export const useProgramStore = create<ProgramState>()(
         revert: () => write(origin),
         dirtyKeys: [dirtyKey.program(resolved.programId)],
       });
+      // The released value closes the recorded pass on this lane (spec §7.8).
+      recordParamGesture(path, resolved.value, 'end');
     },
   })),
 );

@@ -56,3 +56,19 @@ export const UNDO_LIMIT = 100;
  * origin usage beyond this fraction of the browser quota.
  */
 export const QUOTA_HARD_STOP_RATIO = 0.9;
+
+/**
+ * Minimum tick spacing between two recorded automation points — spec §7.8 ("thinned by
+ * minimum tick spacing + value epsilon"). One 1/32 note at 960 PPQN: fine enough that a
+ * hand sweep reads as a curve rather than a staircase, coarse enough that a four-bar pass
+ * over one lane leaves tens of points rather than thousands.
+ */
+export const AUTOMATION_MIN_TICK_SPACING = PPQN / 8;
+
+/**
+ * Value epsilon for recorded automation, as a FRACTION of the target's registered range —
+ * spec §7.8. A fraction rather than an absolute: a lane may hold a gain in 0..1.2, a pan
+ * in -1..1 or a cutoff in 20..20000 Hz, and one absolute epsilon would be meaningless at
+ * one end of that spread and deaf at the other.
+ */
+export const AUTOMATION_VALUE_EPSILON = 0.005;

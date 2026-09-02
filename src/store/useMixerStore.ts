@@ -21,6 +21,7 @@ import {
   type Range,
 } from '@/core/project/schemas';
 import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
+import { recordParamGesture } from './automationRecord';
 import { commit } from './commit';
 import { useProjectStore } from './useProjectStore';
 
@@ -218,6 +219,10 @@ export const useMixerStore = create<MixerState>()(
           [parsed.channelId]: writeScalar(state.channels[parsed.channelId]!, parsed.field, clamped),
         },
       }));
+      // spec §7.8: a gesture made while recording also writes automation. The tap is here
+      // rather than in each mode because Q-Link, XYFX and every on-screen knob and fader
+      // reach the graph through this one action.
+      recordParamGesture(path, clamped, 'move');
     },
 
     commit: (path, value) => {
@@ -245,6 +250,8 @@ export const useMixerStore = create<MixerState>()(
         revert: () => write(origin),
         dirtyKeys: [mixerChannelDirtyKey(parsed.channelId)],
       });
+      // The released value closes the recorded pass on this lane (spec §7.8).
+      recordParamGesture(path, clamped, 'end');
     },
 
     setMute: (channelId, mute) => {

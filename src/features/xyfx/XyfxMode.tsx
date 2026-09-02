@@ -9,44 +9,25 @@
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useMixerStore } from '@/store';
-import {
-  channelLevelPath,
-  channelPanPath,
-  channelSendPath,
-  isAutomatable,
-  parseParamTarget,
-  targetRange,
-} from '@/core/audio/params/registry';
+import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
+import { channelAutomatableParams, type AutomatableParam } from '@/core/audio/params/catalogue';
+import type { ChannelStrip } from '@/core/project/schemas';
 import { EmptyState, FieldLabel, Toggle, XYSurface } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 
 /** Fallback when a path has no registry range — the surface still stays operable. */
 const UNIT_RANGE = [0, 1] as const;
 
-interface AxisChoice {
-  readonly path: string;
-  readonly label: string;
-}
-
 /**
- * Assignable parameter paths, built from the live mixer channels through the registry's
- * own path builders — so the picker can only offer addresses the registry recognises
- * (spec §7.8), never a hand-written string.
+ * Assignable parameter paths, from the §7.8 registry catalogue the Grid's automation lane
+ * picker also reads — so an axis can only be bound to an address the registry recognises,
+ * and the two pickers cannot drift apart. Channels are named by their id here because the
+ * XY surface addresses the mixer directly rather than through a track selector.
  */
-function assignableParams(channelIds: readonly string[]): AxisChoice[] {
-  const choices: AxisChoice[] = [];
-  for (const channelId of channelIds) {
-    const candidates: AxisChoice[] = [
-      { path: channelLevelPath(channelId), label: `${channelId} level` },
-      { path: channelPanPath(channelId), label: `${channelId} pan` },
-      { path: channelSendPath(channelId, 0), label: `${channelId} send 1` },
-      { path: channelSendPath(channelId, 1), label: `${channelId} send 2` },
-    ];
-    for (const candidate of candidates) {
-      if (isAutomatable(candidate.path)) choices.push(candidate);
-    }
-  }
-  return choices;
+function assignableParams(channels: Record<string, ChannelStrip>): AutomatableParam[] {
+  return Object.keys(channels)
+    .sort()
+    .flatMap((channelId) => channelAutomatableParams(channelId, channels[channelId]!, channelId));
 }
 
 export function XyfxMode() {
@@ -57,26 +38,38 @@ export function XyfxMode() {
   /** Values the axes rested at before the gesture, for the release-return behaviour. */
   const restingValues = useRef<{ x: number | null; y: number | null }>({ x: null, y: null });
 
-  const channelIds = useMemo(() => Object.keys(channels).sort(), [channels]);
-  const choices = useMemo(() => assignableParams(channelIds), [channelIds]);
+  const choices = useMemo(() => assignableParams(channels), [channels]);
 
   const effectiveX = xPath ?? choices[0]?.path ?? null;
   const effectiveY = yPath ?? choices[1]?.path ?? choices[0]?.path ?? null;
 
-  /** Current value at a registry path, read from the mixer store. */
+  /**
+   * Current value at a registry path, read from the mixer store. Resolved through
+   * {@link parseParamTarget} rather than by splitting the string here: the registry owns
+   * the address grammar (spec §13.6), and a hand-rolled split cannot read the insert
+   * addresses the catalogue now offers.
+   */
   const valueAt = useCallback(
     (path: string | null): number => {
-      if (!path) return 0;
-      const [, channelId, field] = path.split('.');
-      const strip = channelId ? channels[channelId] : undefined;
-      if (!strip || !field) return 0;
-      if (field === 'level') return strip.level;
-      if (field === 'pan') return strip.pan;
-      if (field.startsWith('sendLevels')) {
-        const index = Number(path.split('.').pop());
-        return strip.sendLevels[index] ?? 0;
+      const target = path ? parseParamTarget(path) : null;
+      if (!target || target.kind === 'programParam' || target.kind === 'transportParam') return 0;
+      const strip = channels[target.channelId];
+      if (!strip) return 0;
+      switch (target.kind) {
+        case 'channelLevel':
+          return strip.level;
+        case 'channelPan':
+          return strip.pan;
+        case 'channelSend':
+          return strip.sendLevels[target.sendIndex] ?? 0;
+        case 'insertParam':
+          // Slots are 1-based in the §7.8 grammar; an unset param reads as its range floor.
+          return (
+            strip.inserts[target.slot - 1]?.params[target.param] ??
+            targetRange(target, strip.inserts[target.slot - 1]?.effectType ?? undefined)?.[0] ??
+            0
+          );
       }
-      return 0;
     },
     [channels],
   );
@@ -84,7 +77,13 @@ export function XyfxMode() {
   /** Range for a path, taken from the registry rather than assumed (spec §7.8). */
   const rangeAt = (path: string | null): readonly [number, number] => {
     const target = path ? parseParamTarget(path) : null;
-    return (target && targetRange(target)) ?? UNIT_RANGE;
+    if (!target) return UNIT_RANGE;
+    // Insert ranges depend on the effect in the slot, so the strip resolves them.
+    const effectType =
+      target.kind === 'insertParam'
+        ? (channels[target.channelId]?.inserts[target.slot - 1]?.effectType ?? undefined)
+        : undefined;
+    return targetRange(target, effectType) ?? UNIT_RANGE;
   };
 
   const applyTransient = useCallback(

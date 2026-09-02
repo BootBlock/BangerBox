@@ -295,6 +295,15 @@ export class SchedulerCore {
     return this.recording;
   }
 
+  /**
+   * Recording *and* past the count-in, so `playheadTick(now)` beside it is a real position
+   * (spec §7.7). The same gate note capture uses, published for the playhead SAB so the
+   * main thread can hold automation capture back through the count-in too (spec §7.8).
+   */
+  isCapturing(now: number): boolean {
+    return this.recording && this.contentStarted(now);
+  }
+
   // --------------------------------------------------------------- internals ---
 
   private beginPlayback(now: number): void {

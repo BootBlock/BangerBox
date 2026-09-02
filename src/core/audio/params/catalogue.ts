@@ -1,0 +1,97 @@
+/**
+ * Automatable-parameter catalogue — spec §7.8, §8.5.2, §8.5.10, §8.5.11. The registry
+ * next door owns the address *grammar*; this owns the question every picker actually
+ * asks, which is "what can I automate on this thing right now". Both the Grid's
+ * automation lane picker and the XYFX axis pickers read from here, so neither can offer
+ * an address the registry would refuse and the two can never drift apart.
+ *
+ * Pure and DOM-free: it takes the live store data as arguments rather than reading the
+ * stores, so it is trivially unit-testable (spec §2.5) and callable from an offline
+ * render.
+ *
+ * Every path is built through the registry's own builders and gated through
+ * {@link isAutomatable}, never hand-formatted (spec §13.6 naming freeze).
+ */
+import type { ChannelStrip, Program } from '@/core/project/schemas';
+import { EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
+import {
+  channelLevelPath,
+  channelPanPath,
+  channelSendPath,
+  insertParamPath,
+  isAutomatable,
+  programParamPath,
+  PROGRAM_PARAM_RANGES,
+} from './registry';
+
+/** One offerable address: the canonical §7.8 path and the words a picker shows for it. */
+export interface AutomatableParam {
+  readonly path: string;
+  readonly label: string;
+}
+
+/** Send taps per channel (spec §1.3.1: 4 returns). */
+const SEND_COUNT = 4;
+
+function offer(list: AutomatableParam[], path: string, label: string): void {
+  // The registry is the gate, not this list (spec §7.8) — an address it does not know
+  // never reaches a picker, so no picker can create a point the store would refuse.
+  if (isAutomatable(path)) list.push({ path, label });
+}
+
+/**
+ * Every automatable address on one mixer channel (spec §7.8): its level, pan and four
+ * sends, plus the parameters of whatever effects occupy its insert slots. Empty slots
+ * contribute nothing — an address for a slot holding no effect resolves to no
+ * `AudioParam`, so offering it would be a dead control (spec §3.4).
+ *
+ * `channelName` is what the user calls the channel; the raw `track:<uuid>` id is
+ * unreadable, and a picker of forty rows of UUID is not a picker.
+ */
+export function channelAutomatableParams(
+  channelId: string,
+  strip: ChannelStrip,
+  channelName: string,
+): AutomatableParam[] {
+  const params: AutomatableParam[] = [];
+  offer(params, channelLevelPath(channelId), `${channelName} · level`);
+  offer(params, channelPanPath(channelId), `${channelName} · pan`);
+  for (let index = 0; index < SEND_COUNT; index += 1) {
+    offer(params, channelSendPath(channelId, index), `${channelName} · send ${index + 1}`);
+  }
+  strip.inserts.forEach((slot, slotIndex) => {
+    if (slot.effectType === null) return;
+    // Slots are addressed 1-based in the §7.8 grammar (`slot2`).
+    const slotNumber = slotIndex + 1;
+    const names = [...Object.keys(EFFECT_PARAM_RANGES[slot.effectType])];
+    // Every insert exposes the wrapper's own dry/wet mix (spec §5.7), which the
+    // per-effect table only lists for the effects whose own params include one.
+    if (!names.includes('mix')) names.push('mix');
+    for (const param of names) {
+      offer(
+        params,
+        insertParamPath(channelId, slotNumber, param),
+        `${channelName} · ${slot.effectType} ${slotNumber} ${param}`,
+      );
+    }
+  });
+  return params;
+}
+
+/**
+ * Every automatable sound-design address on a drum program's assigned pads (spec §6,
+ * §7.8). Keygroup programs carry the same surface at *program* scope rather than per pad,
+ * and §7.8's address grammar has no program-scope form for it, so they contribute nothing
+ * here rather than being addressed through a pad index they do not have.
+ */
+export function programAutomatableParams(program: Program): AutomatableParam[] {
+  if (program.type !== 'drum') return [];
+  const params: AutomatableParam[] = [];
+  for (const pad of [...program.pads].sort((a, b) => a.padIndex - b.padIndex)) {
+    const padName = pad.name || `Pad ${pad.padIndex + 1}`;
+    for (const leaf of Object.keys(PROGRAM_PARAM_RANGES)) {
+      offer(params, programParamPath(program.id, pad.padIndex, leaf), `${padName} · ${leaf}`);
+    }
+  }
+  return params;
+}

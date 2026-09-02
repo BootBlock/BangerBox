@@ -11,13 +11,28 @@
 import { useMemo, useState } from 'react';
 import { PPQN } from '@/core/constants';
 import { gridTicks, quantiseEvents, type QuantiseGrid } from '@/core/sequencer/quantise';
-import { endUndoGesture, useProgramStore, useSequenceStore, useTransportStore, useUndoStore } from '@/store';
-import type { AutomationPoint, MidiEvent } from '@/core/project/schemas';
+import {
+  endUndoGesture,
+  useMixerStore,
+  useProgramStore,
+  useSequenceStore,
+  useTransportStore,
+  useUndoStore,
+} from '@/store';
+import { automationLaneKey, type AutomationPoint, type MidiEvent } from '@/core/project/schemas';
+import {
+  channelAutomatableParams,
+  programAutomatableParams,
+  type AutomatableParam,
+} from '@/core/audio/params/catalogue';
+import { isAutomatable, parseParamTarget, targetRange } from '@/core/audio/params/registry';
 import { IconRemove } from '@/ui/icons';
 import { Button, EmptyState, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
+import { announce } from '@/ui/primitives/LiveRegion';
 import { Panel } from '@/ui/shell/Panel';
 import { noteName } from '../pad-perform/scales';
 import { GridCanvas, type GridTool } from './GridCanvas';
+import { automationBounds } from './gridGeometry';
 
 /** Snap options in ticks; 0 is "off" (spec §8.5.2 "grid snap selector incl. off"). */
 const SNAP_OPTIONS = [
@@ -44,6 +59,13 @@ const DEFAULT_DRAW_DURATION = PPQN / 4;
  */
 const ZOOM_BUTTON_STEP = 1.5;
 
+/** Curve of the span leaving a point (spec §7.8 `'step' | 'linear' | 'exp'`). */
+const CURVE_OPTIONS = [
+  { value: 'step', label: 'Step' },
+  { value: 'linear', label: 'Linear' },
+  { value: 'exp', label: 'Exp' },
+] as const satisfies readonly { value: AutomationPoint['curve']; label: string }[];
+
 /**
  * Value span of an automation lane, phrased for the accessible readout (spec §8.2). The
  * raw span, not {@link automationBounds} — that pads a flat lane so the drawn line has
@@ -57,6 +79,11 @@ function laneRangeText(points: readonly AutomationPoint[]): string {
   return min === max ? `flat at ${round(min)}` : `${round(min)} to ${round(max)}`;
 }
 
+/** Round a lane value for display without pretending to a precision it has not got. */
+function displayValue(value: number): string {
+  return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(3);
+}
+
 export function GridMode() {
   const activeSequenceId = useTransportStore((s) => s.activeSequenceId);
   const tracks = useSequenceStore((s) => s.tracks);
@@ -65,6 +92,7 @@ export function GridMode() {
   const grooveTemplates = useSequenceStore((s) => s.grooveTemplates);
   const trackGrooveIds = useSequenceStore((s) => s.trackGrooveIds);
   const programs = useProgramStore((s) => s.programs);
+  const channels = useMixerStore((s) => s.channels);
 
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [tool, setTool] = useState<GridTool>('draw');
@@ -74,7 +102,16 @@ export function GridMode() {
   const [quantiseDivision, setQuantiseDivision] = useState<QuantiseDivision>(16);
   const [quantiseTriplet, setQuantiseTriplet] = useState(false);
   const [quantiseStrength, setQuantiseStrength] = useState(100);
-  const [automationLane, setAutomationLane] = useState<string>('');
+  /**
+   * Which §7.8 scope the lane being edited belongs to. Explicit, and never inferred from
+   * whatever lane happens to exist, because track scope OVERRIDES sequence scope for the
+   * same target at schedule time: editing the wrong one is silent, and the user has to be
+   * able to see which one they are drawing on.
+   */
+  const [automationScope, setAutomationScope] = useState<AutomationPoint['scope']>('track');
+  const [automationTarget, setAutomationTarget] = useState<string>('');
+  const [drawCurve, setDrawCurve] = useState<AutomationPoint['curve']>('linear');
+  const [selectedPointIds, setSelectedPointIds] = useState<readonly string[]>([]);
   const [viewport, setViewport] = useState({
     scrollTicks: 0,
     ticksPerPixel: DEFAULT_TICKS_PER_PIXEL,
@@ -106,40 +143,101 @@ export function GridMode() {
   }, [program]);
 
   /**
-   * Automation lanes owned by the selected track (spec §7.8 keyed lanes, §8.5.2 "per-track
-   * automation lane selector"). Lane keys are `${scope}:${ownerId}:${targetPath}`, so this
-   * is a prefix match on the track's own scope and id — matching on `:` alone would admit
-   * every lane in the project, including other tracks' and the sequence's.
+   * The entity that owns a lane in each §7.8 scope: the selected track, or the sequence
+   * the transport is playing. A sequence lane belongs to the pattern, so it follows the
+   * transport's active sequence rather than the track selector.
    */
-  const automationLanes = useMemo(() => {
-    if (trackId === null) return [];
-    const prefix = `track:${trackId}:`;
-    return (
-      Object.keys(automation)
-        // A lane with no points has nothing to show; offering it would be another control
-        // whose selection changes nothing on screen.
-        .filter((key) => key.startsWith(prefix) && (automation[key]?.length ?? 0) > 0)
-        .sort()
-    );
-  }, [automation, trackId]);
+  const automationOwnerId = automationScope === 'track' ? trackId : activeSequenceId;
 
   /**
-   * The chosen lane, narrowed to one the selected track actually owns. Switching track
-   * leaves the previous track's key in state; resolving it anyway would draw one track's
-   * automation over another's notes, so it falls back to "None" instead — and because the
-   * select reads this rather than the raw state, it shows None to match.
+   * Parameters this context can automate (spec §7.8 "only registered, automatable
+   * parameters accept points"). Built through the registry catalogue, so the picker
+   * cannot offer an address the store would refuse: the selected track's own mixer
+   * channel and inserts, the master strip, and the sound-design leaves of the pads its
+   * program actually has.
    */
-  const activeLane = automationLanes.includes(automationLane) ? automationLane : '';
+  const targetOptions = useMemo(() => {
+    const options: AutomatableParam[] = [];
+    const trackChannelId = trackId ? `track:${trackId}` : null;
+    const trackStrip = trackChannelId ? channels[trackChannelId] : undefined;
+    if (trackChannelId && trackStrip) {
+      options.push(...channelAutomatableParams(trackChannelId, trackStrip, track?.name ?? 'Track'));
+    }
+    const master = channels.master;
+    if (master) options.push(...channelAutomatableParams('master', master, 'Master'));
+    if (program) options.push(...programAutomatableParams(program));
+    return options;
+  }, [channels, program, track?.name, trackId]);
 
   /**
-   * The lane the canvas draws, or null for none. The target path alone labels it — the
-   * scope and owner are already fixed by the track selector beside it.
+   * Lanes this scope and owner already hold. Listed alongside the registered targets so a
+   * lane an older project carries — one whose address this build's registry no longer
+   * recognises — stays reachable and readable rather than vanishing from the picker.
+   */
+  const existingTargets = useMemo(() => {
+    if (automationOwnerId === null) return [];
+    const prefix = `${automationScope}:${automationOwnerId}:`;
+    return Object.keys(automation)
+      .filter((key) => key.startsWith(prefix) && (automation[key]?.length ?? 0) > 0)
+      .map((key) => key.slice(prefix.length))
+      .sort();
+  }, [automation, automationOwnerId, automationScope]);
+
+  /** The picker's options: every registered target, plus any lane already written. */
+  const laneChoices = useMemo(() => {
+    const seen = new Set(targetOptions.map((option) => option.path));
+    const extra = existingTargets
+      .filter((path) => !seen.has(path))
+      .map((path) => ({ path, label: `${path} (not automatable in this build)` }));
+    return [...targetOptions, ...extra];
+  }, [existingTargets, targetOptions]);
+
+  /**
+   * The chosen target, narrowed to one this context offers. Switching track or scope
+   * leaves the previous choice in state; resolving it anyway would draw one owner's
+   * automation over another's notes, so it falls back to "None" — and because the select
+   * reads this rather than the raw state, it shows None to match.
+   */
+  const activeTarget = laneChoices.some((choice) => choice.path === automationTarget) ? automationTarget : '';
+
+  const laneKey =
+    activeTarget && automationOwnerId !== null
+      ? automationLaneKey(automationScope, automationOwnerId, activeTarget)
+      : null;
+
+  /**
+   * The lane the canvas draws and edits, or null for none. Its `bounds` come from the
+   * §7.8 registry rather than from the points themselves: a drag has to write real
+   * parameter values, and scaling to the lane's own contents would make the same pixel
+   * mean a different value every time a point moved.
    */
   const selectedLane = useMemo(() => {
-    const points = activeLane ? automation[activeLane] : undefined;
-    if (!points) return null;
-    return { label: activeLane.slice(`track:${trackId}:`.length), points };
-  }, [automation, activeLane, trackId]);
+    if (activeTarget === '' || laneKey === null) return null;
+    const points = automation[laneKey] ?? [];
+    const target = parseParamTarget(activeTarget);
+    const range = target ? targetRange(target) : null;
+    const label = laneChoices.find((choice) => choice.path === activeTarget)?.label ?? activeTarget;
+    return {
+      label,
+      points,
+      bounds: range ? { min: range[0], max: range[1] } : automationBounds(points),
+      editable: isAutomatable(activeTarget),
+      selectedPointIds,
+    };
+  }, [activeTarget, automation, laneChoices, laneKey, selectedPointIds]);
+
+  /**
+   * Whether a track-scope lane is in force for this target (spec §7.8: "track scope
+   * overrides sequence scope for the same target"). Any track's lane wins, not only the
+   * selected track's, because the scheduler resolves by target path across every lane.
+   */
+  const trackScopeOverrides = useMemo(() => {
+    if (activeTarget === '') return false;
+    return Object.entries(automation).some(
+      ([key, points]) =>
+        key.startsWith('track:') && key.endsWith(`:${activeTarget}`) && (points?.length ?? 0) > 0,
+    );
+  }, [activeTarget, automation]);
 
   const sequence = () => useSequenceStore.getState();
 
@@ -201,6 +299,109 @@ export function GridMode() {
       live.map((event) => (ids.includes(event.id) ? { ...event, velocity: clamped } : event)),
       coalesceKey,
     );
+  };
+
+  /**
+   * Write the lane back through the one store action that owns §7.8's gates. A refusal
+   * carries a finished sentence, which is announced rather than swallowed — a control that
+   * silently does nothing reads as broken (see `useProgramStore`'s AssignResult).
+   */
+  const writeLane = (points: readonly AutomationPoint[], coalesceKey?: string) => {
+    if (activeTarget === '' || automationOwnerId === null) return;
+    const result = sequence().setAutomationLane(
+      automationScope,
+      automationOwnerId,
+      activeTarget,
+      points,
+      coalesceKey,
+    );
+    if (!result.ok) announce(result.reason);
+  };
+
+  const lanePoints = (): readonly AutomationPoint[] =>
+    laneKey === null ? [] : (sequence().automation[laneKey] ?? []);
+
+  /**
+   * Hold a value inside the lane's registered range (spec §7.8). The canvas already clamps
+   * a drag, but the point list's number fields do not — `min`/`max` on an input constrain
+   * the spinners and nothing else.
+   */
+  const clampToLane = (value: number): number => {
+    if (!selectedLane || !Number.isFinite(value)) return value;
+    const { min, max } = selectedLane.bounds;
+    return Math.min(max, Math.max(min, value));
+  };
+
+  const handleAutomationDraw = (tick: number, value: number, coalesceKey?: string) => {
+    if (automationOwnerId === null || !Number.isFinite(value)) return;
+    // A point already at this tick is replaced rather than stacked on: two points at one
+    // tick make a lane whose value depends on array order, which nothing else respects.
+    const kept = lanePoints().filter((point) => point.tick !== tick);
+    writeLane(
+      [
+        ...kept,
+        {
+          id: crypto.randomUUID(),
+          scope: automationScope,
+          ownerId: automationOwnerId,
+          targetPath: activeTarget,
+          tick,
+          value: clampToLane(value),
+          curve: drawCurve,
+        },
+      ],
+      coalesceKey,
+    );
+  };
+
+  const handleAutomationMove = (id: string, tick: number, value: number, coalesceKey?: string) => {
+    if (!Number.isFinite(value)) return; // a cleared number field is not a value of zero
+    // Live points, not the rendered snapshot: a drag writes many times per second and each
+    // write must build on the last (the same reason `handleVelocity` reads the store).
+    const live = lanePoints();
+    if (!live.some((point) => point.id === id)) return;
+    // A drag stalls at a tick another point already holds rather than deleting it. Dragging
+    // across a dense lane would otherwise wipe every point it passed, and an accidental
+    // erase is a worse outcome than a drag that will not go where it is pushed.
+    if (live.some((point) => point.id !== id && point.tick === tick)) return;
+    writeLane(
+      live.map((point) => (point.id === id ? { ...point, tick, value: clampToLane(value) } : point)),
+      coalesceKey,
+    );
+  };
+
+  const handleAutomationErase = (ids: readonly string[], coalesceKey?: string) => {
+    const removed = new Set(ids);
+    writeLane(
+      lanePoints().filter((point) => !removed.has(point.id)),
+      coalesceKey,
+    );
+    setSelectedPointIds((current) => current.filter((id) => !removed.has(id)));
+  };
+
+  /**
+   * The curve control does double duty: it sets what a newly drawn point takes, and
+   * re-curves whatever is selected. One control rather than two, because a curve is a
+   * property of a point and the selection is how the user says which points they mean.
+   */
+  const handleCurveChange = (curve: AutomationPoint['curve']) => {
+    setDrawCurve(curve);
+    if (selectedPointIds.length === 0) return;
+    const chosen = new Set(selectedPointIds);
+    writeLane(lanePoints().map((point) => (chosen.has(point.id) ? { ...point, curve } : point)));
+  };
+
+  /**
+   * Add a point from the keyboard, since the canvas is a pointer surface (spec §8.2). It
+   * lands one snap step past the last point at the middle of the lane's range, which is a
+   * predictable place to then adjust from — the row's own tick and value fields.
+   */
+  const handleAddPoint = () => {
+    if (!selectedLane?.editable) return;
+    const step = snapTicks > 0 ? snapTicks : PPQN / 4;
+    const last = lanePoints().reduce((highest, point) => Math.max(highest, point.tick), -step);
+    const { min, max } = selectedLane.bounds;
+    handleAutomationDraw(last + step, min + (max - min) / 2);
   };
 
   const applyQuantise = () => {
@@ -288,36 +489,92 @@ export function GridMode() {
             </select>
           </FieldLabel>
 
+          {/* Scope is named before the parameter, because §7.8 makes track scope override
+              sequence scope for the same target: which one is being drawn on has to be
+              visible, not inferred from whichever lane happened to exist. */}
+          <FieldLabel as="span">
+            Automation scope
+            <SegmentControl
+              label="Automation scope"
+              value={automationScope}
+              options={[
+                { value: 'track', label: 'Track' },
+                { value: 'sequence', label: 'Sequence' },
+              ]}
+              size="sm"
+              onChange={(value) => {
+                setAutomationScope(value);
+                setSelectedPointIds([]);
+              }}
+              data-testid="grid-automation-scope"
+            />
+          </FieldLabel>
+
           <FieldLabel>
             Automation lane
             <select
               aria-label="Automation lane"
-              value={activeLane}
-              disabled={automationLanes.length === 0}
-              onChange={(event) => setAutomationLane(event.target.value)}
+              value={activeTarget}
+              disabled={laneChoices.length === 0 || automationOwnerId === null}
+              onChange={(event) => {
+                setAutomationTarget(event.target.value);
+                setSelectedPointIds([]);
+              }}
               data-testid="grid-automation-lane"
               className="max-w-56 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs font-normal text-bb-text normal-case disabled:opacity-40"
             >
-              <option value="">{automationLanes.length === 0 ? 'No lanes' : 'None'}</option>
-              {automationLanes.map((lane) => (
-                <option key={lane} value={lane}>
-                  {lane.slice(`track:${trackId}:`.length)}
+              <option value="">{laneChoices.length === 0 ? 'No parameters' : 'None'}</option>
+              {laneChoices.map((choice) => (
+                <option key={choice.path} value={choice.path}>
+                  {choice.label}
                 </option>
               ))}
             </select>
           </FieldLabel>
+
+          {selectedLane !== null && (
+            <FieldLabel as="span">
+              Curve
+              <SegmentControl
+                label="Automation curve"
+                value={drawCurve}
+                options={CURVE_OPTIONS}
+                size="sm"
+                disabled={!selectedLane.editable}
+                onChange={handleCurveChange}
+                data-testid="grid-automation-curve"
+              />
+            </FieldLabel>
+          )}
 
           {/* The lane is drawn on the canvas, which is aria-hidden, so its shape also
               needs saying in text (spec §8.2). */}
           {selectedLane !== null && (
             <ValueReadout
               label="Lane"
-              value={`${selectedLane.points.length} point${
-                selectedLane.points.length === 1 ? '' : 's'
-              }, ${laneRangeText(selectedLane.points)}`}
+              value={
+                selectedLane.points.length === 0
+                  ? 'empty — draw on the lane below the velocity strip'
+                  : `${selectedLane.points.length} point${
+                      selectedLane.points.length === 1 ? '' : 's'
+                    }, ${laneRangeText(selectedLane.points)}`
+              }
               showLabel
               data-testid="grid-automation-summary"
             />
+          )}
+
+          {/* §7.8's precedence rule, said where the editing happens rather than left for
+              the user to discover by hearing the wrong lane. */}
+          {selectedLane !== null && automationScope === 'sequence' && trackScopeOverrides && (
+            <p className="text-bb-micro text-bb-warn" data-testid="grid-automation-override">
+              A track lane for this parameter overrides this sequence lane during playback.
+            </p>
+          )}
+          {selectedLane !== null && !selectedLane.editable && (
+            <p className="text-bb-micro text-bb-warn" data-testid="grid-automation-readonly">
+              This lane&rsquo;s parameter is not in the automation registry, so it can be read but not edited.
+            </p>
           )}
 
           {/* Groove is applied at schedule time like swing — non-destructive (spec §7.5).
@@ -402,6 +659,10 @@ export function GridMode() {
               automation={selectedLane}
               selectedIds={selectedIds}
               onSelect={setSelectedIds}
+              onSelectPoints={setSelectedPointIds}
+              onAutomationDraw={handleAutomationDraw}
+              onAutomationMove={handleAutomationMove}
+              onAutomationErase={handleAutomationErase}
               onDraw={handleDraw}
               onErase={handleErase}
               onGestureEnd={endUndoGesture}
@@ -417,43 +678,125 @@ export function GridMode() {
           )}
         </Panel>
 
-        {/* Keyboard/screen-reader path to the same edits the canvas performs (spec §8.2). */}
-        <Panel title="Notes" scroll>
-          {events.length === 0 ? (
-            <EmptyState message="No notes on this track yet." hint="Draw one on the grid above." />
-          ) : (
-            <ul className="flex flex-col gap-1">
-              {[...events]
-                .sort((a, b) => a.tickStart - b.tickStart)
-                .map((event) => (
-                  <li key={event.id} className="flex items-center gap-2 text-xs">
-                    <button
-                      type="button"
-                      // Selecting a note picks one of the list, so `aria-current`, not the
-                      // `aria-pressed` of a toggle this used to carry (see ModeRail).
-                      aria-current={selectedIds.includes(event.id)}
-                      onClick={() => setSelectedIds([event.id])}
-                      className={`flex-1 truncate rounded-bb-sm border px-2 py-1 text-left transition-colors duration-150 ${
-                        selectedIds.includes(event.id)
-                          ? 'border-bb-accent text-bb-text'
-                          : 'border-bb-line text-bb-muted hover:text-bb-text'
-                      }`}
-                    >
-                      {rowLabel(event.note)} · tick {event.tickStart} · vel {event.velocity}
-                    </button>
-                    <Button
-                      label={`Delete note ${rowLabel(event.note)} at tick ${event.tickStart}`}
-                      variant="danger"
-                      size="sm"
-                      iconOnly
-                      icon={<IconRemove size={14} aria-hidden="true" />}
-                      onClick={() => handleErase(event.id)}
-                    />
-                  </li>
-                ))}
-            </ul>
+        <div className="flex min-h-0 flex-col gap-3">
+          {/* Keyboard/screen-reader path to the same edits the canvas performs (spec §8.2). */}
+          <Panel title="Notes" scroll fill>
+            {events.length === 0 ? (
+              <EmptyState message="No notes on this track yet." hint="Draw one on the grid above." />
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {[...events]
+                  .sort((a, b) => a.tickStart - b.tickStart)
+                  .map((event) => (
+                    <li key={event.id} className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        // Selecting a note picks one of the list, so `aria-current`, not the
+                        // `aria-pressed` of a toggle this used to carry (see ModeRail).
+                        aria-current={selectedIds.includes(event.id)}
+                        onClick={() => setSelectedIds([event.id])}
+                        className={`flex-1 truncate rounded-bb-sm border px-2 py-1 text-left transition-colors duration-150 ${
+                          selectedIds.includes(event.id)
+                            ? 'border-bb-accent text-bb-text'
+                            : 'border-bb-line text-bb-muted hover:text-bb-text'
+                        }`}
+                      >
+                        {rowLabel(event.note)} · tick {event.tickStart} · vel {event.velocity}
+                      </button>
+                      <Button
+                        label={`Delete note ${rowLabel(event.note)} at tick ${event.tickStart}`}
+                        variant="danger"
+                        size="sm"
+                        iconOnly
+                        icon={<IconRemove size={14} aria-hidden="true" />}
+                        onClick={() => handleErase(event.id)}
+                      />
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </Panel>
+
+          {/* The lane's own keyboard path (spec §8.2): the canvas is aria-hidden, so every
+            point it can draw, move or delete is also reachable here. */}
+          {selectedLane !== null && (
+            <Panel
+              title="Automation"
+              scroll
+              fill
+              actions={
+                <div className="flex items-center gap-2">
+                  <Button
+                    label="Add point"
+                    size="sm"
+                    disabled={!selectedLane.editable}
+                    onClick={handleAddPoint}
+                    data-testid="grid-automation-add"
+                  />
+                  <Button
+                    label="Delete selected points"
+                    size="sm"
+                    variant="danger"
+                    disabled={!selectedLane.editable || selectedPointIds.length === 0}
+                    onClick={() => handleAutomationErase(selectedPointIds)}
+                    data-testid="grid-automation-delete"
+                  />
+                </div>
+              }
+            >
+              {selectedLane.points.length === 0 ? (
+                <EmptyState
+                  message="This lane has no points yet."
+                  hint="Draw on the lane under the velocity strip, or press Add point."
+                  data-testid="grid-automation-empty"
+                />
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {[...selectedLane.points]
+                    .sort((a, b) => a.tick - b.tick)
+                    .map((point) => (
+                      <li key={point.id} className="flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          aria-current={selectedPointIds.includes(point.id)}
+                          onClick={() => setSelectedPointIds([point.id])}
+                          className={`flex-1 truncate rounded-bb-sm border px-2 py-1 text-left transition-colors duration-150 ${
+                            selectedPointIds.includes(point.id)
+                              ? 'border-bb-accent text-bb-text'
+                              : 'border-bb-line text-bb-muted hover:text-bb-text'
+                          }`}
+                        >
+                          tick {point.tick} · {displayValue(point.value)} · {point.curve}
+                        </button>
+                        <input
+                          type="number"
+                          aria-label={`Value at tick ${point.tick}`}
+                          value={point.value}
+                          min={selectedLane.bounds.min}
+                          max={selectedLane.bounds.max}
+                          step="any"
+                          disabled={!selectedLane.editable}
+                          onChange={(event) =>
+                            handleAutomationMove(point.id, point.tick, Number(event.target.value))
+                          }
+                          className="w-20 rounded-bb-sm border border-bb-line bg-bb-raised px-1 py-1 text-bb-micro text-bb-text disabled:opacity-40"
+                        />
+                        <Button
+                          label={`Delete point at tick ${point.tick}`}
+                          variant="danger"
+                          size="sm"
+                          iconOnly
+                          disabled={!selectedLane.editable}
+                          icon={<IconRemove size={14} aria-hidden="true" />}
+                          onClick={() => handleAutomationErase([point.id])}
+                        />
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </Panel>
           )}
-        </Panel>
+        </div>
       </div>
 
       <Modal

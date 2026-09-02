@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { AutomationPoint } from '@/core/project/schemas';
+import type { AutomationPoint, MidiEvent } from '@/core/project/schemas';
 import {
   automationBounds,
+  automationPointAtLanePoint,
+  automationPointsInRect,
   automationPolyline,
   automationValueToY,
+  automationYToValue,
+  eventsInRect,
+  normaliseRect,
   cellsAlongSegment,
   eventAtCell,
   eventAtPoint,
@@ -332,5 +337,110 @@ describe('gridGeometry — automation lane (spec §7.8, §8.5.2)', () => {
 
   it('draws nothing for an empty lane', () => {
     expect(automationPolyline([], viewport, { min: 0, max: 1 }, 48)).toEqual([]);
+  });
+});
+
+describe('automationYToValue (spec §8.5.2, §7.8)', () => {
+  const bounds = { min: 0, max: 1 };
+
+  it('is the inverse of automationValueToY', () => {
+    for (const value of [0, 0.25, 0.5, 0.75, 1]) {
+      const y = automationValueToY(value, bounds, 48);
+      expect(automationYToValue(y, bounds, 48)).toBeCloseTo(value, 6);
+    }
+  });
+
+  it('clamps a drag past either edge into the bounds', () => {
+    expect(automationYToValue(-40, bounds, 48)).toBe(1);
+    expect(automationYToValue(200, bounds, 48)).toBe(0);
+  });
+
+  it('maps into the target range, not into 0..1', () => {
+    const cutoff = { min: 20, max: 20_000 };
+    expect(automationYToValue(4, cutoff, 48)).toBe(20_000);
+    expect(automationYToValue(44, cutoff, 48)).toBe(20);
+  });
+});
+
+describe('automationPointAtLanePoint (spec §8.5.2)', () => {
+  const laneViewport: GridViewport = { ...viewport, ticksPerPixel: 8 };
+  const bounds = { min: 0, max: 1 };
+  const point = (id: string, tick: number, value: number): AutomationPoint => ({
+    id,
+    scope: 'track',
+    ownerId: 't1',
+    targetPath: 'mixer.master.level',
+    tick,
+    value,
+    curve: 'linear',
+  });
+
+  it('returns null when nothing is within the grab radius', () => {
+    expect(automationPointAtLanePoint([point('a', 0, 0.5)], 200, 24, laneViewport, bounds, 48)).toBeNull();
+  });
+
+  it('takes the nearest point, not the first in order', () => {
+    const points = [point('far', 80, 0.5), point('near', 8, 0.5)];
+    const y = automationValueToY(0.5, bounds, 48);
+    const hit = automationPointAtLanePoint(points, 2, y, laneViewport, bounds, 48);
+    expect(hit?.id).toBe('near');
+  });
+
+  it('separates two points at the same tick by their value', () => {
+    const points = [point('low', 0, 0), point('high', 0, 1)];
+    const hit = automationPointAtLanePoint(points, 0, 4, laneViewport, bounds, 48);
+    expect(hit?.id).toBe('high');
+  });
+});
+
+describe('marquee selection (spec §8.5.2)', () => {
+  const gridViewport: GridViewport = { ...viewport, ticksPerPixel: 8 };
+
+  const note = (id: string, midi: number, tickStart: number, durationTicks: number): MidiEvent => ({
+    id,
+    tickStart,
+    durationTicks,
+    note: midi,
+    velocity: 100,
+    extra: null,
+  });
+
+  it('normalises a rectangle dragged in any direction', () => {
+    expect(normaliseRect({ x: 30, y: 40 }, { x: 10, y: 5 })).toEqual({ x0: 10, y0: 5, x1: 30, y1: 40 });
+  });
+
+  it('takes a note whose drawn rectangle intersects the marquee', () => {
+    // Note 72 is row 0 (y 0..20); note 71 is row 1 (y 20..40).
+    const events = [note('a', 72, 0, 480), note('b', 71, 0, 480), note('c', 70, 0, 480)];
+    const picked = eventsInRect(events, { x0: 0, y0: 0, x1: 60, y1: 25 }, gridViewport);
+    expect(picked.map((e) => e.id)).toEqual(['a', 'b']);
+  });
+
+  it('takes a note longer than the swept band rather than requiring containment', () => {
+    const events = [note('long', 72, 0, 9600)];
+    const picked = eventsInRect(events, { x0: 10, y0: 0, x1: 20, y1: 10 }, gridViewport);
+    expect(picked.map((e) => e.id)).toEqual(['long']);
+  });
+
+  it('excludes a note entirely outside the tick span', () => {
+    const events = [note('a', 72, 4800, 480)];
+    expect(eventsInRect(events, { x0: 0, y0: 0, x1: 60, y1: 25 }, gridViewport)).toEqual([]);
+  });
+
+  it('takes the automation points inside a lane-local rectangle', () => {
+    const bounds = { min: 0, max: 1 };
+    const points: AutomationPoint[] = [0, 0.5, 1].map((value, index) => ({
+      id: `p${index}`,
+      scope: 'track',
+      ownerId: 't1',
+      targetPath: 'mixer.master.level',
+      tick: index * 480,
+      value,
+      curve: 'linear',
+    }));
+    // x 0..70 covers ticks 0 and 480 only; y 0..24 covers the upper half of the lane, so
+    // the point at value 0 falls outside it and the one at 0.5 sits on its edge.
+    const picked = automationPointsInRect(points, { x0: 0, y0: 0, x1: 70, y1: 24 }, gridViewport, bounds, 48);
+    expect(picked.map((p) => p.id)).toEqual(['p1']);
   });
 });

@@ -16,6 +16,14 @@ const FLOAT_COUNT = 1;
 /** Transport flag bits packed into the header (spec §7.1.4). */
 const PLAYHEAD_FLAG_PLAYING = 1 << 0;
 const PLAYHEAD_FLAG_RECORDING = 1 << 1;
+/**
+ * Recording *and* past the count-in, so the tick beside it is a real position to capture
+ * against (spec §7.7). Distinct from the recording bit because the two differ for the
+ * whole count-in: recording is armed, but the playhead is still parked at the start tick
+ * and note capture is gated the same way. Without it, an automation move made during the
+ * count-in would land as a point at the start tick (spec §7.8).
+ */
+const PLAYHEAD_FLAG_CAPTURING = 1 << 2;
 
 /** Allocate the single playhead SAB (spec §7.1.4). */
 export function createPlayheadSab(): SharedArrayBuffer {
@@ -27,6 +35,8 @@ export interface PlayheadReading {
   readonly currentTick: number;
   readonly isPlaying: boolean;
   readonly isRecording: boolean;
+  /** Recording and past the count-in — see {@link PLAYHEAD_FLAG_CAPTURING}. */
+  readonly isCapturing: boolean;
   readonly generation: number;
 }
 
@@ -41,11 +51,14 @@ export class PlayheadWriter {
   }
 
   /** Publish the current tick + transport flags tear-free (spec §7.1.4). */
-  write(currentTick: number, isPlaying: boolean, isRecording: boolean): void {
+  write(currentTick: number, isPlaying: boolean, isRecording: boolean, isCapturing = false): void {
     const generation = Atomics.load(this.header, 0);
     Atomics.store(this.header, 0, generation + 1); // odd → write in progress
     this.data[0] = currentTick;
-    const flags = (isPlaying ? PLAYHEAD_FLAG_PLAYING : 0) | (isRecording ? PLAYHEAD_FLAG_RECORDING : 0);
+    const flags =
+      (isPlaying ? PLAYHEAD_FLAG_PLAYING : 0) |
+      (isRecording ? PLAYHEAD_FLAG_RECORDING : 0) |
+      (isCapturing ? PLAYHEAD_FLAG_CAPTURING : 0);
     Atomics.store(this.header, 1, flags);
     Atomics.store(this.header, 0, generation + 2); // even → write complete
   }
@@ -78,6 +91,7 @@ export class PlayheadReader {
       currentTick,
       isPlaying: (flags & PLAYHEAD_FLAG_PLAYING) !== 0,
       isRecording: (flags & PLAYHEAD_FLAG_RECORDING) !== 0,
+      isCapturing: (flags & PLAYHEAD_FLAG_CAPTURING) !== 0,
       generation,
     };
   }
