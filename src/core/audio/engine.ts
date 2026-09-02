@@ -10,7 +10,7 @@
  */
 import { useProgramStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
 import { createDefaultEnvelope } from '@/core/project/schemas';
-import { samplePath } from '@/core/storage/opfs';
+import { sampleCandidatePaths } from '@/core/storage/opfs';
 import {
   createPlayheadSab,
   PlayheadReader,
@@ -321,8 +321,7 @@ export class AudioEngine {
       play(cached);
       return;
     }
-    void this.sampleCache
-      .get(samplePath(projectId, resolved.sampleId))
+    void this.loadProgramSample(projectId, resolved.sampleId)
       .then((buffer) => {
         this.programBuffers.set(resolved.sampleId, buffer);
         play(buffer);
@@ -330,6 +329,16 @@ export class AudioEngine {
       .catch(() => {
         // Missing/undecodable sample — the note is silently skipped, never a crash (spec §5.1).
       });
+  }
+
+  /**
+   * Decode a program sample from whichever §9.1 root holds it. A pad may be assigned a
+   * project sample or a shared global-library one (spec §9.8), and the §6 payload records
+   * only the id, so the project path is tried first and the global library second.
+   */
+  private loadProgramSample(projectId: string, sampleId: string): Promise<AudioBuffer> {
+    const [projectScoped, global] = sampleCandidatePaths(projectId, sampleId);
+    return this.sampleCache.get(projectScoped).catch(() => this.sampleCache.get(global));
   }
 
   /**

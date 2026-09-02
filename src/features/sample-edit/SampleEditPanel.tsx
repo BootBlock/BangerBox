@@ -5,12 +5,16 @@
  * all three §8.5.4 modes (manual markers / equal slices / WASM transients, §7.5), and granular
  * Time-stretch (§5.7.9) — each rendering a NEW sample (§8.5.4). Every control is wired (§3.4).
  *
+ * A chop also places its slices, which is the other half of §8.5.4 ("slices assign to pads or
+ * new program"). Chop used to write the rows and assign none of them, so a chopped break
+ * produced audio no pad could reach.
+ *
  * The region tools follow the editor's selection when there is one and the whole file when there
  * is not, which is what makes Trim able to do its actual job (§8.5.4) rather than cutting a
  * fixed fraction of the file.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { getAudioEngine } from '@/core/project';
+import { assignSlicesToPads, createProgramFromSlices, getAudioEngine } from '@/core/project';
 import type { SampleRow } from '@/core/storage/repositories';
 import { applyToRegion, fadeIn, fadeOut, normalise, reverse, trim } from '@/core/audio/sampleEdit';
 import {
@@ -28,6 +32,7 @@ import { GLOBAL_LIBRARY_ROOT, projectSamplesRoot } from '@/core/storage/opfs';
 import {
   BROWSER_INITIAL_PATH,
   useBrowserStore,
+  useProgramStore,
   useProjectStore,
   useSequenceStore,
   useTransportStore,
@@ -45,6 +50,19 @@ const CHOP_MODES: readonly { value: ChopMode; label: string }[] = [
   { value: 'markers', label: 'Manual markers' },
   { value: 'equal', label: 'Equal slices' },
   { value: 'transients', label: 'Transients' },
+];
+
+/**
+ * Where the slices go (spec §8.5.4 "slices assign to pads or new program"). Chop wrote the
+ * new sample rows and assigned none of them, so a chopped break produced audio no pad could
+ * reach (issue #37). `library` keeps that behaviour available — chopping to build a sample
+ * set, without disturbing any program — but it is no longer the only option.
+ */
+type ChopDestination = 'library' | 'pads' | 'program';
+const CHOP_DESTINATIONS: readonly { value: ChopDestination; label: string }[] = [
+  { value: 'pads', label: 'Pads' },
+  { value: 'program', label: 'New program' },
+  { value: 'library', label: 'Library only' },
 ];
 
 /**
@@ -68,6 +86,7 @@ export function SampleEditPanel() {
   const [chopMode, setChopMode] = useState<ChopMode>('transients');
   const [sliceCount, setSliceCount] = useState(8);
   const [markers, setMarkers] = useState<number[]>([]);
+  const [chopDestination, setChopDestination] = useState<ChopDestination>('pads');
   const [selection, setSelection] = useState<SliceRegion | null>(null);
   /** Why the selected sample's audio could not be read, or null when it read fine. */
   const [waveformError, setWaveformError] = useState<string | null>(null);
@@ -75,6 +94,9 @@ export function SampleEditPanel() {
   const currentPath = useBrowserStore((state) => state.currentPath);
   const tracks = useSequenceStore((state) => state.tracks);
   const [grooveTrackId, setGrooveTrackId] = useState<string | null>(null);
+  const programs = useProgramStore((state) => state.programs);
+  const activeProgramId = useProgramStore((state) => state.activeProgramId);
+  const activePadId = useProgramStore((state) => state.activePadId);
 
   /**
    * Which library this panel is editing. It is `useBrowserStore.currentPath` — the same
@@ -210,6 +232,36 @@ export function SampleEditPanel() {
   // copy, so the action states why it is unavailable instead of silently doing that.
   const chopBlockedReason =
     chopMode === 'markers' && markers.length === 0 ? 'Place at least one marker to chop.' : null;
+
+  /**
+   * The drum program and first pad the slices land on (spec §8.5.4). The active pad is the
+   * start point, so a user who selected pad 5 gets slices from pad 5 rather than over the
+   * kit they already built on pads 1–4.
+   */
+  const activeProgram = activeProgramId !== null ? programs[activeProgramId] : undefined;
+  const firstChopPad = activePadId ?? 0;
+  const chopDestinationBlocked =
+    chopDestination === 'pads' && activeProgram?.type !== 'drum'
+      ? 'Select a drum program in Program Edit to chop onto pads.'
+      : null;
+  const chopTargetLabel =
+    activeProgram?.type === 'drum'
+      ? `${activeProgram.name}, from pad ${firstChopPad + 1}`
+      : 'no drum program selected';
+
+  /**
+   * Chop, then place the slices where the destination says (spec §8.5.4). The write and the
+   * assignment are one user action, so they are one call the toast reports on together.
+   */
+  const runChop = async () => {
+    if (!selected) return;
+    const slices = await chopSampleToNewSamples(selected, chopSpec(), sampleEditContext());
+    if (chopDestination === 'pads' && activeProgram?.type === 'drum') {
+      assignSlicesToPads(activeProgram.id, firstChopPad, slices);
+    } else if (chopDestination === 'program') {
+      createProgramFromSlices(`${selected.name} chop`, slices);
+    }
+  };
 
   // Every tool here renders a NEW sample from the selected audio. Running one against audio
   // that would not load means rendering from nothing, so they stay disarmed until it reads.
@@ -467,15 +519,29 @@ export function SampleEditPanel() {
                     drag to move, alt-click to remove.
                   </span>
                 )}
+                {/* Where the slices land (spec §8.5.4). Pads by default: chopping a break to
+                    play it back on pads is the reason the tool exists, and leaving the slices
+                    in the library was the behaviour that made them unreachable. */}
+                <SegmentControl
+                  label="Slices to"
+                  size="sm"
+                  value={chopDestination}
+                  options={CHOP_DESTINATIONS}
+                  onChange={setChopDestination}
+                  data-testid="chop-destination"
+                />
+                {chopDestination === 'pads' && (
+                  <span className="text-bb-muted" data-testid="chop-pads-target">
+                    {chopTargetLabel}
+                  </span>
+                )}
                 <Button
                   size="sm"
-                  disabled={toolsBlocked || chopBlockedReason !== null}
+                  disabled={toolsBlocked || chopBlockedReason !== null || chopDestinationBlocked !== null}
                   label="Chop"
                   data-testid="sample-chop"
-                  title={chopBlockedReason ?? undefined}
-                  onClick={() =>
-                    void run('Chop', () => chopSampleToNewSamples(selected, chopSpec(), sampleEditContext()))
-                  }
+                  title={chopBlockedReason ?? chopDestinationBlocked ?? undefined}
+                  onClick={() => void run('Chop', runChop)}
                 />
               </div>
 

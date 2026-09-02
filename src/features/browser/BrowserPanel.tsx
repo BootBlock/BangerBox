@@ -3,8 +3,9 @@
  * over the §9.1 project and global-library roots, the query-backed sample list with its text,
  * tag and favourites filters, sample import into the browsed location (§9.4), the project
  * interchange (`.mpcweb` export/import, §9.6), audition through the preview channel (§5.9),
- * and the "Purge unused samples" maintenance action (§8.5.7). Every control is wired end to
- * end (§3.4).
+ * the "Purge unused samples" maintenance action (§8.5.7), and sample assignment — a pointer
+ * drag arming `dragDropPayload` for the Program Edit drop targets, or a tap opening the target
+ * chooser. Every control is wired end to end (§3.4).
  */
 import { useEffect, useState } from 'react';
 import { getActiveRepositories, getAudioEngine, projectService } from '@/core/project';
@@ -21,6 +22,7 @@ import {
   reloadSampleList,
   sampleEditContext,
 } from '../sample-edit/sampleContext';
+import { AssignTargetDialog } from '../program-edit/AssignTargetDialog';
 import { FactorySection } from './FactorySection';
 import { FolderTree } from './FolderTree';
 import { SampleWaveformThumb } from './SampleWaveformThumb';
@@ -59,6 +61,8 @@ export function BrowserPanel() {
    * dialog. Holding the rows — not just a count — is what lets the dialog name them.
    */
   const [purgeCandidates, setPurgeCandidates] = useState<SampleRow[] | null>(null);
+  /** The sample whose assignment target is being chosen, or null (spec §8.5.7). */
+  const [assigning, setAssigning] = useState<SampleRow | null>(null);
 
   const browsingGlobal = isGlobalLibraryPath(currentPath);
   const locationLabel = browsingGlobal ? 'global library' : 'project';
@@ -402,26 +406,33 @@ export function BrowserPanel() {
               {/* Waveform micro-preview (spec §8.5.7), drawn from the cached §8.5.4 pyramid. */}
               <SampleWaveformThumb opfsPath={row.opfs_path} />
               <span className="flex-1 truncate">{row.name}</span>
-              {/* Drag-to-pad assignment (spec §8.5.7 `dragDropPayload`). */}
-              <span
+              {/*
+                Assignment (spec §8.5.7). Two routes on one control: a pointer drag arms
+                `dragDropPayload` for the Program Edit drop targets, and a tap or Enter opens
+                the target chooser. The tap route is the one that completes the loop — Browser
+                and Program Edit are separate §8.5 modes, so a pointer never sees a sample row
+                and a pad at the same time, and this used to be a keyboard path that only
+                raised a toast telling the user to do something the UI could not do (#37).
+
+                A plain button rather than the `Button` primitive: that chassis is a
+                `motion.button`, whose gesture `onDragStart`/`onDragEnd` types collide with the
+                DOM drag events this needs. The classes are the primitive's quiet variant.
+              */}
+              <button
+                type="button"
                 draggable
-                role="button"
-                tabIndex={0}
-                aria-label={`Drag ${row.name} to a pad`}
+                aria-label={`Assign ${row.name} to a pad or zone`}
+                title={`Assign ${row.name}`}
+                data-testid={`browser-assign-${row.id}`}
                 onDragStart={() =>
                   useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name })
                 }
                 onDragEnd={() => useUIStore.getState().setDragDropPayload(null)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return;
-                  event.preventDefault();
-                  useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name });
-                  pushToast(`${row.name} ready to assign — open Program Edit and choose a pad.`, 'info');
-                }}
-                className="shrink-0 cursor-grab rounded-bb-sm border border-bb-line px-2 py-0.5 text-bb-muted"
+                onClick={() => setAssigning(row)}
+                className="shrink-0 cursor-grab rounded-bb-sm border border-bb-line px-2 py-0.5 text-bb-muted transition-colors duration-150 hover:text-bb-text"
               >
-                Assign
-              </span>
+                Assign…
+              </button>
               {/* Audition through the preview channel (spec §5.9). The play glyph carries the
                   affordance: "Audition" alone did not read as "hear this", and the row was
                   reported as having no way to play a sample at all (issue #109). */}
@@ -451,6 +462,9 @@ export function BrowserPanel() {
           )}
         </ul>
       </div>
+
+      {/* Where a sample the user tapped Assign on actually lands (spec §8.5.7). */}
+      <AssignTargetDialog sample={assigning} onClose={() => setAssigning(null)} />
 
       {/* Purge confirmation (spec §8.5.7, §8.1). The list is the point: this deletes audio
           permanently and outside the undo stack, so the user gets to read the names first. */}

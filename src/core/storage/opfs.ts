@@ -42,6 +42,22 @@ export function globalLibraryPath(sampleId: string): string {
 }
 
 /**
+ * The OPFS paths a sample id may resolve to, in the order playback should try them (spec §9.1).
+ *
+ * A §6 program payload stores only a `sampleId`, and §9.3 lets that row live in either root:
+ * project-scoped under `/projects/<id>/samples/`, or shared in `/global_library/` — which is
+ * where §9.8 factory audio de-duplicates to. Reconstructing only the project path therefore
+ * made every global sample assigned to a pad silent, with no error, because the read simply
+ * failed and the note was skipped. Both roots are tried instead.
+ *
+ * Project first: a project-scoped copy is the one the user imported into this project, and a
+ * global row of the same id cannot exist alongside it (`samples.id` is the primary key).
+ */
+export function sampleCandidatePaths(projectId: string, sampleId: string): readonly [string, string] {
+  return [samplePath(projectId, sampleId), globalLibraryPath(sampleId)];
+}
+
+/**
  * Global-library path of a sample addressed by the hash of its CONTENT rather than by its id
  * (spec §9.1, §9.8 de-duplication).
  *

@@ -214,6 +214,46 @@ function createDefaultInsertSlots(count = 4): InsertSlotState[] {
   }));
 }
 
+/**
+ * A velocity layer pointing at `sampleId`, covering the whole 0..127 band and otherwise
+ * neutral (spec §6). The caller narrows the band: `useProgramStore.addPadLayer` re-splits
+ * every layer on the pad so the set stays contiguous and non-overlapping, which is the §6
+ * rule a layer cannot enforce on its own.
+ */
+export function createDefaultVelocityLayer(sampleId: string): VelocityLayer {
+  return {
+    sampleId,
+    velocityStart: 0,
+    velocityEnd: 127,
+    tuneSemitones: 0,
+    tuneCents: 0,
+    gainDb: 0,
+    // 0/0 means "the whole sample" — the non-destructive trim defaults (spec §6).
+    startFrame: 0,
+    endFrame: 0,
+    reverse: false,
+  };
+}
+
+/**
+ * A keygroup zone pointing at `sampleId`, covering the whole keyboard and velocity span
+ * (spec §6). `rootNote` is the sample's own unity pitch (spec §9.3 `samples.root_note`), so
+ * a zone plays at pitch rather than at an assumed middle C. As with a velocity layer, the
+ * caller narrows the key range: `useProgramStore.addKeygroupZone` re-splits the keyboard.
+ */
+export function createDefaultKeygroupZone(sampleId: string, rootNote = 60): KeygroupZone {
+  return {
+    sampleId,
+    rootNote,
+    lowNote: 0,
+    highNote: 127,
+    lowVelocity: 0,
+    highVelocity: 127,
+    tuneCents: 0,
+    gainDb: 0,
+  };
+}
+
 /** An unassigned pad (no sample layers) at the given index — the neutral default (spec §6). */
 export function createDefaultPad(padIndex: number, name = `Pad ${padIndex + 1}`): Pad {
   return {

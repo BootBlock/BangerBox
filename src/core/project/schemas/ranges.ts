@@ -57,6 +57,15 @@ const ENVELOPE_TIME_MS_MIN = 0;
 export const ENVELOPE_TIME_MS_RANGE: Range = [ENVELOPE_TIME_MS_MIN, 10_000];
 /** Default cap 4, configurable to 8 (spec §1.3.1, §6). The schema enforces the hard cap. */
 export const MAX_VELOCITY_LAYERS = 8;
+/**
+ * The `maxLayers` an assignment grows a pad to before refusing (spec §6 "0..maxLayers
+ * (default cap 4)", §1.3.1 "up to 4 (soft-configurable to 8)").
+ *
+ * Distinct from {@link MAX_VELOCITY_LAYERS}, which is the hard ceiling the §6 schema
+ * rejects a payload for exceeding. This is the soft default the store action applies, so a
+ * payload carrying five layers — an import from a project configured higher — still loads.
+ */
+export const DEFAULT_MAX_VELOCITY_LAYERS = 4;
 /** Validated mod-matrix route cap (spec §6). */
 export const MAX_MOD_ROUTES = 32;
 

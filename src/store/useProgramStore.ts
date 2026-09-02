@@ -4,14 +4,47 @@
  * and pad edits are undoable (spec §4.5 "program parameter commits", "pad assignment")
  * and mark the owning program dirty for autosave (spec §4.4). The generic
  * {@link updateProgram} carries the deep §6 editing surface Program Edit mode drives.
+ *
+ * {@link addPadLayer}, {@link setLayerSample}, {@link addKeygroupZone} and
+ * {@link setZoneSample} are the sample-assignment seam (spec §8.5.7, §8.5.5). They own the §6
+ * rules no caller should have to restate: a pad's velocity layers stay contiguous and
+ * non-overlapping, a pad refuses a layer past `maxLayers`, and a new keygroup zone takes a
+ * share of the keyboard rather than hiding every zone before it.
  */
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { clamp } from '@/core/math';
+import { clamp, clampInt } from '@/core/math';
 import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
 import { dirtyKey } from '@/core/project/dirty';
-import type { Pad, Program } from '@/core/project/schemas';
+import {
+  createDefaultKeygroupZone,
+  createDefaultPad,
+  createDefaultVelocityLayer,
+  DEFAULT_MAX_VELOCITY_LAYERS,
+  MAX_VELOCITY_LAYERS,
+  NOTE_RANGE,
+  PAD_INDEX_RANGE,
+  ROOT_NOTE_RANGE,
+  type KeygroupZone,
+  type Pad,
+  type Program,
+  type VelocityLayer,
+} from '@/core/project/schemas';
 import { commit } from './commit';
+
+/**
+ * What an assignment action did (spec §8.5.7). A refusal carries a finished sentence rather
+ * than a code, because every caller does the same thing with it — shows it to the user — and
+ * the store is the only layer that knows *which* §6 rule refused. Returning `void` instead
+ * would leave the UI reporting "nothing happened", which is how a control reads as broken.
+ */
+export type AssignResult = { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
+function refuse(reason: string): AssignResult {
+  return { ok: false, reason };
+}
+
+const ASSIGNED: AssignResult = { ok: true };
 
 interface ProgramState {
   programs: Record<string, Program>;
@@ -45,6 +78,23 @@ interface ProgramState {
   /** Assign or replace a drum pad (spec §4.5 pad assignment). */
   upsertPad: (programId: string, pad: Pad) => void;
   removePad: (programId: string, padIndex: number) => void;
+
+  /**
+   * Assign a sample to a drum pad as a new velocity layer, creating the pad if it does not
+   * exist yet (spec §8.5.7 drag-to-pad, §8.5.5, §6). One undo entry (spec §4.5 "pad
+   * assignment"). Refuses past `maxLayers` — spec §6 caps a pad at `maxLayers`, default 4.
+   */
+  addPadLayer: (programId: string, padIndex: number, sampleId: string, maxLayers?: number) => AssignResult;
+  /** Point an existing velocity layer at a different sample, leaving its band alone (spec §6). */
+  setLayerSample: (programId: string, padIndex: number, layerIndex: number, sampleId: string) => AssignResult;
+
+  /**
+   * Assign a sample to a keygroup program as a new zone (spec §8.5.5, §6). One undo entry.
+   * `rootNote` is the sample's unity pitch (spec §9.3 `samples.root_note`).
+   */
+  addKeygroupZone: (programId: string, sampleId: string, rootNote?: number) => AssignResult;
+  /** Point an existing zone at a different sample, leaving its key range alone (spec §6). */
+  setZoneSample: (programId: string, zoneIndex: number, sampleId: string) => AssignResult;
 
   /**
    * Continuous-gesture update of a registered §7.8 program leaf: the value moves (and the
@@ -140,6 +190,56 @@ function resolvePadLeaf(
     current,
   };
 }
+
+/**
+ * Split `[0, span - 1]` into `count` contiguous, non-overlapping integer bands.
+ *
+ * This is what makes the §6 "layers may not overlap" rule hold *by construction* rather than
+ * by validation: assigning a sample re-splits every band on the pad, so no arrangement of
+ * assignments can produce an overlap or a velocity nothing answers. A rule enforced by
+ * rejection would instead leave a user with four layers and no way to add a fifth sound
+ * except by hand-editing three spinners first.
+ */
+function splitBands(span: number, count: number): { readonly low: number; readonly high: number }[] {
+  const bands: { low: number; high: number }[] = [];
+  for (let index = 0; index < count; index++) {
+    bands.push({
+      low: Math.round((index * span) / count),
+      high: Math.round(((index + 1) * span) / count) - 1,
+    });
+  }
+  return bands;
+}
+
+/** Re-split a pad's layers across the whole velocity span, preserving their order (spec §6). */
+function withSplitVelocities(layers: readonly VelocityLayer[]): VelocityLayer[] {
+  const bands = splitBands(128, layers.length);
+  return layers.map((layer, index) => ({
+    ...layer,
+    velocityStart: bands[index]!.low,
+    velocityEnd: bands[index]!.high,
+  }));
+}
+
+/**
+ * Re-split zones across the keyboard, preserving their order (spec §6). Unlike layers, §6
+ * permits zones to overlap and `selectKeygroupZone` takes the first that covers the note — so
+ * leaving every new zone spanning 0..127 would make each one after the first unreachable,
+ * which is a dead control by construction (spec §3.4). Velocity spans are left alone: this
+ * flow splits the keyboard, and a zone's velocity range stays editable in the zone fields.
+ */
+function withSplitKeyRanges(zones: readonly KeygroupZone[]): KeygroupZone[] {
+  const span = NOTE_RANGE[1] - NOTE_RANGE[0] + 1;
+  const bands = splitBands(span, zones.length);
+  return zones.map((zone, index) => ({
+    ...zone,
+    lowNote: NOTE_RANGE[0] + bands[index]!.low,
+    highNote: NOTE_RANGE[0] + bands[index]!.high,
+  }));
+}
+
+/** The most zones the keyboard can carry before a band would be empty (spec §6). */
+const MAX_KEYGROUP_ZONES = NOTE_RANGE[1] - NOTE_RANGE[0] + 1;
 
 /** Replace one pad inside a drum program (immutably). */
 function withPad(program: Program, padIndex: number, leaf: string, value: number): Program {
@@ -247,6 +347,86 @@ export const useProgramStore = create<ProgramState>()(
         },
         'Clear pad',
       );
+    },
+
+    addPadLayer: (programId, padIndex, sampleId, maxLayers = DEFAULT_MAX_VELOCITY_LAYERS) => {
+      const program = get().programs[programId];
+      if (program === undefined) return refuse('That program is no longer open.');
+      if (program.type !== 'drum') {
+        return refuse(`${program.name} is a keygroup program, so it has zones rather than pads.`);
+      }
+      if (!Number.isInteger(padIndex) || padIndex < PAD_INDEX_RANGE[0] || padIndex > PAD_INDEX_RANGE[1]) {
+        return refuse(`Pad ${padIndex + 1} is outside the 128-pad range.`);
+      }
+      // Assigning to an untouched pad is the common case, so the pad is minted here rather
+      // than making every caller create it first (spec §6 — pads are sparse).
+      const pad =
+        program.pads.find((candidate) => candidate.padIndex === padIndex) ?? createDefaultPad(padIndex);
+      const cap = clampInt(maxLayers, 1, MAX_VELOCITY_LAYERS);
+      if (pad.layers.length >= cap) {
+        return refuse(
+          `Pad ${padIndex + 1} already holds ${pad.layers.length} velocity layer${
+            pad.layers.length === 1 ? '' : 's'
+          }. Remove one before adding another.`,
+        );
+      }
+      const layers = withSplitVelocities([...pad.layers, createDefaultVelocityLayer(sampleId)]);
+      get().upsertPad(programId, { ...pad, layers });
+      return ASSIGNED;
+    },
+
+    setLayerSample: (programId, padIndex, layerIndex, sampleId) => {
+      const program = get().programs[programId];
+      if (program === undefined) return refuse('That program is no longer open.');
+      if (program.type !== 'drum') return refuse(`${program.name} is a keygroup program, so it has no pads.`);
+      const pad = program.pads.find((candidate) => candidate.padIndex === padIndex);
+      if (pad === undefined) return refuse(`Pad ${padIndex + 1} holds no layers yet.`);
+      if (pad.layers[layerIndex] === undefined) {
+        return refuse(`Pad ${padIndex + 1} has no layer ${layerIndex + 1}.`);
+      }
+      const layers = pad.layers.map((layer, index) =>
+        index === layerIndex ? { ...layer, sampleId } : layer,
+      );
+      get().upsertPad(programId, { ...pad, layers });
+      return ASSIGNED;
+    },
+
+    addKeygroupZone: (programId, sampleId, rootNote = 60) => {
+      const program = get().programs[programId];
+      if (program === undefined) return refuse('That program is no longer open.');
+      if (program.type !== 'keygroup') {
+        return refuse(`${program.name} is a drum program, so it has pads rather than zones.`);
+      }
+      if (program.zones.length >= MAX_KEYGROUP_ZONES) {
+        return refuse(`${program.name} already covers every key with a zone.`);
+      }
+      // A root note out of §6 range would fail Zod on the next load, so it is clamped at the
+      // action boundary like every other stored value (spec §4.1).
+      const root = clampInt(rootNote, ROOT_NOTE_RANGE[0], ROOT_NOTE_RANGE[1]);
+      const zones = withSplitKeyRanges([...program.zones, createDefaultKeygroupZone(sampleId, root)]);
+      get().updateProgram(
+        programId,
+        (current) => (current.type === 'keygroup' ? { ...current, zones } : current),
+        'Assign zone',
+      );
+      return ASSIGNED;
+    },
+
+    setZoneSample: (programId, zoneIndex, sampleId) => {
+      const program = get().programs[programId];
+      if (program === undefined) return refuse('That program is no longer open.');
+      if (program.type !== 'keygroup')
+        return refuse(`${program.name} is a drum program, so it has no zones.`);
+      if (program.zones[zoneIndex] === undefined) {
+        return refuse(`${program.name} has no zone ${zoneIndex + 1}.`);
+      }
+      const zones = program.zones.map((zone, index) => (index === zoneIndex ? { ...zone, sampleId } : zone));
+      get().updateProgram(
+        programId,
+        (current) => (current.type === 'keygroup' ? { ...current, zones } : current),
+        'Assign zone',
+      );
+      return ASSIGNED;
     },
 
     setPadParamTransient: (path, value) => {

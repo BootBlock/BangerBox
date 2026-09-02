@@ -14,7 +14,7 @@
  */
 import { PPQN } from '@/core/constants';
 import type { Repositories } from '@/core/storage/repositories';
-import { bouncePath, readFile, samplePath, writeFileStreamed } from '@/core/storage/opfs';
+import { bouncePath, readFile, sampleCandidatePaths, writeFileStreamed } from '@/core/storage/opfs';
 import { assertWriteHeadroom } from '@/core/storage/safeguards';
 import type { BitDepth, Sequence } from '@/core/project/schemas';
 import { useProgramStore, useSequenceStore, useTransportStore } from '@/store';
@@ -74,7 +74,11 @@ async function renderSegments(segments: readonly Segment[], ctx: BounceContext):
     const cached = bufferCache.get(sampleId);
     if (cached) return cached;
     try {
-      const file = await readFile(samplePath(ctx.projectId, sampleId));
+      // Either §9.1 root may hold the sample a pad plays, exactly as live playback resolves
+      // it (see AudioEngine.loadProgramSample) — a bounce that only looked in the project
+      // would render silence wherever the live pad sounds a global-library sample.
+      const [projectScoped, global] = sampleCandidatePaths(ctx.projectId, sampleId);
+      const file = await readFile(projectScoped).catch(() => readFile(global));
       const decoded = decodeWav(new Uint8Array(await file.arrayBuffer()));
       const buffer = offline.createBuffer(
         decoded.channels.length,
