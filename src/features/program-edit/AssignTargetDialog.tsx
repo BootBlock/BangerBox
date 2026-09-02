@@ -13,8 +13,8 @@
 import { useState } from 'react';
 import { assignSampleToTarget } from '@/core/project';
 import type { SampleRow } from '@/core/storage/repositories';
-import { useProgramStore } from '@/store';
-import { Button, EmptyState, FieldLabel, Modal, SegmentControl } from '@/ui/primitives';
+import { useProgramStore, useUIStore } from '@/store';
+import { announce, Button, EmptyState, FieldLabel, Modal, SegmentControl } from '@/ui/primitives';
 
 /** Pads per bank (spec §1.3.1 — 128 pads as 8 banks × 16). */
 const BANK_SIZE = 16;
@@ -63,6 +63,25 @@ export function AssignTargetDialog({ sample, onClose }: AssignTargetDialogProps)
     if (assignSampleToTarget(target.id, sample, { kind: 'pad', padIndex })) close();
   };
 
+  /**
+   * Arm the sample and hand the user over to Program Edit (spec §8.5.7 `dragDropPayload`).
+   *
+   * The grid above is a bare chooser — sixteen numbered squares. The real pad grid shows pad
+   * names, which pads already hold sounds and the pad being edited, and it is where a user
+   * deciding *where a sound belongs* is actually working. This is also the only route by which
+   * `dragDropPayload` is reachable at all: a pointer drag between the two modes cannot happen,
+   * because only one mode is on screen at a time.
+   */
+  const armForPadGrid = () => {
+    if (!sample) return;
+    const ui = useUIStore.getState();
+    ui.setDragDropPayload({ sampleId: sample.id, name: sample.name, rootNote: sample.root_note });
+    if (target !== undefined) useProgramStore.getState().setActiveProgram(target.id);
+    ui.setActiveMode('program-edit');
+    announce(`${sample.name} armed — choose a pad or zone in Program Edit.`);
+    close();
+  };
+
   return (
     <Modal
       open={sample !== null}
@@ -70,6 +89,16 @@ export function AssignTargetDialog({ sample, onClose }: AssignTargetDialogProps)
       onClose={close}
       size="md"
       data-testid="assign-target-dialog"
+      footer={
+        list.length > 0 ? (
+          <Button
+            label="Choose on the pad grid…"
+            variant="quiet"
+            data-testid="assign-arm-for-grid"
+            onClick={armForPadGrid}
+          />
+        ) : undefined
+      }
     >
       <div className="flex flex-col gap-3">
         {list.length === 0 ? (
@@ -143,8 +172,8 @@ export function AssignTargetDialog({ sample, onClose }: AssignTargetDialogProps)
             ) : (
               <>
                 <p className="text-xs text-bb-muted">
-                  A keygroup program holds zones rather than pads. The new zone takes an equal share of the
-                  keyboard, and plays at the sample&rsquo;s own root note.
+                  A keygroup program holds zones rather than pads. The new zone takes the widest free stretch
+                  of keyboard, and plays at the sample&rsquo;s own root note.
                 </p>
                 <div>
                   <Button

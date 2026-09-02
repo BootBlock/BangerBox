@@ -6,9 +6,10 @@
  * sample armed in the Browser (spec §8.5.7). Commits go through the program store as
  * undoable edits (spec §4.5).
  *
- * A new zone takes an equal share of the keyboard rather than spanning all of it: §6 lets
- * zones overlap and `selectKeygroupZone` takes the first that covers a note, so leaving every
- * zone at 0..127 would make each one after the first unreachable (spec §3.4).
+ * A new zone takes the widest uncovered stretch of keyboard, and halves the widest existing
+ * zone only when there is no gap left: §6 lets zones overlap and `selectKeygroupZone` takes the
+ * first that covers a note, so a zone added at 0..127 behind another would never sound
+ * (spec §3.4). Nothing else moves, so a hand-mapped multisample survives an assignment.
  *
  * The zones lead with the §8.5.5 keyboard editor, which is the only view that shows where a
  * zone actually sits on the keys, which zones overlap and which notes are silent. The numeric
@@ -30,6 +31,7 @@ import {
 } from '@/core/project/schemas';
 import { useProgramStore, useUIStore } from '@/store';
 import { announce, Button, EmptyState } from '@/ui/primitives';
+import { IconRemove } from '@/ui/icons';
 import { ControlGroup, NumberField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
 import { KeyZoneEditor } from './KeyZoneEditor';
@@ -44,6 +46,7 @@ export function KeygroupEditor({ program }: { program: KeygroupProgram }) {
   const updateProgram = useProgramStore((state) => state.updateProgram);
   const addKeygroupZone = useProgramStore((state) => state.addKeygroupZone);
   const setZoneSample = useProgramStore((state) => state.setZoneSample);
+  const removeKeygroupZone = useProgramStore((state) => state.removeKeygroupZone);
   const dragDropPayload = useUIStore((state) => state.dragDropPayload);
   const [selectedZone, setSelectedZone] = useState(-1);
   const [picking, setPicking] = useState<PickerTarget | null>(null);
@@ -76,7 +79,9 @@ export function KeygroupEditor({ program }: { program: KeygroupProgram }) {
   /** Take the sample armed in the Browser as a new zone, and disarm (spec §8.5.7). */
   const assignArmed = () => {
     if (dragDropPayload === null) return;
-    const result = addKeygroupZone(program.id, dragDropPayload.sampleId);
+    // The payload carries the sample's own root note, so an armed kick rooted at 36 does not
+    // land as a zone rooted at middle C and sound two octaves out (spec §9.3, §6).
+    const result = addKeygroupZone(program.id, dragDropPayload.sampleId, dragDropPayload.rootNote);
     report(result.ok, result.ok ? `${dragDropPayload.name} added as a key zone.` : result.reason);
     // Disarm either way, so a refusal cannot silently re-fire on the next interaction.
     useUIStore.getState().setDragDropPayload(null);
@@ -217,14 +222,33 @@ export function KeygroupEditor({ program }: { program: KeygroupProgram }) {
                 >
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="text-xs text-bb-muted">Sample {zone.sampleId.slice(0, 8)}</span>
-                    <Button
-                      label="Change sample"
-                      accessibleName={`Change sample on zone ${index + 1}`}
-                      variant="quiet"
-                      size="sm"
-                      data-testid={`zone-change-${index}`}
-                      onClick={() => setPicking({ kind: 'replace', zoneIndex: index })}
-                    />
+                    <div className="flex items-center gap-1">
+                      <Button
+                        label="Change sample"
+                        accessibleName={`Change sample on zone ${index + 1}`}
+                        variant="quiet"
+                        size="sm"
+                        data-testid={`zone-change-${index}`}
+                        onClick={() => setPicking({ kind: 'replace', zoneIndex: index })}
+                      />
+                      <Button
+                        label={`Remove zone ${index + 1}`}
+                        variant="danger"
+                        size="sm"
+                        iconOnly
+                        icon={<IconRemove size={14} aria-hidden="true" />}
+                        data-testid={`zone-remove-${index}`}
+                        onClick={() => {
+                          // The selection is positional, so removing a zone above the selected
+                          // one would leave the highlight on a different zone than was picked.
+                          setSelectedZone((current) =>
+                            current === index ? -1 : current > index ? current - 1 : current,
+                          );
+                          const result = removeKeygroupZone(program.id, index);
+                          if (!result.ok) report(false, result.reason);
+                        }}
+                      />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     <NumberField

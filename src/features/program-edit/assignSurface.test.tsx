@@ -97,6 +97,22 @@ describe('Assigning a sample to a pad from Program Edit (spec §8.5.5)', () => {
     });
   });
 
+  it('closes the velocity band when a layer is removed, so the pad stays audible', async () => {
+    const user = userEvent.setup();
+    useProgramStore.getState().addPadLayer(DRUM_ID, 0, 'soft');
+    useProgramStore.getState().addPadLayer(DRUM_ID, 0, 'hard');
+    useProgramStore.getState().setActivePad(0);
+    render(<ProgramEditPanel />);
+
+    await user.click(screen.getByRole('button', { name: 'Remove layer 2' }));
+
+    // Removing through the store rather than by filtering the array: a plain filter left
+    // velocities 64..127 answered by nothing, and the pad silent above half velocity.
+    expect(padsOf(DRUM_ID)[0]?.layers).toEqual([
+      expect.objectContaining({ sampleId: 'soft', velocityStart: 0, velocityEnd: 127 }),
+    ]);
+  });
+
   it('says a padless pad makes no sound, and names the way out (spec §3.4)', async () => {
     const user = userEvent.setup();
     render(<ProgramEditPanel />);
@@ -110,7 +126,9 @@ describe('Assigning a sample to a pad from Program Edit (spec §8.5.5)', () => {
 describe('Consuming dragDropPayload (spec §8.5.7)', () => {
   it('assigns the armed sample to the pad the user presses, then disarms', async () => {
     const user = userEvent.setup();
-    useUIStore.getState().setDragDropPayload({ sampleId: KICK.id, name: KICK.name });
+    useUIStore
+      .getState()
+      .setDragDropPayload({ sampleId: KICK.id, name: KICK.name, rootNote: KICK.root_note });
     render(<ProgramEditPanel />);
 
     // The grid says what pressing a pad will now do, which is the only signal a screen
@@ -124,7 +142,9 @@ describe('Consuming dragDropPayload (spec §8.5.7)', () => {
 
   it('shows the armed banner and lets the user cancel without assigning', async () => {
     const user = userEvent.setup();
-    useUIStore.getState().setDragDropPayload({ sampleId: KICK.id, name: KICK.name });
+    useUIStore
+      .getState()
+      .setDragDropPayload({ sampleId: KICK.id, name: KICK.name, rootNote: KICK.root_note });
     render(<ProgramEditPanel />);
 
     expect(screen.getByTestId('pad-assign-armed')).toHaveTextContent('Kick.wav');
@@ -135,7 +155,9 @@ describe('Consuming dragDropPayload (spec §8.5.7)', () => {
   });
 
   it('takes a drop on a pad', () => {
-    useUIStore.getState().setDragDropPayload({ sampleId: KICK.id, name: KICK.name });
+    useUIStore
+      .getState()
+      .setDragDropPayload({ sampleId: KICK.id, name: KICK.name, rootNote: KICK.root_note });
     render(<ProgramEditPanel />);
 
     const pad = screen.getByTestId('program-pad-5');
@@ -182,7 +204,9 @@ describe('Assigning a sample as a keygroup zone (spec §8.5.5)', () => {
 
   it('takes the armed sample from the banner', async () => {
     const user = userEvent.setup();
-    useUIStore.getState().setDragDropPayload({ sampleId: KICK.id, name: KICK.name });
+    useUIStore
+      .getState()
+      .setDragDropPayload({ sampleId: KICK.id, name: KICK.name, rootNote: KICK.root_note });
     render(<ProgramEditPanel />);
 
     await user.click(screen.getByTestId('zone-assign-armed-confirm'));
@@ -190,6 +214,29 @@ describe('Assigning a sample as a keygroup zone (spec §8.5.5)', () => {
     const program = useProgramStore.getState().programs['keys-1']!;
     expect(program.type === 'keygroup' && program.zones).toHaveLength(1);
     expect(useUIStore.getState().dragDropPayload).toBeNull();
+  });
+
+  it('roots an armed sample at its own pitch, not at an assumed middle C', async () => {
+    const user = userEvent.setup();
+    // A kick's unity pitch is well below middle C; rooting it at 60 sounds two octaves out.
+    useUIStore.getState().setDragDropPayload({ sampleId: KICK.id, name: KICK.name, rootNote: 36 });
+    render(<ProgramEditPanel />);
+
+    await user.click(screen.getByTestId('zone-assign-armed-confirm'));
+
+    const program = useProgramStore.getState().programs['keys-1']!;
+    expect(program.type === 'keygroup' && program.zones[0]?.rootNote).toBe(36);
+  });
+
+  it('removes a zone', async () => {
+    const user = userEvent.setup();
+    useProgramStore.getState().addKeygroupZone('keys-1', 'sample-a');
+    render(<ProgramEditPanel />);
+
+    await user.click(screen.getByTestId('zone-remove-0'));
+
+    const program = useProgramStore.getState().programs['keys-1']!;
+    expect(program.type === 'keygroup' && program.zones).toHaveLength(0);
   });
 
   it('says a zoneless program makes no sound (spec §3.4)', () => {

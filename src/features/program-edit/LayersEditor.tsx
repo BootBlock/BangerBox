@@ -49,6 +49,7 @@ export function LayersEditor({
   const [picking, setPicking] = useState<PickerTarget | null>(null);
   const addPadLayer = useProgramStore((state) => state.addPadLayer);
   const setLayerSample = useProgramStore((state) => state.setLayerSample);
+  const removePadLayer = useProgramStore((state) => state.removePadLayer);
 
   const setLayer = (index: number, patch: Partial<VelocityLayer>) =>
     onChange(layers.map((layer, i) => (i === index ? { ...layer, ...patch } : layer)));
@@ -56,7 +57,13 @@ export function LayersEditor({
     // The selection is positional, so removing a layer above the selected one would otherwise
     // leave the highlight pointing at a different layer than the user picked.
     setSelectedIndex((current) => (current === index ? -1 : current > index ? current - 1 : current));
-    onChange(layers.filter((_, i) => i !== index));
+    // Through the store, not `onChange`: removing a layer opens a hole in the velocity axis,
+    // and the pad would go silent across it. The store closes the hole (spec §6).
+    const result = removePadLayer(programId, padIndex, index);
+    if (!result.ok) {
+      useUIStore.getState().pushToast(result.reason, 'warning');
+      announce(result.reason);
+    }
   };
 
   /** Apply the picked sample to whichever target opened the picker, and report either way. */

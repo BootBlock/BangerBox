@@ -424,9 +424,15 @@ export function BrowserPanel() {
                 aria-label={`Assign ${row.name} to a pad or zone`}
                 title={`Assign ${row.name}`}
                 data-testid={`browser-assign-${row.id}`}
-                onDragStart={() =>
-                  useUIStore.getState().setDragDropPayload({ sampleId: row.id, name: row.name })
-                }
+                onDragStart={(event) => {
+                  // Some engines abort a drag that carries no data before any dragover fires,
+                  // so the payload is advertised here as well as put in the store.
+                  event.dataTransfer.setData('text/plain', row.name);
+                  event.dataTransfer.effectAllowed = 'copy';
+                  useUIStore
+                    .getState()
+                    .setDragDropPayload({ sampleId: row.id, name: row.name, rootNote: row.root_note });
+                }}
                 onDragEnd={() => useUIStore.getState().setDragDropPayload(null)}
                 onClick={() => setAssigning(row)}
                 className="shrink-0 cursor-grab rounded-bb-sm border border-bb-line px-2 py-0.5 text-bb-muted transition-colors duration-150 hover:text-bb-text"

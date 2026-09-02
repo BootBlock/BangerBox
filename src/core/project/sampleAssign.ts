@@ -24,7 +24,10 @@ import {
 } from '@/core/project/schemas';
 import { commitAsOne } from '@/store/commit';
 import { useProgramStore, useUIStore, type AssignResult } from '@/store';
-import { announce } from '@/ui/primitives';
+// The module, not the `@/ui/primitives` barrel: importing the barrel would pull React, motion
+// and the whole primitive graph into every consumer of `@/core/project`. `engine.ts` reaches
+// for `meterScope` the same way, and for the same reason.
+import { announce } from '@/ui/primitives/LiveRegion';
 
 /** Where a single sample is being assigned (spec §6 — a program has pads or zones, never both). */
 export type AssignTarget = { readonly kind: 'pad'; readonly padIndex: number } | { readonly kind: 'zone' };

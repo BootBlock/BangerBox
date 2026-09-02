@@ -57,7 +57,7 @@ beforeEach(() => {
   tagsFor.mockResolvedValue([]);
   getActiveRepositories.mockReturnValue({ samples: { tagsFor } });
   useProjectStore.setState({ projectId: 'project-a' });
-  useUIStore.setState({ dragDropPayload: null, toasts: [] });
+  useUIStore.setState({ dragDropPayload: null, toasts: [], activeMode: 'browser' });
   useProgramStore.getState().setPrograms({ [DRUM_ID]: createDefaultDrumProgram('Kit', DRUM_ID) });
   useProgramStore.getState().setActiveProgram(DRUM_ID);
   useBrowserStore.setState({
@@ -93,9 +93,40 @@ describe('Assign from a Browser row (spec §8.5.7)', () => {
   it('arms dragDropPayload on a drag, for the Program Edit drop targets', () => {
     render(<BrowserPanel />);
 
-    screen.getByTestId(`browser-assign-${KICK.id}`).dispatchEvent(new Event('dragstart', { bubbles: true }));
+    // A real dragstart carries a DataTransfer; happy-dom's bare Event does not, so one is
+    // supplied here. The handler writes to it so an engine that aborts a data-less drag
+    // still starts one.
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '' };
+    const event = new Event('dragstart', { bubbles: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    screen.getByTestId(`browser-assign-${KICK.id}`).dispatchEvent(event);
 
-    expect(useUIStore.getState().dragDropPayload).toEqual({ sampleId: KICK.id, name: KICK.name });
+    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', KICK.name);
+    expect(useUIStore.getState().dragDropPayload).toEqual({
+      sampleId: KICK.id,
+      name: KICK.name,
+      rootNote: KICK.root_note,
+    });
+  });
+
+  it('arms the sample and opens Program Edit when the user chooses the pad grid', async () => {
+    const user = userEvent.setup();
+    render(<BrowserPanel />);
+
+    await user.click(screen.getByTestId(`browser-assign-${KICK.id}`));
+    await user.click(await screen.findByTestId('assign-arm-for-grid'));
+
+    // This is the only route by which `dragDropPayload` is reachable: Browser and Program Edit
+    // are separate §8.5 modes, so a pointer drag between them can never happen.
+    expect(useUIStore.getState().dragDropPayload).toEqual({
+      sampleId: KICK.id,
+      name: KICK.name,
+      rootNote: KICK.root_note,
+    });
+    expect(useUIStore.getState().activeMode).toBe('program-edit');
+    // Nothing is assigned yet — the user still chooses the pad.
+    const program = useProgramStore.getState().programs[DRUM_ID]!;
+    expect(program.type === 'drum' && program.pads).toHaveLength(0);
   });
 
   it('names the control for what it does, rather than for a drag touch cannot perform', () => {

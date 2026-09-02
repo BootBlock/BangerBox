@@ -9,7 +9,9 @@
  * {@link setZoneSample} are the sample-assignment seam (spec §8.5.7, §8.5.5). They own the §6
  * rules no caller should have to restate: a pad's velocity layers stay contiguous and
  * non-overlapping, a pad refuses a layer past `maxLayers`, and a new keygroup zone takes a
- * share of the keyboard rather than hiding every zone before it.
+ * share of the keyboard rather than hiding every zone before it. {@link removePadLayer} and
+ * {@link removeKeygroupZone} are part of the same seam, because removing a layer without
+ * closing the band it held leaves the pad silent across that band.
  */
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
@@ -87,6 +89,12 @@ interface ProgramState {
   addPadLayer: (programId: string, padIndex: number, sampleId: string, maxLayers?: number) => AssignResult;
   /** Point an existing velocity layer at a different sample, leaving its band alone (spec §6). */
   setLayerSample: (programId: string, padIndex: number, layerIndex: number, sampleId: string) => AssignResult;
+  /**
+   * Remove one velocity layer, closing the band it leaves behind so the pad still answers
+   * every velocity (spec §6). Removing without closing the hole is a silent pad above or
+   * below the gap, which is the same defect as never assigning at all.
+   */
+  removePadLayer: (programId: string, padIndex: number, layerIndex: number) => AssignResult;
 
   /**
    * Assign a sample to a keygroup program as a new zone (spec §8.5.5, §6). One undo entry.
@@ -95,6 +103,8 @@ interface ProgramState {
   addKeygroupZone: (programId: string, sampleId: string, rootNote?: number) => AssignResult;
   /** Point an existing zone at a different sample, leaving its key range alone (spec §6). */
   setZoneSample: (programId: string, zoneIndex: number, sampleId: string) => AssignResult;
+  /** Remove one keygroup zone, freeing its key range for the next assignment (spec §6). */
+  removeKeygroupZone: (programId: string, zoneIndex: number) => AssignResult;
 
   /**
    * Continuous-gesture update of a registered §7.8 program leaf: the value moves (and the
@@ -222,24 +232,86 @@ function withSplitVelocities(layers: readonly VelocityLayer[]): VelocityLayer[] 
 }
 
 /**
- * Re-split zones across the keyboard, preserving their order (spec §6). Unlike layers, §6
- * permits zones to overlap and `selectKeygroupZone` takes the first that covers the note — so
- * leaving every new zone spanning 0..127 would make each one after the first unreachable,
- * which is a dead control by construction (spec §3.4). Velocity spans are left alone: this
- * flow splits the keyboard, and a zone's velocity range stays editable in the zone fields.
+ * Close the hole a removed layer leaves, so no velocity stops answering (spec §6).
+ *
+ * The layer below the removed one grows up to where it ended; removing the first layer instead
+ * grows the new first downwards. Every other boundary is left exactly where the user put it —
+ * re-splitting the whole axis, the inverse of {@link withSplitVelocities}, would throw away
+ * hand-tuned bands to fix a gap in one place.
  */
-function withSplitKeyRanges(zones: readonly KeygroupZone[]): KeygroupZone[] {
-  const span = NOTE_RANGE[1] - NOTE_RANGE[0] + 1;
-  const bands = splitBands(span, zones.length);
-  return zones.map((zone, index) => ({
-    ...zone,
-    lowNote: NOTE_RANGE[0] + bands[index]!.low,
-    highNote: NOTE_RANGE[0] + bands[index]!.high,
-  }));
+function withLayerRemoved(layers: readonly VelocityLayer[], index: number): VelocityLayer[] {
+  const removed = layers[index];
+  const kept = layers.filter((_, i) => i !== index);
+  if (removed === undefined || kept.length === 0) return kept;
+  // Below when there is one, else above: exactly one neighbour absorbs the freed band.
+  const absorber = index > 0 ? index - 1 : 0;
+  return kept.map((layer, i) => {
+    if (i !== absorber) return layer;
+    return index > 0
+      ? { ...layer, velocityEnd: Math.max(layer.velocityEnd, removed.velocityEnd) }
+      : { ...layer, velocityStart: Math.min(layer.velocityStart, removed.velocityStart) };
+  });
 }
 
-/** The most zones the keyboard can carry before a band would be empty (spec §6). */
-const MAX_KEYGROUP_ZONES = NOTE_RANGE[1] - NOTE_RANGE[0] + 1;
+/**
+ * The key range a new zone should take, or null when the keyboard cannot carry another
+ * (spec §6, §3.4).
+ *
+ * §6 permits zones to overlap, and `selectKeygroupZone` returns the FIRST zone covering a note,
+ * so a zone added at 0..127 behind an existing one would never sound — a dead control by
+ * construction. The new zone therefore takes the widest uncovered stretch of keyboard if one
+ * exists, and otherwise halves the widest existing zone, which is the only way to make room
+ * once the keyboard is full. Nothing else moves: re-splitting every zone on each add would
+ * destroy a hand-mapped multisample to place one sample.
+ */
+interface ZonePlacement {
+  readonly lowNote: number;
+  readonly highNote: number;
+  /** The zone to shrink to make room, when the keyboard had no gap. */
+  readonly shrink?: { readonly index: number; readonly highNote: number };
+}
+
+function placeNewZone(zones: readonly KeygroupZone[]): ZonePlacement | null {
+  // Widest gap first: covered[i] is true when some zone answers note i.
+  const covered = new Array<boolean>(NOTE_RANGE[1] - NOTE_RANGE[0] + 1).fill(false);
+  for (const zone of zones) {
+    for (let note = zone.lowNote; note <= zone.highNote; note++) {
+      const slot = note - NOTE_RANGE[0];
+      if (slot >= 0 && slot < covered.length) covered[slot] = true;
+    }
+  }
+  let best: { low: number; high: number } | null = null;
+  let runStart = -1;
+  for (let slot = 0; slot <= covered.length; slot++) {
+    const free = slot < covered.length && !covered[slot];
+    if (free && runStart === -1) runStart = slot;
+    if (!free && runStart !== -1) {
+      const candidate = { low: runStart, high: slot - 1 };
+      if (best === null || candidate.high - candidate.low > best.high - best.low) best = candidate;
+      runStart = -1;
+    }
+  }
+  if (best !== null) {
+    return { lowNote: NOTE_RANGE[0] + best.low, highNote: NOTE_RANGE[0] + best.high };
+  }
+
+  // No gap: halve the widest zone. A one-note zone cannot be halved, so a keyboard mapped
+  // that finely is genuinely full.
+  let widest = -1;
+  for (let index = 0; index < zones.length; index++) {
+    const zone = zones[index]!;
+    const width = zone.highNote - zone.lowNote;
+    if (widest === -1 || width > zones[widest]!.highNote - zones[widest]!.lowNote) widest = index;
+  }
+  const donor = widest === -1 ? undefined : zones[widest]!;
+  if (donor === undefined || donor.highNote <= donor.lowNote) return null;
+  const midpoint = Math.floor((donor.lowNote + donor.highNote) / 2);
+  return {
+    lowNote: midpoint + 1,
+    highNote: donor.highNote,
+    shrink: { index: widest, highNote: midpoint },
+  };
+}
 
 /** Replace one pad inside a drum program (immutably). */
 function withPad(program: Program, padIndex: number, leaf: string, value: number): Program {
@@ -391,19 +463,45 @@ export const useProgramStore = create<ProgramState>()(
       return ASSIGNED;
     },
 
+    removePadLayer: (programId, padIndex, layerIndex) => {
+      const program = get().programs[programId];
+      if (program === undefined) return refuse('That program is no longer open.');
+      if (program.type !== 'drum') return refuse(`${program.name} is a keygroup program, so it has no pads.`);
+      const pad = program.pads.find((candidate) => candidate.padIndex === padIndex);
+      if (pad?.layers[layerIndex] === undefined) {
+        return refuse(`Pad ${padIndex + 1} has no layer ${layerIndex + 1}.`);
+      }
+      get().upsertPad(programId, { ...pad, layers: withLayerRemoved(pad.layers, layerIndex) });
+      return ASSIGNED;
+    },
+
     addKeygroupZone: (programId, sampleId, rootNote = 60) => {
       const program = get().programs[programId];
       if (program === undefined) return refuse('That program is no longer open.');
       if (program.type !== 'keygroup') {
         return refuse(`${program.name} is a drum program, so it has pads rather than zones.`);
       }
-      if (program.zones.length >= MAX_KEYGROUP_ZONES) {
-        return refuse(`${program.name} already covers every key with a zone.`);
+      const placement = placeNewZone(program.zones);
+      if (placement === null) {
+        return refuse(`${program.name} maps every key already; remove a zone to make room.`);
       }
       // A root note out of §6 range would fail Zod on the next load, so it is clamped at the
       // action boundary like every other stored value (spec §4.1).
       const root = clampInt(rootNote, ROOT_NOTE_RANGE[0], ROOT_NOTE_RANGE[1]);
-      const zones = withSplitKeyRanges([...program.zones, createDefaultKeygroupZone(sampleId, root)]);
+      const existing =
+        placement.shrink === undefined
+          ? program.zones
+          : program.zones.map((zone, index) =>
+              index === placement.shrink!.index ? { ...zone, highNote: placement.shrink!.highNote } : zone,
+            );
+      const zones = [
+        ...existing,
+        {
+          ...createDefaultKeygroupZone(sampleId, root),
+          lowNote: placement.lowNote,
+          highNote: placement.highNote,
+        },
+      ];
       get().updateProgram(
         programId,
         (current) => (current.type === 'keygroup' ? { ...current, zones } : current),
@@ -415,8 +513,9 @@ export const useProgramStore = create<ProgramState>()(
     setZoneSample: (programId, zoneIndex, sampleId) => {
       const program = get().programs[programId];
       if (program === undefined) return refuse('That program is no longer open.');
-      if (program.type !== 'keygroup')
+      if (program.type !== 'keygroup') {
         return refuse(`${program.name} is a drum program, so it has no zones.`);
+      }
       if (program.zones[zoneIndex] === undefined) {
         return refuse(`${program.name} has no zone ${zoneIndex + 1}.`);
       }
@@ -425,6 +524,26 @@ export const useProgramStore = create<ProgramState>()(
         programId,
         (current) => (current.type === 'keygroup' ? { ...current, zones } : current),
         'Assign zone',
+      );
+      return ASSIGNED;
+    },
+
+    removeKeygroupZone: (programId, zoneIndex) => {
+      const program = get().programs[programId];
+      if (program === undefined) return refuse('That program is no longer open.');
+      if (program.type !== 'keygroup') {
+        return refuse(`${program.name} is a drum program, so it has no zones.`);
+      }
+      if (program.zones[zoneIndex] === undefined) {
+        return refuse(`${program.name} has no zone ${zoneIndex + 1}.`);
+      }
+      // The freed key range is left uncovered rather than absorbed by a neighbour: §6 lets a
+      // keygroup leave keys silent on purpose, and the next assignment will take the gap.
+      const zones = program.zones.filter((_, index) => index !== zoneIndex);
+      get().updateProgram(
+        programId,
+        (current) => (current.type === 'keygroup' ? { ...current, zones } : current),
+        'Remove zone',
       );
       return ASSIGNED;
     },
