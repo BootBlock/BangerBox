@@ -8,6 +8,7 @@
 import { DEFAULT_BPM, type EffectType, type Program } from '@/core/project/schemas';
 import { prepareVoiceWorklets, prepareWorkletEffects } from './context';
 import { createInsert } from './inserts/insert';
+import { EFFECT_PARAM_CHOICES } from './inserts/effectParams';
 import { lfoWaveCoefficients } from './voiceModulation';
 import { ReversedBufferCache } from './voiceBuffer';
 
@@ -102,8 +103,11 @@ export interface DelayEchoResult {
 }
 
 export interface DelayEchoOptions {
-  /** `sync` index into `DELAY_SYNC_MODES`; 0 keeps the free `time` (spec §5.7). */
-  readonly sync?: number;
+  /**
+   * The §5.7 synced division to follow, by name (`'1/4'`, `'1/8.'`, …). Omitted or unknown
+   * leaves the delay on its free `time` — the same fallback `delaySyncDivision` applies.
+   */
+  readonly division?: string;
   /** Free delay time in milliseconds, used when `sync` is 0. */
   readonly time?: number;
   /** Transport tempo the insert is built at (spec §7.2). */
@@ -124,7 +128,7 @@ export interface DelayEchoOptions {
  * dry leg contributes nothing to confuse the peak search.
  */
 export async function renderDelayEchoOffline({
-  sync = 0,
+  division,
   time = 350,
   bpm = DEFAULT_BPM,
   retuneToBpm,
@@ -139,6 +143,10 @@ export async function renderDelayEchoOffline({
   const source = context.createBufferSource();
   source.buffer = impulse;
 
+  // The index is looked up rather than passed in, so a probe names a musical division and
+  // cannot drift out of step with the order of the list (spec §5.7).
+  const modes = EFFECT_PARAM_CHOICES.delay?.sync ?? [];
+  const sync = division === undefined ? 0 : Math.max(0, modes.indexOf(division));
   const insert = createInsert(context, 'delay', { sync, time, feedback: 0, mix: 1 }, bpm);
   insert.setEnabled(true);
   source.connect(insert.input);
@@ -226,6 +234,13 @@ export interface NoteRenderOptions {
    * what makes §6 `reverse` observable rather than merely plausible.
    */
   readonly signal?: NoteRenderSignal;
+  /**
+   * Length of the synthesised sample. It defaults to half the render, so the voice ends
+   * inside the window and its duration is measurable — which is how §5.7.9 warp shows
+   * itself. A probe that measures the two halves of the sample instead passes the whole
+   * render length, so the halves it reads are the sample's and not the window's.
+   */
+  readonly sampleSeconds?: number;
   /** Transport tempo a §6 tempo-synced LFO locks to (spec §7.2). */
   readonly bpm?: number;
 }
@@ -250,7 +265,13 @@ export async function renderProgramNote(
   program: Program,
   note: number,
   velocity: number,
-  { baseFrequency = 440, seconds = 0.4, signal = 'sine', bpm = DEFAULT_BPM }: NoteRenderOptions = {},
+  {
+    baseFrequency = 440,
+    seconds = 0.4,
+    signal = 'sine',
+    sampleSeconds = seconds / 2,
+    bpm = DEFAULT_BPM,
+  }: NoteRenderOptions = {},
 ): Promise<NoteRenderResult> {
   const sampleRate = 48_000;
   const context = new OfflineAudioContext(1, Math.floor(sampleRate * seconds), sampleRate);
@@ -270,11 +291,10 @@ export async function renderProgramNote(
   const pool = new VoicePool(context);
   const destination = context.createGain();
   destination.connect(context.destination);
-  // Half the render length, so the sample ends inside the window and its length is visible.
   const source =
     signal === 'sine'
-      ? sineBuffer(context, baseFrequency, seconds / 2)
-      : lateBurstBuffer(context, baseFrequency, seconds / 2);
+      ? sineBuffer(context, baseFrequency, sampleSeconds)
+      : lateBurstBuffer(context, baseFrequency, sampleSeconds);
   // spec §6 `VelocityLayer.reverse`, applied exactly as the live engine applies it.
   const buffer = resolved.reverse ? new ReversedBufferCache(context).get(source) : source;
   pool.trigger(
@@ -334,7 +354,9 @@ export async function renderLfoRateOffline(
   // A lowpass parked below the tone, swept ±4 octaves by the LFO: the tone comes and goes
   // once per LFO cycle, so the envelope carries the rate.
   pad.filter = { type: 'lp', cutoff: 400, resonance: 1, envDepth: 0 };
-  pad.lfos = [{ ...createDefaultLfo(), sync, shape: 'sine', rate: 0.25 }, createDefaultLfo()];
+  // 2 Hz free-running: four cycles across the render, and clearly different from the
+  // 1 Hz a 1/4 division gives at 60 bpm — so a sync that failed to override it would show.
+  pad.lfos = [{ ...createDefaultLfo(), sync, shape: 'sine', rate: 2 }, createDefaultLfo()];
   pad.modMatrix = [{ source: 'lfo1', target: 'filterCutoff', amount: 1 }];
   pad.envelopes = {
     ...pad.envelopes,

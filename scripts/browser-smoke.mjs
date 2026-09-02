@@ -394,8 +394,8 @@ async function assertShellAndSelfTest(page, label) {
     if (!(rates.atFastTempo > 3.2 && rates.atFastTempo < 4.8)) {
       throw new Error(`1/4 sync at 240 bpm measured ${rates.atFastTempo} Hz (expected ~4)`);
     }
-    if (!(rates.free > 0.1 && rates.free < 0.5)) {
-      throw new Error(`free-running LFO measured ${rates.free} Hz (expected ~0.25)`);
+    if (!(rates.free > 1.5 && rates.free < 2.5)) {
+      throw new Error(`free-running LFO measured ${rates.free} Hz (expected ~2)`);
     }
   });
 
@@ -416,21 +416,21 @@ async function assertShellAndSelfTest(page, label) {
   await step(`${label}: the delay follows a synced division (spec §5.7, issue #70)`, async () => {
     const measure = (options) =>
       page.evaluate((opts) => globalThis.__bangerboxAudioProbe.delayEcho(opts), options);
-    // Index 3 of DELAY_SYNC_MODES is '1/4' (index 0 is 'free'): 0.5 s at 120 bpm, 1 s at 60.
-    const free = await measure({ sync: 0, bpm: 120 });
+    // A quarter note is 0.5 s at 120 bpm and 1 s at 60 — the whole point of syncing.
+    const free = await measure({ bpm: 120 });
     if (Math.abs(free.echoSeconds - 0.35) > 0.02) {
       throw new Error(`a free 350 ms delay echoed at ${free.echoSeconds.toFixed(3)} s`);
     }
-    const fast = await measure({ sync: 3, bpm: 120 });
+    const fast = await measure({ division: '1/4', bpm: 120 });
     if (Math.abs(fast.echoSeconds - 0.5) > 0.02) {
       throw new Error(`a 1/4 delay at 120 bpm echoed at ${fast.echoSeconds.toFixed(3)} s (expected 0.5)`);
     }
-    const slow = await measure({ sync: 3, bpm: 60 });
+    const slow = await measure({ division: '1/4', bpm: 60 });
     if (Math.abs(slow.echoSeconds - 1) > 0.03) {
       throw new Error(`a 1/4 delay at 60 bpm echoed at ${slow.echoSeconds.toFixed(3)} s (expected 1.0)`);
     }
     // …and a tempo change retunes a delay that is already built (spec §4.3 sync layer).
-    const retuned = await measure({ sync: 3, bpm: 120, retuneToBpm: 60 });
+    const retuned = await measure({ division: '1/4', bpm: 120, retuneToBpm: 60 });
     if (Math.abs(retuned.echoSeconds - 1) > 0.03) {
       throw new Error(
         `a tempo change did not retune the delay: echoed at ${retuned.echoSeconds.toFixed(3)} s`,

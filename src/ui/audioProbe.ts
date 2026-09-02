@@ -80,7 +80,11 @@ export interface AudioProbe {
   /** §6 `LfoConfig.phaseOffset` (issue #107): where a quarter-turn sine starts. */
   lfoPhaseStart: () => Promise<{ unshifted: number; quarterTurn: number }>;
   /** §5.7 synced delay (issue #70): where the echo of an impulse lands, per tempo. */
-  delayEcho: (options?: { sync?: number; bpm?: number; retuneToBpm?: number }) => Promise<DelayEchoResult>;
+  delayEcho: (options?: {
+    division?: string;
+    bpm?: number;
+    retuneToBpm?: number;
+  }) => Promise<DelayEchoResult>;
   /** .mpcweb export → import round-trip (spec §12 exit / §9.6 pack round-trip smoke). */
   packRoundTrip: () => Promise<{ imported: boolean; samples: number }>;
   /** Import → transient chop → time-stretch of a synthetic drum (spec §7.5/§8.5.4/§5.7.9). */
@@ -456,8 +460,10 @@ async function reversedLayerHalves(): Promise<{
     program.pads = [pad];
     return program;
   };
-  const forward = await renderProgramNote(build(false), 0, 100, { signal: 'lateBurst' });
-  const reversed = await renderProgramNote(build(true), 0, 100, { signal: 'lateBurst' });
+  // The sample fills the whole render, so the halves measured are the SAMPLE's halves.
+  const options = { signal: 'lateBurst', seconds: 0.4, sampleSeconds: 0.4 } as const;
+  const forward = await renderProgramNote(build(false), 0, 100, options);
+  const reversed = await renderProgramNote(build(true), 0, 100, options);
   return {
     forward: { first: forward.firstHalfRms, second: forward.secondHalfRms },
     reversed: { first: reversed.firstHalfRms, second: reversed.secondHalfRms },
