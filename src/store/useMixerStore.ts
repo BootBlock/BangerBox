@@ -191,6 +191,22 @@ function channelIdOf(path: string): string | null {
   return null;
 }
 
+/**
+ * The §7.8 address a path settles under, WITHOUT needing the strip (issue #27).
+ *
+ * `parseMixerPath` needs the strip to resolve an insert parameter's range, so it returns null
+ * once the slot's effect changes — but a gesture that already published still has an overlay
+ * entry under this address, and `commit` has to be able to clear it either way.
+ */
+function canonicalPathOf(path: string): string | null {
+  if (parseParamTarget(path) !== null) return path;
+  const send = SEND_PATH.exec(path);
+  if (send) return channelSendPath(path.slice(0, send.index), Number(send[1]));
+  if (path.endsWith('.level')) return channelLevelPath(path.slice(0, -6));
+  if (path.endsWith('.pan')) return channelPanPath(path.slice(0, -4));
+  return null;
+}
+
 /** Resolve a path against the live channel map, or null when it addresses nothing. */
 function resolvePath(channels: Record<string, ChannelStrip>, path: string): ParsedPath | null {
   const channelId = channelIdOf(path);
@@ -278,6 +294,16 @@ export const useMixerStore = create<MixerState>()(
     },
 
     commit: (path, value) => {
+      // Settle FIRST, whatever happens below (issue #27). Replacing a slot's effect inside
+      // the §10.3 idle window makes an insert address stop resolving, and an early return
+      // would leave the overlay answering for it forever — so the next relative encoder turn
+      // would step from an abandoned value and a later undo would revert to one the
+      // parameter never held.
+      const settlePath = canonicalPathOf(path);
+      if (settlePath !== null) {
+        settleTransient(settlePath);
+        gestureOrigins.delete(settlePath);
+      }
       const channels = get().channels;
       const parsed = resolvePath(channels, path);
       if (parsed === null) return;
@@ -286,10 +312,10 @@ export const useMixerStore = create<MixerState>()(
       const origin = gestureOrigins.get(parsed.canonicalPath) ?? current;
       gestureOrigins.delete(parsed.canonicalPath);
       const clamped = clamp(value, parsed.range[0], parsed.range[1]);
-      // Publish BEFORE settling, and before the store write (issue #27). The committed value
-      // is not always where the gesture left off — XYFX's release-return commits where the
-      // axes RESTED — and the store diff below cannot correct that, because the store never
-      // moved during the gesture and so has no change to apply.
+      // Publish the committed value explicitly (issue #27). It is not always where the
+      // gesture left off — XYFX's release-return commits where the axes RESTED — and the
+      // store diff below cannot correct that, because the store never moved during the
+      // gesture and so has no change to apply. Settled again: a publish writes the overlay.
       publishTransient(parsed.canonicalPath, clamped);
       settleTransient(parsed.canonicalPath);
       const write = (v: number) =>

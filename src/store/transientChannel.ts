@@ -58,6 +58,11 @@ export function settleTransient(path: string): void {
   overlay.delete(path);
 }
 
+/** True while any gesture is in flight — the cheap guard on a per-note lookup (issue #27). */
+export function anyTransientInFlight(): boolean {
+  return overlay.size > 0;
+}
+
 /**
  * The value a path is at right now, or `undefined` when no gesture is in flight on it.
  *

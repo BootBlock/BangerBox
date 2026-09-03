@@ -7,8 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { programParamPath } from '@/core/audio/params/registry';
 import { createDefaultDrumProgram, createDefaultPad } from '@/core/project/schemas';
-import { useProgramStore } from './useProgramStore';
-import { resetTransientChannel, subscribeTransientChannel } from './transientChannel';
+import { programWithLiveGestures, useProgramStore } from './useProgramStore';
+import { readTransientValue, resetTransientChannel, subscribeTransientChannel } from './transientChannel';
 import { useUndoStore } from './undo/useUndoStore';
 
 const PROGRAM_ID = 'prog-1';
@@ -187,5 +187,64 @@ describe('a gesture never re-renders a React consumer (spec §3.3, issue #27)', 
     useProgramStore.getState().setPadParamTransient(path('filter.cutoff'), 1_000);
     useProgramStore.getState().commitPadParam(path('filter.cutoff'), 9_000);
     expect(published.at(-1)).toEqual({ path: path('filter.cutoff'), value: 9_000 });
+  });
+});
+
+/**
+ * The two findings the review of the issue-#27 work caught.
+ *
+ * Both come from the same shift: a gesture reaches the graph instead of the store, so
+ * anything that used to read the moving store for free now has to say where it reads from.
+ */
+describe('a gesture is visible where it has to be (issue #27, review)', () => {
+  beforeEach(seed);
+
+  it('builds a voice from the value the gesture is AT, not the one it started from', () => {
+    // `bridge.applyParam` acts on nodes that already exist, so it moves a sounding voice and
+    // cannot move one not yet built. `amp.attack` and `amp.release` are worse still:
+    // `programParamChange` maps neither, so they reach no live voice at all — and they are
+    // two of the four §10.3 pad-mode encoder defaults.
+    useProgramStore.getState().setPadParamTransient(path('amp.attack'), 250);
+    useProgramStore.getState().setPadParamTransient(path('filter.cutoff'), 4_000);
+
+    const program = useProgramStore.getState().programs[PROGRAM_ID]!;
+    const live = programWithLiveGestures(program, PAD_INDEX);
+    if (live.type !== 'drum') throw new Error('expected a drum program');
+    const pad = live.pads.find((candidate) => candidate.padIndex === PAD_INDEX)!;
+    expect(pad.envelopes.amp.attack).toBe(250);
+    expect(pad.filter.cutoff).toBe(4_000);
+    // The committed program is untouched: the gesture has not been committed (spec §4.1).
+    expect(padNow().envelopes.amp.attack).not.toBe(250);
+  });
+
+  it('returns the very same program when nothing is in flight', () => {
+    // This runs per note, so the common case has to cost one map-size check.
+    const program = useProgramStore.getState().programs[PROGRAM_ID]!;
+    expect(programWithLiveGestures(program, PAD_INDEX)).toBe(program);
+  });
+
+  it('leaves other pads alone', () => {
+    useProgramStore.getState().setPadParamTransient(path('filter.cutoff'), 4_000);
+    const program = useProgramStore.getState().programs[PROGRAM_ID]!;
+    const live = programWithLiveGestures(program, PAD_INDEX + 1);
+    expect(live).toBe(program);
+  });
+
+  it('settles the overlay even when the address stops resolving', () => {
+    // A pad deleted inside the §10.3 idle window makes the commit's resolve fail. An early
+    // return would leave the overlay answering for that address forever, so the next relative
+    // encoder turn would step from an abandoned value.
+    useProgramStore.getState().setPadParamTransient(path('filter.cutoff'), 4_000);
+    expect(readTransientValue(path('filter.cutoff'))).toBe(4_000);
+
+    useProgramStore.getState().removePad(PROGRAM_ID, PAD_INDEX);
+    useProgramStore.getState().commitPadParam(path('filter.cutoff'), 4_000);
+    expect(readTransientValue(path('filter.cutoff'))).toBeUndefined();
+  });
+
+  it('leaves nothing in the overlay after an ordinary commit either', () => {
+    useProgramStore.getState().setPadParamTransient(path('filter.cutoff'), 4_000);
+    useProgramStore.getState().commitPadParam(path('filter.cutoff'), 4_000);
+    expect(readTransientValue(path('filter.cutoff'))).toBeUndefined();
   });
 });

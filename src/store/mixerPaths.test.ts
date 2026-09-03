@@ -14,7 +14,7 @@ import {
 } from '@/core/audio/params/registry';
 import { createDefaultChannelStrip } from '@/core/project/schemas';
 import { useMixerStore } from './useMixerStore';
-import { resetTransientChannel, subscribeTransientChannel } from './transientChannel';
+import { readTransientValue, resetTransientChannel, subscribeTransientChannel } from './transientChannel';
 import { useUndoStore } from './undo';
 
 const CHANNEL = 'track:1';
@@ -214,5 +214,50 @@ describe('a gesture never re-renders a React consumer (spec §3.3, issue #27)', 
     expect(stripNow().level).toBe(0.4);
     useUndoStore.getState().undo();
     expect(stripNow().level).toBe(1);
+  });
+});
+
+/**
+ * The overlay must not outlive the gesture, even when the address stops resolving (review of
+ * the issue-#27 work). An insert parameter's range comes from the effect in the slot, so
+ * replacing that effect inside the §10.3 idle window makes the commit's own parse fail.
+ */
+describe('a commit always settles its overlay entry (issue #27, review)', () => {
+  beforeEach(seed);
+
+  it('settles an insert parameter whose slot effect changed mid-gesture', () => {
+    const path = insertParamPath(CHANNEL, 1, 'feedback');
+    useMixerStore.getState().setTransient(path, 0.5);
+    expect(readTransientValue(path)).toBe(0.5);
+
+    const slotId = stripNow().inserts[0]!.id;
+    useMixerStore.getState().replaceInsert(CHANNEL, slotId, 'reverb');
+    useMixerStore.getState().commit(path, 0.5);
+    expect(readTransientValue(path)).toBeUndefined();
+  });
+
+  it('settles a channel address whose strip has gone', () => {
+    const path = channelLevelPath(CHANNEL);
+    useMixerStore.getState().setTransient(path, 0.5);
+    useMixerStore.getState().removeChannel(CHANNEL);
+    useMixerStore.getState().commit(path, 0.5);
+    expect(readTransientValue(path)).toBeUndefined();
+  });
+
+  it('settles a LEGACY address under the canonical one it published as', () => {
+    // The overlay is keyed canonically, so clearing it needs the canonical form — which
+    // `parseMixerPath` cannot give once the strip is gone, since it needs the strip.
+    useMixerStore.getState().setTransient(`${CHANNEL}.level`, 0.4);
+    expect(readTransientValue(channelLevelPath(CHANNEL))).toBe(0.4);
+    useMixerStore.getState().removeChannel(CHANNEL);
+    useMixerStore.getState().commit(`${CHANNEL}.level`, 0.4);
+    expect(readTransientValue(channelLevelPath(CHANNEL))).toBeUndefined();
+  });
+
+  it('leaves nothing in the overlay after an ordinary commit', () => {
+    const path = channelLevelPath(CHANNEL);
+    useMixerStore.getState().setTransient(path, 0.5);
+    useMixerStore.getState().commit(path, 0.5);
+    expect(readTransientValue(path)).toBeUndefined();
   });
 });

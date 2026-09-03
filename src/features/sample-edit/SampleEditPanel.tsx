@@ -79,6 +79,13 @@ export function SampleEditPanel() {
   const [selected, setSelected] = useState<SampleRow | null>(null);
   const [pyramid, setPyramid] = useState<PeakPyramid | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * The label of the §8.5.4 operation running, or null (issue #54).
+   *
+   * `busy` gates every tool, which is right; it labels only the one that is actually running,
+   * or a Normalise in progress would relabel the import picker "Importing…".
+   */
+  const [runningLabel, setRunningLabel] = useState<string | null>(null);
   const [fadeMs, setFadeMs] = useState(50);
   const [stretchRate, setStretchRate] = useState(1);
   const [stretchPitch, setStretchPitch] = useState(0);
@@ -173,6 +180,7 @@ export function SampleEditPanel() {
 
   const run = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(true);
+    setRunningLabel(label);
     try {
       await fn();
       await refreshSamples();
@@ -181,6 +189,7 @@ export function SampleEditPanel() {
       pushToast(error instanceof Error ? error.message : `${label} failed.`, 'error');
     } finally {
       setBusy(false);
+      setRunningLabel(null);
     }
   };
 
@@ -292,7 +301,11 @@ export function SampleEditPanel() {
           label="Import audio…"
           busyLabel="Importing…"
           accept=".wav,.mp3,.flac,.ogg,audio/*"
-          busy={busy}
+          // `busy` covers every §8.5.4 tool, so it says only what this control is doing;
+          // `disabled` carries the rest, or a running Normalise would relabel this
+          // "Importing…" (issue #54).
+          busy={runningLabel?.startsWith('Import') ?? false}
+          disabled={busy}
           data-testid="sample-import"
           onPick={onImport}
         />

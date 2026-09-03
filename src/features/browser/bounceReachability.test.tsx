@@ -184,3 +184,33 @@ describe('bounce sequence keeps its download (spec §9.5)', () => {
     expect(downloadBlob.mock.calls[0]![1]).toBe('My-Track-bounce.wav');
   });
 });
+
+/**
+ * A long operation says what IT is doing (issue #54, review of that work).
+ *
+ * One shared `busy` flag gated every control correctly and labelled them all wrongly: a
+ * bounce relabelled the import pickers "Importing…" and marked them `aria-disabled`, which is
+ * the opposite of the missing-progress problem the issue is about.
+ */
+describe('the running operation names itself (issue #54)', () => {
+  it('relabels the bounce, and leaves the import pickers saying what they are', async () => {
+    let release: (path: string) => void = () => {};
+    bounceActiveSequence.mockImplementation(
+      () => new Promise((resolve) => (release = resolve as (path: string) => void)),
+    );
+
+    const user = userEvent.setup();
+    render(<BrowserPanel />);
+    await user.click(screen.getByTestId('bounce-sequence'));
+
+    expect(screen.getByTestId('bounce-sequence')).toHaveTextContent('Bouncing…');
+    expect(screen.getByText('Import .mpcweb…')).toBeInTheDocument();
+    expect(screen.queryByText('Importing…')).not.toBeInTheDocument();
+    // Still gated, which was always right — just not relabelled.
+    expect(screen.getByTestId('project-import')).toBeDisabled();
+
+    release('/projects/project-a/bounces/bounce.wav');
+    await waitFor(() => expect(screen.getByTestId('bounce-sequence')).toHaveTextContent('Bounce sequence'));
+    await waitFor(() => expect(screen.getByTestId('project-import')).toBeEnabled());
+  });
+});

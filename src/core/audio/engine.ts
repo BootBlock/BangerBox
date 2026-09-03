@@ -8,6 +8,7 @@
  * modules during the start gate (§5.1), starts the scheduler, and publishes the meter
  * registry. Every owned resource is released by {@link dispose} (spec §3.2).
  */
+import { programWithLiveGestures } from '@/store/useProgramStore';
 import { useProgramStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
 import { resetAutomationRecording, setAutomationClock } from '@/store/automationRecord';
 import { createDefaultEnvelope } from '@/core/project/schemas';
@@ -308,7 +309,10 @@ export class AudioEngine {
     if (!track?.programId) return null;
     const program = useProgramStore.getState().programs[track.programId];
     if (!program) return null;
-    return resolveVoice(program, note, velocity);
+    // The program AS IT SOUNDS NOW: a §4.1 gesture in flight reaches the graph rather than
+    // the store (issue #27), and `applyParam` can only move a voice that already exists —
+    // so a pad struck mid-turn would otherwise be built from the pre-gesture value.
+    return resolveVoice(programWithLiveGestures(program, note), note, velocity);
   }
 
   /** Sound a resolved §6 voice, decoding its sample once and applying the §6 pad mixer. */

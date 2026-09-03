@@ -13,6 +13,7 @@ import type { PlayheadReading } from '@/core/sequencer';
 import { createDefaultChannelStrip } from '@/core/project/schemas';
 import { useMixerStore, useSequenceStore, useTransportStore } from '@/store';
 import { resetAutomationRecording, setAutomationClock } from '@/store/automationRecord';
+import { resetTransientChannel } from '@/store/transientChannel';
 import { AudioEnginePanel } from './AudioEnginePanel';
 
 const LANE = 'sequence:seq1:mixer.master.level';
@@ -51,5 +52,29 @@ describe('AudioEnginePanel master fader (spec §7.8)', () => {
     expect(useSequenceStore.getState().automation[LANE]).toHaveLength(1);
     // The gesture still moved the parameter — capture is additive, never a replacement.
     expect(useMixerStore.getState().channels.master!.level).toBeLessThan(1);
+  });
+});
+
+/**
+ * §10.3's "UI reacts concurrently", for the one fader that is always on screen (issue #27).
+ *
+ * A project-mode Q-Link encoder is bound to the master level by default, and an XYFX axis can
+ * be too. Since a turn's values now reach the graph through the §4.1 transient channel rather
+ * than the store, a fader without `livePath` sits still while the audio and the meter move —
+ * which is what the Mixer's five controls got the prop to prevent, and this one had missed.
+ */
+describe('AudioEnginePanel master fader tracks a gesture it is not driving (issue #27)', () => {
+  afterEach(() => {
+    resetTransientChannel();
+  });
+
+  it('follows a Q-Link turn of mixer.master.level as it happens', () => {
+    render(<AudioEnginePanel />);
+    const fader = screen.getByRole('slider', { name: 'Master level' });
+    expect(fader.getAttribute('aria-valuenow')).toBe('1');
+
+    // Exactly what the §10.3 runtime does mid-turn, through the real store action.
+    useMixerStore.getState().setTransient('mixer.master.level', 0.4);
+    expect(fader.getAttribute('aria-valuenow')).toBe('0.4');
   });
 });
