@@ -5,6 +5,7 @@
  * track either non-destructively at schedule time (like swing, §7.4 — {@link grooveShiftAtTick})
  * or baked as a destructive edit ({@link applyGrooveToEvents}). Dependency-free (spec §2.5).
  */
+import { z } from 'zod';
 import { PPQN } from '@/core/constants';
 import { clamp } from '@/core/math';
 
@@ -28,6 +29,24 @@ export interface GrooveTemplate {
   readonly division: 8 | 16;
   readonly points: GroovePoint[];
 }
+
+/**
+ * Runtime guard for a template (locked decision §1.3 #11). One definition serves both
+ * boundaries a template crosses: the §7.1.3 scheduler message and the §9.3 project payload
+ * it persists in — so the wire and the file can never disagree about its shape.
+ */
+export const grooveTemplateSchema: z.ZodType<GrooveTemplate> = z.object({
+  ppqn: z.number().int().min(1),
+  lengthTicks: z.number().int().min(1),
+  division: z.union([z.literal(8), z.literal(16)]),
+  points: z.array(
+    z.object({
+      gridTick: z.number(),
+      offsetTicks: z.number(),
+      velocityScale: z.number(),
+    }),
+  ),
+});
 
 export interface GrooveExtractOptions {
   readonly bpm: number;

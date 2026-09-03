@@ -4,14 +4,14 @@
  * the {@link dspEffect.worklet.ts} processor. Kept in a plain module so both sides import one
  * definition (spec §2.5) and the kernel-name/param names never drift (naming freeze, §13.6).
  */
-import type { WorkletKernelName } from '@/core/dsp/kernelModules';
+import type { DspEffectKernelName } from '@/core/dsp/kernelModules';
 
 export const DSP_EFFECT_PROCESSOR = 'dsp-effect';
 
 export interface DspEffectProcessorOptions {
   /** Precompiled kernel module transferred via processorOptions (spec §5.6.2). */
   module: WebAssembly.Module;
-  kernel: WorkletKernelName;
+  kernel: DspEffectKernelName;
   /** Render-quantum size the per-channel kernel pre-allocates for (spec §5.5). */
   maxBlock: number;
   /** Initial parameter values, keyed by the effect's param names (spec §5.7). */

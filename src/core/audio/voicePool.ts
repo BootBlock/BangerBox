@@ -11,6 +11,7 @@
 import { CHOKE_FADE_MS, DECLICK_FADE_MS, MAX_VOICES, VOICE_STEAL_FADE_MS } from '@/core/constants';
 import { clamp } from '@/core/math';
 import {
+  DEFAULT_BPM,
   FILTER_CUTOFF_RANGE,
   FILTER_RESONANCE_RANGE,
   type AhdsrEnvelope,
@@ -38,6 +39,8 @@ import {
 import {
   biquadFilterType,
   lfoOscillator,
+  lfoRateHz,
+  lfoWaveCoefficients,
   staticModulation,
   FILTER_ENV_OCTAVES,
   FILTER_MOD_OCTAVES,
@@ -47,6 +50,8 @@ import { routesForSource } from './modMatrix';
 import { cancelParams, rampParamTarget } from './params/ramps';
 import type { ProgramParamTarget } from './voiceParams';
 import { selectChokeVictims, selectStealVictim, type ChokeCandidate, type VoiceRef } from './voiceSelection';
+import { createBufferVoiceSource, createGranularVoiceSource, type VoiceSource } from './voiceSource';
+import { getKernelModule } from '@/core/dsp/kernelModules';
 
 /** The §6 sound-design surface for one voice (optional — omitted by the demo path). */
 export interface VoiceSoundDesign {
@@ -80,11 +85,40 @@ export interface VoiceTriggerSpec extends VoiceSoundDesign {
   readonly programPolyphony?: number;
   /** Keygroup mono glide time in ms (spec §6): portamento into the note; 0/undefined = off. */
   readonly glideMs?: number;
+  /** Transport tempo a §6 tempo-synced LFO locks to (spec §7.2); defaults to §9.3's default. */
+  readonly bpm?: number;
+  /**
+   * spec §6 `Pad.warp` — play through the §5.7.9 granular source instead of an
+   * `AudioBufferSourceNode`, so the voice's detune shifts pitch without changing how long
+   * the region lasts. Ignored when the kernel module has not been loaded (a unit context,
+   * or an offline render that skipped the §5.1 gate): the voice falls back to coupled
+   * repitch, which is the ordinary behaviour rather than silence.
+   */
+  readonly warp?: boolean;
+}
+
+/**
+ * A free-running LFO shared by every voice of a pad (spec §6 `retrigger: false`). It is
+ * per pad rather than per voice because that is what "free-running" means: the cycle has
+ * to outlive the note that first started it, or the next note restarts it at phase zero
+ * and `retrigger: false` is indistinguishable from `retrigger: true`.
+ */
+interface SharedLfo {
+  readonly osc: OscillatorNode;
+  /** Context time the oscillator started — the origin the declick model integrates from. */
+  readonly since: number;
+  /** The §6 config this was built for; a changed config rebuilds rather than drifts. */
+  readonly signature: string;
+  /** Voices still borrowing it. A retired oscillator is released when this reaches zero. */
+  refs: number;
+  /** True once a config change has replaced it: no new voice takes it, old ones keep it. */
+  retired: boolean;
 }
 
 interface Voice {
   readonly id: string;
-  readonly source: AudioBufferSourceNode;
+  /** The §5.2 stage-1 source: a buffer source, or the §5.7.9 warp source for a warp pad. */
+  readonly source: VoiceSource;
   readonly ampGain: GainNode;
   /** Per-voice filter (spec §5.2 stage 2), or null when the pad filter is off. */
   readonly filter: BiquadFilterNode | null;
@@ -92,6 +126,12 @@ interface Voice {
   readonly oscillators: OscillatorNode[];
   /** LFO scaling gains feeding modulation targets. */
   readonly modGains: GainNode[];
+  /**
+   * Connections from a shared free-running LFO into this voice's mod gains (spec §6). They
+   * are detached by hand on teardown: disconnecting a gain releases its outputs, not the
+   * oscillator still feeding it, and that oscillator outlives the voice.
+   */
+  readonly sharedLinks: { readonly lfo: SharedLfo; readonly to: GainNode }[];
   /**
    * Live bend offset in cents, summed into `source.detune` (spec §10.2, §6). Built on the
    * first retune rather than at note-on, so a voice that is never bent costs no extra node.
@@ -121,6 +161,10 @@ interface Voice {
 
 export class VoicePool {
   private readonly voices = new Map<string, Voice>();
+  /** Free-running §6 LFOs, keyed `${padKey}:${lfoIndex}` — see {@link SharedLfo}. */
+  private readonly sharedLfos = new Map<string, SharedLfo>();
+  /** Replaced free-running LFOs still feeding a sounding voice (see {@link sharedLfo}). */
+  private readonly retiredLfos = new Set<SharedLfo>();
 
   constructor(
     private readonly context: BaseAudioContext,
@@ -239,6 +283,13 @@ export class VoicePool {
       this.teardown(voice.id);
     }
     this.voices.clear();
+    // Free-running LFOs outlive their voices by design (spec §6), so the pool owns their
+    // teardown — nothing else would ever release them.
+    for (const shared of [...this.sharedLfos.values(), ...this.retiredLfos]) {
+      this.stopSharedLfo(shared);
+    }
+    this.sharedLfos.clear();
+    this.retiredLfos.clear();
   }
 
   // --------------------------------------------------------------- internals ---
@@ -291,6 +342,9 @@ export class VoicePool {
    * the truth than anything scheduled behind it, and cutting it short would click).
    */
   private rescheduleDeclick(voice: Voice, offsetCents: number, when: number): void {
+    // A §5.7.9 warp voice decouples pitch from duration, so a retune moves no end to chase.
+    // Its declick was laid at the source's own length and stays where it is.
+    if (!voice.source.pitchCoupled) return;
     const at = Math.max(when, voice.startTime);
     voice.consumedSeconds += consumedBetween(voice.detune, voice.consumedUntil, at);
     voice.consumedUntil = at;
@@ -316,6 +370,7 @@ export class VoicePool {
   private buildVoice(spec: VoiceTriggerSpec, now: number, glideFrom?: number): Voice {
     const oscillators: OscillatorNode[] = [];
     const modGains: GainNode[] = [];
+    const sharedLinks: { lfo: SharedLfo; to: GainNode }[] = [];
     const routes = spec.modMatrix ?? [];
     const stat = staticModulation(
       routes,
@@ -324,8 +379,10 @@ export class VoicePool {
       deterministicRandom(spec.id),
     );
 
-    const source = this.context.createBufferSource();
-    source.buffer = spec.buffer;
+    // The §6 trim resolved against the buffer, then the source that plays it (spec §5.2
+    // stage 1): the §5.7.9 granular engine for a warp pad, else an `AudioBufferSourceNode`.
+    const region = playRegion(spec.buffer, spec.startFrame, spec.endFrame);
+    const source = this.buildSource(spec, region, now);
     const baseDetune = spec.tuneSemitones * 100 + spec.tuneCents + stat.detuneCents;
 
     const ampGain = this.context.createGain();
@@ -333,7 +390,7 @@ export class VoicePool {
     const filter = filterType ? this.context.createBiquadFilter() : null;
 
     // Chain: source → ampGain → [filter] → destination (spec §5.2 stages 1–2, 5).
-    source.connect(ampGain);
+    source.node.connect(ampGain);
     if (filter) {
       filter.type = filterType!;
       filter.frequency.value = clamp(
@@ -378,17 +435,20 @@ export class VoicePool {
 
     // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6). Wired
     // before the declick because pitch-routed LFOs are part of the rate curve it solves.
-    const oscillations = this.wireLfos(spec, source, filter, now, oscillators, modGains);
+    const oscillations = this.wireLfos(spec, source, filter, now, oscillators, modGains, sharedLinks);
     const detune: DetuneSchedule = { breakpoints, bend: [], oscillations };
 
-    // Declick the natural end of the region (spec §5.4), integrating the detune contour so
-    // a pitch envelope, glide or pitch LFO lands the fade where the buffer truly runs out
-    // (issue #87). A later retune (pad detune, pitch bend) moves it — `rescheduleDeclick`.
-    const region = playRegion(spec.buffer, spec.startFrame, spec.endFrame);
-    const endTime = regionEndTime(detune, now, region.durationSeconds);
+    // Declick the natural end of the region (spec §5.4). On a coupled source the detune
+    // contour IS the playback rate, so the end is integrated from it and a pitch envelope,
+    // glide or pitch LFO lands the fade where the buffer truly runs out (issue #87); a later
+    // retune moves it (`rescheduleDeclick`). A §5.7.9 warp source decouples the two, so its
+    // end is simply its own length and nothing can move it.
+    const endTime = source.pitchCoupled
+      ? regionEndTime(detune, now, source.sourceSeconds)
+      : now + source.sourceSeconds;
     const declickFadeStart = scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS);
 
-    source.start(now, region.offsetSeconds, region.durationSeconds);
+    source.start(now);
     for (const osc of oscillators) osc.start(now);
 
     const voice: Voice = {
@@ -398,6 +458,7 @@ export class VoicePool {
       filter,
       oscillators,
       modGains,
+      sharedLinks,
       bendSource: null,
       padKey: spec.padKey,
       programId: spec.programId,
@@ -405,7 +466,7 @@ export class VoicePool {
       oneShot: spec.playbackMode === 'oneShot',
       releaseMs: spec.amp.release,
       baseDetune,
-      regionSeconds: region.durationSeconds,
+      regionSeconds: source.sourceSeconds,
       detune,
       consumedSeconds: 0,
       consumedUntil: now,
@@ -414,9 +475,25 @@ export class VoicePool {
       released: false,
       stopScheduled: false,
     };
-    // A finite buffer ends on its own → teardown; stolen/choked voices end after the fade.
-    source.onended = () => this.teardown(spec.id);
+    // A finite source ends on its own → teardown; stolen/choked voices end after the fade.
+    source.setOnEnded(() => this.teardown(spec.id));
     return voice;
+  }
+
+  /**
+   * The §5.2 stage-1 source for a voice. A §6 `warp` pad plays through the §5.7.9 granular
+   * worklet source; everything else through an `AudioBufferSourceNode`.
+   *
+   * Warp falls back to the buffer source when the `granularStretch` module has not been
+   * compiled — a unit-test context, or an offline render that skipped the §5.1 start gate.
+   * A pad that then repitches in the coupled way is a lesser wrong than a silent one.
+   */
+  private buildSource(spec: VoiceTriggerSpec, region: PlayRegion, now: number): VoiceSource {
+    if (spec.warp) {
+      const module = getKernelModule('granularStretch');
+      if (module) return createGranularVoiceSource(this.context, module, spec.buffer, region, now);
+    }
+    return createBufferVoiceSource(this.context, spec.buffer, region);
   }
 
   /** Filter envelope on the biquad `detune` (cents), scaled by envDepth (spec §6). */
@@ -431,20 +508,26 @@ export class VoicePool {
    * Wire each LFO to its pitch/filter-cutoff routes as an oscillator → gain → param
    * (spec §6). Returns a description of the pitch-routed oscillators, which the declick
    * integrator needs because they modulate the voice's playback rate (issue #87).
-   * `phaseOffset` is not applied to the oscillators, so the model does not model it either.
+   *
+   * All five §6 `LfoConfig` fields are applied here (issue #107): `rate` and `sync` decide
+   * the frequency through {@link lfoRateHz}, `shape` the waveform, `phaseOffset` a rotation
+   * baked into that waveform, and `retrigger` whether the voice owns its oscillator or
+   * borrows the pad's free-running one.
    */
   private wireLfos(
     spec: VoiceTriggerSpec,
-    source: AudioBufferSourceNode,
+    source: VoiceSource,
     filter: BiquadFilterNode | null,
     now: number,
     oscillators: OscillatorNode[],
     modGains: GainNode[],
+    sharedLinks: { lfo: SharedLfo; to: GainNode }[],
   ): DetuneOscillation[] {
     const pitchOscillations: DetuneOscillation[] = [];
     const lfos = spec.lfos;
     const routes = spec.modMatrix;
     if (!lfos || !routes) return pitchOscillations;
+    const bpm = spec.bpm ?? DEFAULT_BPM;
     lfos.forEach((config, index) => {
       const sourceName = index === 0 ? 'lfo1' : 'lfo2';
       const targets = routesForSource(routes, sourceName).filter(
@@ -452,10 +535,13 @@ export class VoicePool {
       );
       if (targets.length === 0) return;
       const { type, sign } = lfoOscillator(config.shape);
-      const osc = this.context.createOscillator();
-      osc.type = type;
-      osc.frequency.value = config.rate; // free-rate Hz; tempo-synced LFO is a later refinement
-      oscillators.push(osc);
+      const rateHz = lfoRateHz(config, bpm);
+      // spec §6 `retrigger`: false borrows the pad's free-running LFO, true starts a fresh
+      // one at phase zero with the note.
+      const shared = config.retrigger ? null : this.sharedLfo(spec.padKey, index, config, type, rateHz, now);
+      const osc = shared?.osc ?? this.buildOscillator(type, rateHz, config.phaseOffset);
+      const since = shared?.since ?? now;
+      if (!shared) oscillators.push(osc);
       for (const route of targets) {
         const gain = this.context.createGain();
         if (route.target === 'pitch') {
@@ -464,19 +550,92 @@ export class VoicePool {
           gain.connect(source.detune);
           pitchOscillations.push({
             wave: type,
-            rateHz: config.rate,
+            rateHz,
             amplitudeCents: gain.gain.value,
-            since: now,
+            since,
+            phase: config.phaseOffset,
           });
         } else if (filter) {
           gain.gain.value = sign * route.amount * FILTER_MOD_OCTAVES * 1200;
           osc.connect(gain);
           gain.connect(filter.detune);
         }
+        if (shared) {
+          shared.refs += 1;
+          sharedLinks.push({ lfo: shared, to: gain });
+        }
         modGains.push(gain);
       }
     });
     return pitchOscillations;
+  }
+
+  /**
+   * An oscillator for a §6 LFO. `phaseOffset` is baked into the waveform through
+   * {@link lfoWaveCoefficients}: an `OscillatorNode` always begins at phase zero and has
+   * no phase parameter, so the wave itself is rotated instead. A zero offset keeps the
+   * native type, which is band-limited by the browser and costs nothing to build.
+   */
+  private buildOscillator(type: OscillatorType, rateHz: number, phaseOffset: number): OscillatorNode {
+    const osc = this.context.createOscillator();
+    if (phaseOffset === 0) {
+      osc.type = type;
+    } else {
+      const { real, imag } = lfoWaveCoefficients(type, phaseOffset);
+      osc.setPeriodicWave(this.context.createPeriodicWave(real, imag));
+    }
+    osc.frequency.value = rateHz;
+    return osc;
+  }
+
+  /**
+   * The pad's free-running LFO for `index`, built on first use and kept running afterwards
+   * (spec §6 `retrigger: false`). A changed §6 config rebuilds it — a rate the user has
+   * just edited matters more than the cycle the old oscillator was part-way through.
+   */
+  private sharedLfo(
+    padKey: string,
+    index: number,
+    config: LfoConfig,
+    type: OscillatorType,
+    rateHz: number,
+    now: number,
+  ): SharedLfo {
+    const key = `${padKey}:${index}`;
+    const signature = `${type}:${rateHz}:${config.phaseOffset}`;
+    const existing = this.sharedLfos.get(key);
+    if (existing && existing.signature === signature) return existing;
+    if (existing) {
+      // Retired, not destroyed: voices are still sounding through it, and disconnecting it
+      // would cut the modulation out from under them mid-note — their filter or pitch would
+      // snap to the unmodulated value, and a pitch route's scheduled declick would be left
+      // in the wrong place. It goes when the last voice borrowing it ends.
+      existing.retired = true;
+      this.retiredLfos.add(existing);
+      this.releaseSharedLfo(existing);
+    }
+    const osc = this.buildOscillator(type, rateHz, config.phaseOffset);
+    osc.start(now);
+    const shared: SharedLfo = { osc, since: now, signature, refs: 0, retired: false };
+    this.sharedLfos.set(key, shared);
+    return shared;
+  }
+
+  /** Release a retired free-running LFO once nothing is borrowing it (spec §3.2). */
+  private releaseSharedLfo(shared: SharedLfo): void {
+    if (!shared.retired || shared.refs > 0) return;
+    this.retiredLfos.delete(shared);
+    this.stopSharedLfo(shared);
+  }
+
+  private stopSharedLfo(shared: SharedLfo): void {
+    try {
+      shared.osc.stop();
+    } catch {
+      // Never started / already stopped.
+    }
+    cancelParams(shared.osc.frequency, shared.osc.detune);
+    shared.osc.disconnect();
   }
 
   private fadeAndStop(voice: Voice, when: number, fadeMs: number): void {
@@ -497,10 +656,10 @@ export class VoicePool {
     const voice = this.voices.get(id);
     if (!voice) return;
     this.voices.delete(id);
-    voice.source.onended = null;
+    voice.source.setOnEnded(null);
     // Every param the voice automates, cancelled before the nodes go (spec §3.2): the amp
     // declick/AHDSR, the detune contour, and the §6 modulation and §10.2 bend depths.
-    cancelParams(voice.ampGain.gain, voice.source.detune, voice.source.playbackRate);
+    cancelParams(voice.ampGain.gain, ...voice.source.automatedParams());
     for (const osc of voice.oscillators) {
       try {
         osc.stop();
@@ -510,6 +669,18 @@ export class VoicePool {
       cancelParams(osc.frequency, osc.detune);
       osc.disconnect();
     }
+    // A free-running LFO outlives the voice, so its link into this voice's gain is cut
+    // here; disconnecting the gain alone would leave the oscillator holding it (spec §3.2).
+    for (const link of voice.sharedLinks) {
+      try {
+        link.lfo.osc.disconnect(link.to);
+      } catch {
+        // Already disconnected.
+      }
+      link.lfo.refs -= 1;
+      this.releaseSharedLfo(link.lfo);
+    }
+    voice.sharedLinks.length = 0;
     for (const gain of voice.modGains) {
       cancelParams(gain.gain);
       gain.disconnect();
@@ -525,11 +696,7 @@ export class VoicePool {
       voice.bendSource.disconnect();
       voice.bendSource = null;
     }
-    try {
-      voice.source.disconnect();
-    } catch {
-      // Never connected / already gone.
-    }
+    voice.source.destroy();
     voice.ampGain.disconnect();
     voice.filter?.disconnect();
   }

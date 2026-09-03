@@ -15,6 +15,7 @@ import { useHardwareStore } from '@/store/useHardwareStore';
 import { useProgramStore } from '@/store/useProgramStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useSequenceStore } from '@/store/useSequenceStore';
+import { useTransportStore } from '@/store/useTransportStore';
 import { UnflushableKeyError } from './autosave';
 import { dirtyKey } from './dirty';
 import { hydrateStores } from './hydrate';
@@ -114,6 +115,53 @@ describe('flushDirtyKeys — previously untested kinds (spec §4.4)', () => {
     await flushDirtyKeys(repos, [dirtyKey.settings('qlink:screen')]);
     const stored = await repos.settings.get('qlink:screen');
     expect(JSON.parse(stored!)).toEqual([{ encoderIndex: 0, targetPath: 'mixer.master.level' }]);
+  });
+});
+
+describe('flushDirtyKeys — the project payload (spec §9.3)', () => {
+  const TEMPLATE = {
+    ppqn: 960,
+    lengthTicks: 3840,
+    division: 16 as const,
+    points: [{ gridTick: 0, offsetTicks: 30, velocityScale: 0.8 }],
+  };
+
+  it('round-trips a §7.5 groove template and its track assignment', async () => {
+    useSequenceStore.getState().setGrooveTemplate('Shuffle', TEMPLATE);
+    useSequenceStore.getState().assignTrackGroove(trackId, 'Shuffle');
+    await flushDirtyKeys(repos, [dirtyKey.project(projectId)]);
+
+    // Wipe the runtime state, then reload it the way a project open does (spec §4.4).
+    useSequenceStore.getState().hydrate({
+      sequences: {},
+      tracks: {},
+      events: {},
+      automation: {},
+      songEntries: [],
+    });
+    expect(useSequenceStore.getState().grooveTemplates).toEqual({});
+    await hydrateStores(repos, projectId);
+
+    expect(useSequenceStore.getState().grooveTemplates.Shuffle).toEqual(TEMPLATE);
+    expect(useSequenceStore.getState().trackGrooveIds[trackId]).toBe('Shuffle');
+  });
+
+  it('round-trips the §7.9 song-loop toggle', async () => {
+    useTransportStore.getState().setSongLoopEnabled(true);
+    await flushDirtyKeys(repos, [dirtyKey.project(projectId)]);
+
+    useTransportStore.getState().setSongLoopEnabled(false);
+    await hydrateStores(repos, projectId);
+    expect(useTransportStore.getState().songLoopEnabled).toBe(true);
+  });
+
+  it('loads a project written before either field existed as the §7.9 default', async () => {
+    // The fixture project row was created with the default '{}' payload.
+    useTransportStore.getState().setSongLoopEnabled(true);
+    useSequenceStore.getState().setGrooveTemplate('Stale', TEMPLATE);
+    await hydrateStores(repos, projectId);
+    expect(useTransportStore.getState().songLoopEnabled).toBe(false);
+    expect(useSequenceStore.getState().grooveTemplates).toEqual({});
   });
 });
 

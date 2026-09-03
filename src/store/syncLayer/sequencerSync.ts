@@ -103,9 +103,11 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     scheduler.sendAutomationDiff(scope, ownerId, targetPath, points);
   }
   pushGrooves(scheduler);
+  scheduler.setSongLoop(useTransportStore.getState().songLoopEnabled);
   pushTransport(scheduler);
 
   let prevTrackGrooves = useSequenceStore.getState().trackGrooveIds;
+  let prevTemplates = useSequenceStore.getState().grooveTemplates;
   let prevEvents = useSequenceStore.getState().events;
   let prevAutomation = useSequenceStore.getState().automation;
 
@@ -138,6 +140,11 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
       (s) => `${s.activeSequenceId}:${s.playbackMode}`,
       () => pushMeta(scheduler),
     ),
+    // spec §7.9: what the worker does when it reaches `songTotalTicks`.
+    useTransportStore.subscribe(
+      (s) => s.songLoopEnabled,
+      (enabled) => scheduler.setSongLoop(enabled),
+    ),
     // Transport play/record is the last thing forwarded so the worker already has state.
     useTransportStore.subscribe(
       (s) => `${s.isPlaying}:${s.isRecording}`,
@@ -166,6 +173,22 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
           if (!(trackId in assignments)) scheduler.setGroove(trackId, null);
         }
         prevTrackGrooves = assignments;
+      },
+    ),
+    // A template is keyed by its source sample's name (spec §14 (ai)), so re-extracting
+    // REPLACES one that tracks are already assigned to. Without this the worker keeps
+    // shaping notes with the template it was handed first, and the only way to see the new
+    // one is to toggle the assignment or reload the project.
+    useSequenceStore.subscribe(
+      (s) => s.grooveTemplates,
+      (templates) => {
+        const assignments = useSequenceStore.getState().trackGrooveIds;
+        for (const [trackId, templateId] of Object.entries(assignments)) {
+          if (templates[templateId] !== prevTemplates[templateId]) {
+            scheduler.setGroove(trackId, templates[templateId] ?? null);
+          }
+        }
+        prevTemplates = templates;
       },
     ),
     useSequenceStore.subscribe(

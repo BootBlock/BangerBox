@@ -8,8 +8,12 @@
  */
 import type { AudioEngine } from '@/core/audio/engine';
 import {
+  renderDelayEchoOffline,
   renderEffectOffline,
-  renderProgramNotePitch,
+  renderLfoPhaseOffline,
+  renderLfoRateOffline,
+  renderProgramNote,
+  type DelayEchoResult,
   type EffectRenderResult,
 } from '@/core/audio/offlineTest';
 import { getActiveRepositories, projectService } from '@/core/project';
@@ -55,6 +59,32 @@ export interface AudioProbe {
   velocityLayerPitches: () => Promise<{ soft: number; hard: number }>;
   /** Keygroup pitch accuracy: root vs one-octave-up render pitches (spec §12 exit). */
   keygroupPitches: () => Promise<{ root: number; octave: number }>;
+  /**
+   * §6 `VelocityLayer.reverse` (issue #84): the same late-burst sample played forwards and
+   * backwards. Forwards the energy sits in the second half, backwards in the first.
+   */
+  reversedLayerHalves: () => Promise<{
+    forward: { first: number; second: number };
+    reversed: { first: number; second: number };
+  }>;
+  /**
+   * §5.7.9 `warp` (issue #84): a pad tuned an octave up, with warp off and on. Off, the
+   * coupled repitch halves the sample's length; on, the granular source keeps it.
+   */
+  warpDecouplesPitch: () => Promise<{
+    plain: { frequency: number; seconds: number };
+    warped: { frequency: number; seconds: number };
+  }>;
+  /** §6 `LfoConfig.sync` (issue #107): the rate a synced LFO actually runs at, per tempo. */
+  syncedLfoRates: () => Promise<{ free: number; atSlowTempo: number; atFastTempo: number }>;
+  /** §6 `LfoConfig.phaseOffset` (issue #107): where a quarter-turn sine starts. */
+  lfoPhaseStart: () => Promise<{ unshifted: number; quarterTurn: number }>;
+  /** §5.7 synced delay (issue #70): where the echo of an impulse lands, per tempo. */
+  delayEcho: (options?: {
+    division?: string;
+    bpm?: number;
+    retuneToBpm?: number;
+  }) => Promise<DelayEchoResult>;
   /** .mpcweb export → import round-trip (spec §12 exit / §9.6 pack round-trip smoke). */
   packRoundTrip: () => Promise<{ imported: boolean; samples: number }>;
   /** Import → transient chop → time-stretch of a synthetic drum (spec §7.5/§8.5.4/§5.7.9). */
@@ -136,8 +166,8 @@ async function velocityLayerPitches(): Promise<{ soft: number; hard: number }> {
     layer({ sampleId: 'hard', velocityStart: 64, velocityEnd: 127, tuneSemitones: 12 }),
   ];
   program.pads = [pad];
-  const soft = await renderProgramNotePitch(program, 0, 30);
-  const hard = await renderProgramNotePitch(program, 0, 110);
+  const soft = await renderProgramNote(program, 0, 30);
+  const hard = await renderProgramNote(program, 0, 110);
   return { soft: soft.frequency, hard: hard.frequency };
 }
 
@@ -158,8 +188,8 @@ async function keygroupPitches(): Promise<{ root: number; octave: number }> {
     gainDb: 0,
   };
   program.zones = [zone];
-  const root = await renderProgramNotePitch(program, 60, 100);
-  const octave = await renderProgramNotePitch(program, 72, 100);
+  const root = await renderProgramNote(program, 60, 100);
+  const octave = await renderProgramNote(program, 72, 100);
   return { root: root.frequency, octave: octave.frequency };
 }
 
@@ -415,6 +445,74 @@ async function samplePipelineProof(engine: AudioEngine): Promise<{
   };
 }
 
+/**
+ * §6 `reverse` proof (issue #84): one pad, one late-burst sample, played both ways. The
+ * energy has to move from the second half of the render to the first.
+ */
+async function reversedLayerHalves(): Promise<{
+  forward: { first: number; second: number };
+  reversed: { first: number; second: number };
+}> {
+  const build = (reverse: boolean) => {
+    const program = createDefaultDrumProgram('Reverse probe');
+    const pad = createDefaultPad(0);
+    pad.layers = [layer({ sampleId: 'offline', reverse })];
+    program.pads = [pad];
+    return program;
+  };
+  // The sample fills the whole render, so the halves measured are the SAMPLE's halves.
+  const options = { signal: 'lateBurst', seconds: 0.4, sampleSeconds: 0.4 } as const;
+  const forward = await renderProgramNote(build(false), 0, 100, options);
+  const reversed = await renderProgramNote(build(true), 0, 100, options);
+  return {
+    forward: { first: forward.firstHalfRms, second: forward.secondHalfRms },
+    reversed: { first: reversed.firstHalfRms, second: reversed.secondHalfRms },
+  };
+}
+
+/**
+ * §5.7.9 `warp` proof (issue #84): the same +12-semitone pad with warp off and on. Off,
+ * detune is the playback rate and the sample lasts half as long; on, the granular source
+ * shifts the pitch and leaves the length alone.
+ */
+async function warpDecouplesPitch(): Promise<{
+  plain: { frequency: number; seconds: number };
+  warped: { frequency: number; seconds: number };
+}> {
+  const build = (warp: boolean) => {
+    const program = createDefaultDrumProgram('Warp probe');
+    const pad = { ...createDefaultPad(0), warp };
+    pad.layers = [layer({ sampleId: 'offline', tuneSemitones: 12 })];
+    program.pads = [pad];
+    return program;
+  };
+  const plain = await renderProgramNote(build(false), 0, 100, { baseFrequency: 300, seconds: 0.8 });
+  const warped = await renderProgramNote(build(true), 0, 100, { baseFrequency: 300, seconds: 0.8 });
+  return {
+    plain: { frequency: plain.frequency, seconds: plain.soundingSeconds },
+    warped: { frequency: warped.frequency, seconds: warped.soundingSeconds },
+  };
+}
+
+/** §6 `LfoConfig.sync` proof (issue #107): the same LFO free, and synced at two tempos. */
+async function syncedLfoRates(): Promise<{ free: number; atSlowTempo: number; atFastTempo: number }> {
+  const free = await renderLfoRateOffline('free', 120);
+  const atSlowTempo = await renderLfoRateOffline('1/4', 60);
+  const atFastTempo = await renderLfoRateOffline('1/4', 240);
+  return {
+    free: free.measuredHz,
+    atSlowTempo: atSlowTempo.measuredHz,
+    atFastTempo: atFastTempo.measuredHz,
+  };
+}
+
+/** §6 `LfoConfig.phaseOffset` proof (issue #107): a quarter-turn sine starts at its peak. */
+async function lfoPhaseStart(): Promise<{ unshifted: number; quarterTurn: number }> {
+  const unshifted = await renderLfoPhaseOffline(0);
+  const quarterTurn = await renderLfoPhaseOffline(0.25);
+  return { unshifted: unshifted.firstSample, quarterTurn: quarterTurn.firstSample };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -432,6 +530,11 @@ export function installAudioProbe(engine: AudioEngine): void {
     recordThenPlayback: () => recordThenPlayback(engine),
     velocityLayerPitches,
     keygroupPitches,
+    reversedLayerHalves,
+    warpDecouplesPitch,
+    syncedLfoRates,
+    lfoPhaseStart,
+    delayEcho: (options) => renderDelayEchoOffline(options),
     packRoundTrip,
     samplePipelineProof: () => samplePipelineProof(engine),
     factoryInstallProof,

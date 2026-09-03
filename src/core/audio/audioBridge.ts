@@ -4,10 +4,11 @@
  * matching graph channel's params (spec §4.3 dezipper); mute/solo are evaluated as
  * solo-in-place computed mutes across the whole mixer (spec §5.2, {@link
  * computeEffectiveMutes}). Inserts rebuild the channel's serial chain from slot state
- * (spec §5.7). The transport and mode hooks are deliberately inert here — those concerns
+ * (spec §5.7). Tempo reaches the graph because the §5.7 synced delay is a graph parameter;
+ * the remaining transport and mode hooks are deliberately inert here — those concerns
  * belong to the scheduler worker and `core/midi`, not the graph (see {@link SyncBridge}).
  */
-import { useMixerStore } from '@/store';
+import { useMixerStore, useTransportStore } from '@/store';
 import type { InsertSlotState } from '@/core/project/schemas';
 import type { SyncBridge } from '@/store/syncLayer';
 import { parseParamTarget } from './params/registry';
@@ -41,10 +42,13 @@ function applyInserts(
   channel: ChannelHandle,
   inserts: readonly InsertSlotState[],
 ): void {
+  // A freshly built insert starts at the tempo the transport is already at, so a synced
+  // delay (spec §5.7) is in time from its first repeat rather than from the next tempo edit.
+  const bpm = useTransportStore.getState().bpm;
   const handles = inserts
     .filter((slot) => slot.effectType !== null)
     .map((slot) => {
-      const handle = createInsert(context, slot.effectType!, slot.params);
+      const handle = createInsert(context, slot.effectType!, slot.params, bpm);
       handle.setEnabled(slot.enabled);
       return handle;
     });
@@ -81,7 +85,10 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
     // Inert by design — the graph is not the owner of any of these (spec §3.1):
     setTransportPlaying: () => {}, // the scheduler worker owns transport (spec §7.1.3)
     setTransportRecording: () => {},
-    setBpm: () => {}, // no synced-delay tempo map to feed yet — see issue #70 (spec §5.7)
+    // spec §5.7: the delay's synced division follows the transport tempo. This is the one
+    // transport value the graph does own a copy of, because a `DelayNode`'s time is a graph
+    // parameter, not a scheduler one.
+    setBpm: (bpm) => graph.setTempo(bpm, context.currentTime),
     onActiveProgramChanged: () => {}, // `syncLayer/padStrips` populates pad strips (spec §4.2)
     onQLinkModeChanged: () => {}, // `core/midi/qlinkRuntime` owns Q-Link mode (spec §10.3)
 

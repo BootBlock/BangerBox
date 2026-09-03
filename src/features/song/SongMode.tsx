@@ -2,6 +2,9 @@
  * Song mode — spec §8.5.12: an ordered playlist of sequences with per-entry repeat counts,
  * add/remove/reorder, a song duration readout, and the "Bounce song" action (spec §9.5).
  *
+ * The loop-song toggle (spec §8.5.12) binds `useTransportStore.songLoopEnabled`, which the
+ * scheduler reads to choose between §7.9's two ends of song: stop, or wrap to tick 0.
+ *
  * Entries live in `useSequenceStore.songEntries` (spec §4.2) and every edit goes through
  * its actions, so reordering is undoable and autosaved like any other structural change
  * (spec §4.5). Duration is computed from each entry's sequence length and tempo using the
@@ -11,7 +14,7 @@ import { useState } from 'react';
 import { useSequenceStore, useTransportStore, useUIStore } from '@/store';
 import { bounceSong } from '@/core/audio/bounceService';
 import { sampleEditContext } from '../sample-edit/sampleContext';
-import { Button, EmptyState, SegmentControl, ValueReadout } from '@/ui/primitives';
+import { Button, EmptyState, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { IconAdd, IconChevronDown, IconChevronUp, IconRemove } from '@/ui/icons';
 
@@ -36,6 +39,7 @@ export function SongMode() {
   const sequences = useSequenceStore((s) => s.sequences);
   const songEntries = useSequenceStore((s) => s.songEntries);
   const playbackMode = useTransportStore((s) => s.playbackMode);
+  const songLoopEnabled = useTransportStore((s) => s.songLoopEnabled);
   const projectBpm = useTransportStore((s) => s.bpm);
   const [bouncing, setBouncing] = useState(false);
 
@@ -126,12 +130,31 @@ export function SongMode() {
           </div>
         }
       >
-        <ValueReadout
-          label="Song duration"
-          value={formatDuration(totalSeconds)}
-          showLabel
-          data-testid="song-duration"
-        />
+        <div className="flex flex-wrap items-center gap-4">
+          <ValueReadout
+            label="Song duration"
+            value={formatDuration(totalSeconds)}
+            showLabel
+            data-testid="song-duration"
+          />
+          {/*
+           * spec §8.5.12: the loop-song toggle lives here rather than in the §8.1 transport
+           * bar, which is persistent across all 12 modes and must not carry a song-only
+           * control. Off by default, so a song stops at its end (spec §7.9).
+           */}
+          <Toggle
+            label="Loop song"
+            pressed={songLoopEnabled}
+            size="sm"
+            onChange={(enabled) => useTransportStore.getState().setSongLoopEnabled(enabled)}
+            data-testid="song-loop"
+          />
+          <span className="text-xs text-bb-muted">
+            {songLoopEnabled
+              ? 'The song wraps to the start when it reaches the end.'
+              : 'The song stops when it reaches the end.'}
+          </span>
+        </div>
       </Panel>
 
       <Panel title="Playlist" scroll className="flex-1">

@@ -27,7 +27,7 @@ import type { SliceRegion } from '@/core/audio/chop';
 import type { PeakPyramid } from '@/core/audio/peakPyramid';
 import { getPeakPyramid } from '@/core/audio/peakPyramidCache';
 import { importAudioFile } from '@/core/audio/sampleImport';
-import { extractAndBakeGroove } from '@/core/audio/grooveService';
+import { extractAndBakeGroove, extractAndSaveGroove } from '@/core/audio/grooveService';
 import { GLOBAL_LIBRARY_ROOT, projectSamplesRoot } from '@/core/storage/opfs';
 import {
   BROWSER_INITIAL_PATH,
@@ -456,6 +456,21 @@ export function SampleEditPanel() {
                     ))}
                   </select>
                 </label>
+                {/* §7.5 has two ways to spend a groove and the difference matters, so both
+                    are offered: saving makes a template the Grid applies at schedule time
+                    and can take off again, while baking rewrites the events for good. */}
+                <Button
+                  size="sm"
+                  disabled={toolsBlocked}
+                  label="Groove → save template"
+                  title="Extract a groove and keep it, to apply to a track from the Grid."
+                  data-testid="sample-groove-save"
+                  onClick={() =>
+                    void run(`Groove template from ${selected.name}`, () =>
+                      extractAndSaveGroove(selected, useTransportStore.getState().bpm),
+                    )
+                  }
+                />
                 <Button
                   size="sm"
                   disabled={toolsBlocked || grooveTarget === undefined}

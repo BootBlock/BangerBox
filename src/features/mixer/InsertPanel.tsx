@@ -8,12 +8,16 @@
  *
  * Parameter ranges come from the effect registry (spec §5.7 `EFFECT_PARAM_RANGES`) rather
  * than being restated here, so a knob can never offer a value the store would clamp away.
- * Slot changes go through `useMixerStore`, making them undoable and autosaved (spec §4.5).
+ * A parameter the registry gives named choices for (`EFFECT_PARAM_CHOICES` — the filter's
+ * type, the saturator's curve, the delay's synced division) is rendered as a select instead:
+ * those are index-encoded integers, and a knob reading "7" for a dotted eighth is a control
+ * no one can use. Slot changes go through `useMixerStore`, making them undoable and
+ * autosaved (spec §4.5).
  */
 import { useMemo } from 'react';
 import { useMixerStore } from '@/store';
 import { useQLinkFocus } from '@/ui/useQLinkFocus';
-import { EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
+import { EFFECT_PARAM_CHOICES, EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
 import { insertParamPath } from '@/core/audio/params/registry';
 import type { EffectType } from '@/core/project/schemas';
 import { Button, EmptyState, FieldLabel, Knob, Toggle } from '@/ui/primitives';
@@ -181,21 +185,46 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                 </div>
 
                 {effectType && (
-                  <div className="mt-2 flex flex-wrap gap-3 border-t border-bb-line pt-2">
-                    {Object.entries(ranges).map(([param, range]) => (
-                      <Knob
-                        key={param}
-                        label={param}
-                        value={slot.params[param] ?? range[0]}
-                        range={range}
-                        size="sm"
-                        // Frequency-domain params read naturally on a log taper (spec §5.7).
-                        curve={param.toLowerCase().includes('freq') || param === 'cutoff' ? 'log' : 'linear'}
-                        onTransient={(value) => setParam(index, param, value, false)}
-                        onCommit={(value) => setParam(index, param, value, true)}
-                        data-testid={`insert-param-${index}-${param}`}
-                      />
-                    ))}
+                  <div className="mt-2 flex flex-wrap items-end gap-3 border-t border-bb-line pt-2">
+                    {Object.entries(ranges).map(([param, range]) => {
+                      const choices = EFFECT_PARAM_CHOICES[effectType]?.[param];
+                      if (choices) {
+                        return (
+                          <FieldLabel key={param}>
+                            {param}
+                            <select
+                              aria-label={`${EFFECT_LABELS[effectType]} ${index + 1} ${param}`}
+                              value={String(Math.round(slot.params[param] ?? 0))}
+                              onChange={(event) => setParam(index, param, Number(event.target.value), true)}
+                              data-testid={`insert-param-${index}-${param}`}
+                              className="rounded-bb-sm border border-bb-line bg-bb-base px-2 py-1 text-xs font-normal text-bb-text normal-case"
+                            >
+                              {choices.map((choice, choiceIndex) => (
+                                <option key={choice} value={choiceIndex}>
+                                  {choice}
+                                </option>
+                              ))}
+                            </select>
+                          </FieldLabel>
+                        );
+                      }
+                      return (
+                        <Knob
+                          key={param}
+                          label={param}
+                          value={slot.params[param] ?? range[0]}
+                          range={range}
+                          size="sm"
+                          // Frequency-domain params read naturally on a log taper (spec §5.7).
+                          curve={
+                            param.toLowerCase().includes('freq') || param === 'cutoff' ? 'log' : 'linear'
+                          }
+                          onTransient={(value) => setParam(index, param, value, false)}
+                          onCommit={(value) => setParam(index, param, value, true)}
+                          data-testid={`insert-param-${index}-${param}`}
+                        />
+                      );
+                    })}
                   </div>
                 )}
               </li>

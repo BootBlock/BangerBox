@@ -5,7 +5,7 @@
  * dependency-free (no DOM/audio types) so it is trivially unit-testable (spec §2.5, §7.1.5).
  */
 import { PPQN } from '@/core/constants';
-import type { TimeSignature } from '@/core/project/schemas';
+import type { NoteDivision, TimeSignature } from '@/core/project/schemas';
 
 /** Ticks in one whole note — the denominator scale reference (spec §7.2). */
 const TICKS_PER_WHOLE_NOTE = PPQN * 4;
@@ -38,6 +38,27 @@ export function ticksPerBar(timeSig: TimeSignature): number {
 /** Ticks spanning `bars` complete bars of the given time signature (spec §7.2). */
 export function barsToTicks(bars: number, timeSig: TimeSignature): number {
   return bars * ticksPerBar(timeSig);
+}
+
+/**
+ * Ticks spanned by one §6 note division — the shared vocabulary behind the synced LFO
+ * (spec §6 `LfoConfig.sync`) and the synced delay (spec §5.7). A dotted division is half
+ * again as long as the straight one; a triplet fits three in the space of two, exactly as
+ * {@link noteRepeatStepTicks} treats §7.3's own divisions.
+ */
+function noteDivisionTicks(division: NoteDivision): number {
+  const dotted = division.endsWith('.');
+  const triplet = division.endsWith('T');
+  const denominator = Number(division.slice(2, division.length - (dotted || triplet ? 1 : 0)));
+  const straight = TICKS_PER_WHOLE_NOTE / denominator;
+  if (dotted) return straight * 1.5;
+  if (triplet) return (straight * 2) / 3;
+  return straight;
+}
+
+/** Seconds spanned by one §6 note division at `bpm` (spec §7.2). */
+export function noteDivisionSeconds(division: NoteDivision, bpm: number): number {
+  return ticksToSeconds(noteDivisionTicks(division), bpm);
 }
 
 /** A musical position decomposed for the accessible readout (spec §4.2). */

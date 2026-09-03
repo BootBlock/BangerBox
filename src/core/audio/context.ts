@@ -10,6 +10,7 @@
 import meterTapWorkletUrl from './worklets/meterTap.worklet.ts?worker&url';
 import dspEffectWorkletUrl from './worklets/dspEffect.worklet.ts?worker&url';
 import recorderWorkletUrl from './worklets/recorder.worklet.ts?worker&url';
+import granularSourceWorkletUrl from './worklets/granularSource.worklet.ts?worker&url';
 import { loadKernelModules } from '@/core/dsp/kernelModules';
 import { installCancelAndHoldPolyfill } from './params/cancelAndHold';
 
@@ -27,7 +28,12 @@ export async function resumeAudioContext(context: AudioContext): Promise<void> {
 }
 
 /** Every AudioWorklet processor module the engine needs (loaded during the gate). */
-const WORKLET_MODULE_URLS: readonly string[] = [meterTapWorkletUrl, dspEffectWorkletUrl, recorderWorkletUrl];
+const WORKLET_MODULE_URLS: readonly string[] = [
+  meterTapWorkletUrl,
+  dspEffectWorkletUrl,
+  recorderWorkletUrl,
+  granularSourceWorkletUrl,
+];
 
 /**
  * Load all worklet processor modules AND compile the WASM kernel modules the DSP-effect
@@ -48,5 +54,16 @@ export async function loadAudioWorklets(context: BaseAudioContext): Promise<void
  */
 export async function prepareWorkletEffects(context: BaseAudioContext): Promise<void> {
   await context.audioWorklet.addModule(dspEffectWorkletUrl);
+  await loadKernelModules();
+}
+
+/**
+ * Prepare a (typically offline) context for the §5.7.9 warp source: register the
+ * granular-source processor and compile the kernel modules (spec §5.6.2). The §9.5 bounce
+ * calls this, because it renders through the same VoicePool the live engine uses and a
+ * context without the processor would silently fall back to coupled repitch.
+ */
+export async function prepareVoiceWorklets(context: BaseAudioContext): Promise<void> {
+  await context.audioWorklet.addModule(granularSourceWorkletUrl);
   await loadKernelModules();
 }

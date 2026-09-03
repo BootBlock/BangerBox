@@ -23,4 +23,6 @@ export interface InsertHandle extends AudioNodeHandle {
   readonly latencySamples: number;
   setEnabled(enabled: boolean): void;
   setParam(name: string, value: number, when: number): void;
+  /** The transport tempo changed — retunes any tempo-synced parameter (spec §5.7, §7.2). */
+  setTempo(bpm: number, when: number): void;
 }

@@ -29,6 +29,8 @@ export interface SchedulerClientCallbacks {
   onErased: (trackId: string, eventIds: string[]) => void;
   onLoopWrapped?: (tick: number) => void;
   onSongAdvanced?: (entryIndex: number) => void;
+  /** The song reached `songTotalTicks` with looping off — stop the transport (spec §7.9). */
+  onSongEnded?: () => void;
 }
 
 export interface SchedulerClientOptions extends SchedulerClientCallbacks {
@@ -106,6 +108,10 @@ export class SchedulerClient {
   setSongSequence(orderedSequenceIds: readonly string[]): void {
     this.#send({ kind: 'songSequence', orderedSequenceIds });
   }
+  /** Wrap at the end of the song instead of stopping there (spec §7.9 `songLoopEnabled`). */
+  setSongLoop(enabled: boolean): void {
+    this.#send({ kind: 'songLoop', enabled });
+  }
   setSequenceMeta(
     sequences: Readonly<Record<string, SchedulerSequenceMeta>>,
     projectBpm: number,
@@ -178,6 +184,9 @@ export class SchedulerClient {
         return;
       case 'songAdvanced':
         this.#options.onSongAdvanced?.(response.entryIndex);
+        return;
+      case 'songEnded':
+        this.#options.onSongEnded?.();
         return;
     }
   };

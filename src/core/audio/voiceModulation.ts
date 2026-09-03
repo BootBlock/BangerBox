@@ -7,6 +7,7 @@
  * never carry magic numbers and a later tuning pass changes one place.
  */
 import type { LfoConfig, ModRoute, PadFilter } from '@/core/project/schemas';
+import { noteDivisionSeconds } from '@/core/sequencer/ppqn';
 import { evaluateModMatrix, type ModSourceValues } from './modMatrix';
 
 /** Full-scale pitch modulation in cents at mod amount ±1 (±1 octave) — spec §6. */
@@ -45,6 +46,77 @@ export function lfoOscillator(shape: LfoConfig['shape']): LfoOscillator {
     case 'drift':
       return { type: 'sine', sign: 1 }; // approximation (spec §6; worklet upgrade later)
   }
+}
+
+/**
+ * The LFO's effective rate in Hz (spec §6 `LfoConfig.sync`): its free-running `rate` when
+ * `sync` is `'free'`, else one cycle per note division at the transport tempo.
+ *
+ * The rate is resolved once, at note-on, from the tempo then in force. A live voice keeps
+ * the rate it started with: re-rating a running `OscillatorNode` cannot preserve its phase,
+ * and the §5.4 declick integrates the pitch-LFO rate curve to find where the buffer runs
+ * out, so a mid-note re-rate would move a fade that is already scheduled. §10.5 keeps tempo
+ * automation out of v1, so the only way to reach that case is editing the BPM field with a
+ * note still sounding — and every note struck after the edit is in time.
+ */
+export function lfoRateHz(config: LfoConfig, bpm: number): number {
+  if (config.sync === 'free') return config.rate;
+  const seconds = noteDivisionSeconds(config.sync, bpm);
+  return seconds > 0 ? 1 / seconds : config.rate;
+}
+
+/** Harmonics used to build a phase-shifted LFO wave — well past audibility for an LFO. */
+const LFO_HARMONICS = 64;
+
+/**
+ * Sine-series coefficients of the ideal §6 LFO shapes, as Web Audio renders its own
+ * oscillator types from phase zero: a sine starts at zero rising, a sawtooth ramps 0 → +1,
+ * wraps to −1 and returns to 0, a triangle peaks at a quarter period, and a square holds
+ * +1 for its first half. These are the same shapes {@link detuneSchedule} models, so the
+ * declick integrator and the rendered oscillator cannot disagree.
+ *
+ * Every shape is odd about phase zero, so all the energy is in the sine terms.
+ */
+function shapeSineSeries(type: OscillatorType, harmonic: number): number {
+  switch (type) {
+    case 'square':
+      return harmonic % 2 === 1 ? 4 / (Math.PI * harmonic) : 0;
+    case 'sawtooth':
+      return (2 * (harmonic % 2 === 1 ? 1 : -1)) / (Math.PI * harmonic);
+    case 'triangle': {
+      if (harmonic % 2 === 0) return 0;
+      const alternating = ((harmonic - 1) / 2) % 2 === 0 ? 1 : -1;
+      return (alternating * 8) / (Math.PI * Math.PI * harmonic * harmonic);
+    }
+    default:
+      return harmonic === 1 ? 1 : 0; // sine
+  }
+}
+
+/**
+ * `PeriodicWave` coefficients for an LFO shape advanced by `phaseOffset` turns (spec §6
+ * `LfoConfig.phaseOffset`). An `OscillatorNode` always starts at phase zero and has no
+ * phase parameter, so the offset is baked into the waveform instead: shifting a sine term
+ * `b·sin(2πkt)` by `φ` turns gives `b·sin(2πk(t+φ))`, which is `b·sin(2πkφ)` of cosine plus
+ * `b·cos(2πkφ)` of sine — a rotation of each harmonic by `k·φ`.
+ *
+ * Pure, so the rotation is unit-testable without a Web Audio context (spec §11.1); the
+ * caller hands the arrays to `createPeriodicWave`.
+ */
+export function lfoWaveCoefficients(
+  type: OscillatorType,
+  phaseOffset: number,
+): { real: Float32Array; imag: Float32Array } {
+  const real = new Float32Array(LFO_HARMONICS + 1);
+  const imag = new Float32Array(LFO_HARMONICS + 1);
+  const turns = 2 * Math.PI * phaseOffset;
+  for (let k = 1; k <= LFO_HARMONICS; k++) {
+    const amplitude = shapeSineSeries(type, k);
+    if (amplitude === 0) continue;
+    real[k] = amplitude * Math.sin(turns * k);
+    imag[k] = amplitude * Math.cos(turns * k);
+  }
+  return { real, imag };
 }
 
 /** Map the §6 pad filter type to a native `BiquadFilterType`, or null when off (spec §6). */

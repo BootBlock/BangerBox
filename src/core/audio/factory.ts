@@ -39,6 +39,8 @@ export interface ChannelHandle {
   setInserts: (inserts: readonly InsertHandle[]) => void;
   /** Set a live insert slot parameter (spec §5.7) — used by automation dispatch (§7.8). */
   setInsertParam: (slot: number, name: string, value: number, when: number) => void;
+  /** Retune every insert's tempo-synced parameter after a tempo change (spec §5.7, §7.2). */
+  setInsertTempo: (bpm: number, when: number) => void;
   /** Aggregate reported insert latency for the PDC readout (spec §5.7.3). */
   insertLatencySamples: () => number;
 
@@ -124,6 +126,9 @@ function createChannelStrip(context: BaseAudioContext, { id, sendCount }: StripO
     },
     setInserts,
     setInsertParam: (slot, name, value, when) => inserts[slot]?.setParam(name, value, when),
+    setInsertTempo: (bpm, when) => {
+      for (const handle of inserts) handle.setTempo(bpm, when);
+    },
     insertLatencySamples: () => inserts.reduce((total, h) => total + h.latencySamples, 0),
 
     destroy: () => {

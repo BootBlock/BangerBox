@@ -29,6 +29,7 @@ import {
   buildSongMap,
   songSecondsToTick,
   songTickToSeconds,
+  songTotalSeconds,
   songWindowSlices,
   type SongSegment,
 } from './songMap';
@@ -43,6 +44,8 @@ export interface SchedulerTickResult {
   readonly erased: { trackId: string; eventIds: string[] }[];
   readonly loopWrapped: number[];
   readonly songAdvanced: number[];
+  /** The song reached its end with looping off, so the transport stops (spec §7.9). */
+  songEnded: boolean;
 }
 
 interface TrackEvents {
@@ -72,6 +75,8 @@ export class SchedulerCore {
   private countInBars: 0 | 1 | 2 = 0;
   private playbackMode: 'sequence' | 'song' = 'sequence';
   private activeSequenceId: string | null = null;
+  /** spec §7.9: wrap at the end of the song instead of stopping there. Off by default. */
+  private songLoopEnabled = false;
 
   private readonly tracks = new Map<string, TrackEvents>();
   /** Per-track groove templates, applied at schedule time like swing (spec §7.5). */
@@ -104,10 +109,17 @@ export class SchedulerCore {
   private playStartContext = 0; // gesture time (count-in begins here)
   private contentStartContext = 0; // content begins after count-in
   private originTick = 0; // linear/song tick at contentStartContext
-  private nextScheduleTick = 0; // next linear/song tick to schedule from
+  private nextScheduleTick = 0; // next linear tick to schedule from (sequence mode)
+  /**
+   * Song mode's schedule cursor, in song seconds measured from song tick 0 and NOT wrapped
+   * at the end (spec §7.9): pass `k` occupies `[k × songTotalSeconds, (k+1) × …)`. Keeping
+   * it monotonic is what lets a lookahead window straddle a wrap without double-scheduling.
+   */
+  private nextSongSeconds = 0;
   private nextClickIndex = 0;
   private lastLoopPass = 0;
   private lastEntryIndex = -1;
+  private lastSongPass = 0;
   private pendingStart = false;
   private stopRequested = false;
 
@@ -190,6 +202,11 @@ export class SchedulerCore {
     }
   }
 
+  /** spec §7.9: `songLoopEnabled` — wrap at the end of the song rather than stopping. */
+  setSongLoop(enabled: boolean): void {
+    this.songLoopEnabled = enabled;
+  }
+
   setSongSequence(orderedSequenceIds: readonly string[]): void {
     this.orderedSequenceIds = [...orderedSequenceIds];
     this.rebuildSongMap();
@@ -260,6 +277,7 @@ export class SchedulerCore {
       erased: [],
       loopWrapped: [],
       songAdvanced: [],
+      songEnded: false,
     };
 
     if (this.stopRequested) {
@@ -276,9 +294,12 @@ export class SchedulerCore {
     }
 
     const horizon = now + LOOKAHEAD_MS / 1000;
-    this.scheduleClicks(horizon, result);
-    if (this.playbackMode === 'song') this.scheduleSong(horizon, result);
+    // Content first, then the click: the end of a song stops playback (spec §7.9), and a
+    // click loop that ran before it would have already filled the lookahead window with a
+    // metronome the user hears after the transport has stopped.
+    if (this.playbackMode === 'song') this.scheduleSong(now, horizon, result);
     else this.scheduleSequence(horizon, result);
+    if (this.playing) this.scheduleClicks(horizon, result);
     return result;
   }
 
@@ -312,9 +333,11 @@ export class SchedulerCore {
     const countInSeconds = this.recording && this.countInBars > 0 ? this.countInBars * this.barSeconds() : 0;
     this.contentStartContext = now + countInSeconds;
     this.nextScheduleTick = this.originTick;
+    this.nextSongSeconds = songTickToSeconds(this.songMap, this.originTick);
     this.nextClickIndex = 0;
     this.lastLoopPass = loopPassAt(this.originTick, this.loop);
     this.lastEntryIndex = -1;
+    this.lastSongPass = 0;
   }
 
   private resetPlayback(): void {
@@ -333,8 +356,12 @@ export class SchedulerCore {
     const elapsed = when - this.contentStartContext;
     if (elapsed <= 0) return this.originTick;
     if (this.playbackMode === 'song') {
-      const base = songTickToSeconds(this.songMap, this.originTick);
-      return songSecondsToTick(this.songMap, base + elapsed);
+      // Absolute (unwrapped) song seconds, folded back into one pass when the song loops
+      // (spec §7.9) so the playhead restarts at 0 rather than clamping at the end.
+      const absolute = songTickToSeconds(this.songMap, this.originTick) + elapsed;
+      const total = songTotalSeconds(this.songMap);
+      const within = this.songLoopEnabled && total > 0 ? absolute % total : absolute;
+      return songSecondsToTick(this.songMap, within);
     }
     return sequenceTickAt(this.originTick + secondsToTicks(elapsed, this.bpm), this.loop);
   }
@@ -388,6 +415,9 @@ export class SchedulerCore {
       this.lastLoopPass = newPass;
     }
     this.nextScheduleTick = to;
+    // The counterpart of the song cursor's own catch-up: a switch INTO song mode resumes at
+    // the elapsed position instead of replaying the song from its start (spec §8.5.12).
+    this.nextSongSeconds = Math.max(0, horizon - this.contentStartContext);
   }
 
   /** Linear tick reached at context time `when` (sequence mode). */
@@ -434,6 +464,7 @@ export class SchedulerCore {
       note: event.note,
       velocity: shaped.velocity,
       durationSec: ticksToSeconds(event.durationTicks, this.bpm),
+      bpm: this.bpm,
     });
   }
 
@@ -454,6 +485,7 @@ export class SchedulerCore {
         note: hit.note,
         velocity: hit.velocity,
         durationSec: 0,
+        bpm: this.bpm,
       });
       if (this.recording) this.captureAt(owner.trackId, hit.note, hit.velocity, seqTick, seqTick + 1);
     }
@@ -482,6 +514,7 @@ export class SchedulerCore {
           note: hit.note,
           velocity: hit.velocity,
           durationSec: ticksToSeconds(hit.durationTicks, this.bpm),
+          bpm: this.bpm,
         });
         if (this.recording) {
           this.captureAt(trackId, hit.note, hit.velocity, seqTick, seqTick + hit.durationTicks);
@@ -555,12 +588,94 @@ export class SchedulerCore {
   }
 
   // --- song mode (spec §7.9) ---
-  private scheduleSong(horizon: number, result: SchedulerTickResult): void {
-    if (this.songMap.length === 0) return;
-    const from = this.nextScheduleTick;
-    const base = songTickToSeconds(this.songMap, this.originTick);
-    const to = songSecondsToTick(this.songMap, base + (horizon - this.contentStartContext));
+
+  /**
+   * Schedule the song's lookahead window and enforce §7.9's end of song.
+   *
+   * The cursor is kept in ABSOLUTE song seconds ({@link nextSongSeconds}) rather than in
+   * song ticks, because a looping song has no monotonic tick: pass 2's tick 0 is the same
+   * number as pass 1's. Absolute seconds are monotonic, so one window can straddle a wrap
+   * and each pass still schedules its events exactly once (spec §7.1.5).
+   */
+  private scheduleSong(now: number, horizon: number, result: SchedulerTickResult): void {
+    const total = songTotalSeconds(this.songMap);
+    // A song whose entries all contribute nothing has `songTotalTicks === 0`, and §7.9
+    // requires it to stop rather than loop endlessly over a zero-length map — so the
+    // zero-length case stops whatever `songLoopEnabled` says.
+    const zeroLength = this.songMap.length === 0 || total <= 0;
+    const origin = zeroLength ? 0 : songTickToSeconds(this.songMap, this.originTick);
+    // The end is reached when the PLAYHEAD arrives, not when the lookahead does: stopping
+    // at schedule time would cut the last `LOOKAHEAD_MS` of the song off the end of it.
+    //
+    // It is the end of the pass IN PROGRESS, not of the first one: turning the loop off
+    // part-way through pass two must end that pass, not stop the transport the instant the
+    // toggle moves because the song is already past where pass one finished.
+    if ((zeroLength || !this.songLoopEnabled) && now >= this.currentPassEnd(total, origin)) {
+      this.endSong(now, result);
+      return;
+    }
+    if (zeroLength) return;
+
+    const fromAbs = this.nextSongSeconds;
+    let toAbs = origin + (horizon - this.contentStartContext);
+    if (!this.songLoopEnabled && toAbs > total) toAbs = total;
+    if (toAbs <= fromAbs) return;
+
+    let cursor = fromAbs;
+    let guard = 0;
+    while (cursor < toAbs && guard++ < WINDOW_GUARD) {
+      const pass = Math.floor(cursor / total);
+      const passStart = pass * total;
+      const crosses = toAbs >= passStart + total;
+      this.emitSongPass(result, pass, cursor - passStart, crosses ? total : toAbs - passStart, origin, total);
+      cursor = crosses ? passStart + total : toAbs;
+    }
+    this.nextSongSeconds = toAbs;
+    // Keep the sequence-mode bookkeeping level with the horizon. The playback mode is
+    // switchable while the transport rolls (spec §8.5.12), and a cursor left behind at the
+    // song's start would make the first sequence-mode wake schedule every tick since then in
+    // one burst — with a loop wrap and a capture flush for every pass it swept through.
+    this.nextScheduleTick = this.linearTickAt(horizon);
+    this.lastLoopPass = loopPassAt(this.nextScheduleTick, this.loop);
+  }
+
+  /**
+   * Wall-clock time at which the pass in progress ends (spec §7.9).
+   *
+   * The pass is the one the scheduler has last emitted for, not the one `now` falls in.
+   * With looping off from the start that is pass 0, so the song ends at its own end. With
+   * looping on it advances each wrap, so turning the toggle off part-way through pass two
+   * ends THAT pass rather than stopping the instant the toggle moves. Near a wrap the
+   * lookahead has already scheduled the next pass, and the answer defers to it — those
+   * notes are going to be heard, so cutting them off would be worse than one more pass.
+   */
+  private currentPassEnd(total: number, origin: number): number {
+    if (total <= 0) return this.contentStartContext;
+    return this.contentStartContext + ((this.lastSongPass + 1) * total - origin);
+  }
+
+  /**
+   * Emit one pass's slice of the window, given in song seconds within that pass. Each pass
+   * re-announces its entries (spec §7.9: a wrap "resets its last-entry cursor so
+   * `songAdvanced` fires again for the first entry").
+   */
+  private emitSongPass(
+    result: SchedulerTickResult,
+    pass: number,
+    fromSeconds: number,
+    toSeconds: number,
+    origin: number,
+    total: number,
+  ): void {
+    const from = songSecondsToTick(this.songMap, fromSeconds);
+    const to = songSecondsToTick(this.songMap, toSeconds);
     if (to <= from) return;
+    if (pass !== this.lastSongPass) {
+      this.lastSongPass = pass;
+      this.lastEntryIndex = -1;
+    }
+    // Wall-clock time of this pass's song tick 0.
+    const passOrigin = this.contentStartContext + pass * total - origin;
 
     for (const slice of songWindowSlices(this.songMap, from, to)) {
       const { segment } = slice;
@@ -579,8 +694,8 @@ export class SchedulerCore {
           // cannot be nudged across it and re-timed by the next segment's tempo (§7.9).
           const shaped = this.shapeNote(trackId, event.tickStart, event.velocity);
           const when =
-            this.contentStartContext +
-            (songTickToSeconds(this.songMap, songTick) - base) +
+            passOrigin +
+            songTickToSeconds(this.songMap, songTick) +
             ticksToSeconds(shaped.offsetTicks, segment.bpm);
           result.batch.push({
             kind: 'noteOn',
@@ -590,11 +705,28 @@ export class SchedulerCore {
             note: event.note,
             velocity: shaped.velocity,
             durationSec: ticksToSeconds(event.durationTicks, segment.bpm),
+            // The SEGMENT's tempo, not the transport's: a sequence with a tempo of its own
+            // plays at it (spec §7.9), and a §6 synced LFO has to follow the same one.
+            bpm: segment.bpm,
           });
         }
       }
     }
-    this.nextScheduleTick = to;
+  }
+
+  /**
+   * §7.9's stop path: the worker ceases scheduling and reports `songEnded`, having first
+   * closed any open notes and flushed the take. That ordering is specified, not incidental —
+   * it is the last chance to persist a recording the user is still making.
+   */
+  private endSong(now: number, result: SchedulerTickResult): void {
+    this.closeOpenNotes(now, result);
+    this.flushRecording(result);
+    this.resetPlayback();
+    // spec §7.9: "the playhead returns to tick 0". The next play re-sends its own start
+    // tick, so clearing it here cannot move where a later sequence-mode play begins.
+    this.startTick = 0;
+    result.songEnded = true;
   }
 
   private rebuildSongMap(): void {

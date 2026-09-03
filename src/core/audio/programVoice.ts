@@ -26,6 +26,7 @@ import type {
   VelocityLayer,
 } from '@/core/project/schemas';
 import type { VoiceTriggerSpec } from './voicePool';
+import { mirroredTrim } from './voiceBuffer';
 
 /** The pad-channel mixer sub-object shared by pads and keygroup programs (spec §6). */
 interface VoiceMixer {
@@ -196,24 +197,39 @@ export function resolveVoice(program: Program, note: number, velocity: number): 
 /** Runtime particulars a {@link ResolvedVoice} needs to become a voice-pool trigger (spec §6). */
 export interface VoiceTriggerParams {
   readonly id: string;
+  /**
+   * The decoded sample, ALREADY reversed when `resolved.reverse` is set (spec §6). Web Audio
+   * has no reverse flag, so a reversed layer plays a reversed copy of its buffer and the trim
+   * is mirrored to match — see {@link mirroredTrim}. `voiceBuffer.ReversedBufferCache` is the
+   * one place that reversal happens, so both the live engine and the §9.5 bounce share it.
+   */
   readonly buffer: AudioBuffer;
   readonly destination: AudioNode;
   readonly when: number;
   readonly velocity: number;
   readonly programId: string;
+  /** Transport tempo a §6 tempo-synced LFO locks to (spec §7.2); omitted = project default. */
+  readonly bpm?: number;
 }
 
 /**
  * Map a resolved §6 voice + runtime particulars to a voice-pool trigger spec (spec §5.4).
  * The whole coupled repitch is carried in `tuneCents`; the layer trim and the §6 sound-design
- * surface (filter, envelopes, LFOs, mod matrix, polyphony, glide) are forwarded so the pool
- * builds the voice.
+ * surface (filter, envelopes, LFOs, mod matrix, polyphony, glide, warp) are forwarded so the
+ * pool builds the voice.
+ *
+ * A reversed layer arrives here as a reversed BUFFER plus its original trim, and the trim is
+ * mirrored into that buffer's own frame numbering. Reversing the whole sample and then
+ * applying the trim unchanged would play a different part of it entirely.
  * Shared by the engine dispatcher and the offline pitch renders so they never diverge.
  */
 export function resolvedVoiceToTrigger(
   resolved: ResolvedVoice,
   params: VoiceTriggerParams,
 ): VoiceTriggerSpec {
+  const trim = resolved.reverse
+    ? mirroredTrim(params.buffer.length, resolved.startFrame, resolved.endFrame)
+    : { startFrame: resolved.startFrame, endFrame: resolved.endFrame };
   return {
     id: params.id,
     buffer: params.buffer,
@@ -228,8 +244,9 @@ export function resolvedVoiceToTrigger(
     gainDb: resolved.gainDb,
     tuneSemitones: 0,
     tuneCents: resolved.detuneCents,
-    startFrame: resolved.startFrame,
-    endFrame: resolved.endFrame,
+    startFrame: trim.startFrame,
+    endFrame: trim.endFrame,
+    warp: resolved.warp,
     filter: resolved.filter,
     pitchEnv: resolved.envelopes.pitch,
     filterEnv: resolved.envelopes.filter,
@@ -238,5 +255,6 @@ export function resolvedVoiceToTrigger(
     modMatrix: resolved.modMatrix,
     programPolyphony: resolved.polyphony,
     glideMs: resolved.glideMs,
+    bpm: params.bpm,
   };
 }

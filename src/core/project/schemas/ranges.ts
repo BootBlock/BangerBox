@@ -16,6 +16,8 @@ export const SEND_LEVEL_RANGE: Range = [0, 1];
 
 // --- Transport (spec §4.2 TransportState) ----------------------------------------
 export const BPM_RANGE: Range = [20, 300];
+/** Project default tempo — the §9.3 `projects.bpm_default` column default. */
+export const DEFAULT_BPM = 120;
 /** Classic MPC swing, per cent (spec §7.4). */
 export const SWING_RANGE: Range = [50, 75];
 export const METRONOME_LEVEL_RANGE: Range = [0, 1];

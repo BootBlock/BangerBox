@@ -45,8 +45,14 @@ export interface DetuneOscillation {
   readonly rateHz: number;
   /** Signed peak excursion in cents — the mod gain feeding `source.detune`. */
   readonly amplitudeCents: number;
-  /** Context time the oscillator started, i.e. where its phase is zero. */
+  /** Context time the oscillator started, i.e. where its own phase is zero. */
   readonly since: number;
+  /**
+   * §6 `LfoConfig.phaseOffset` in turns, baked into the oscillator's waveform rather than
+   * into its start time, so the model advances the phase by the same amount the rendered
+   * wave is advanced by (see `lfoWaveCoefficients`).
+   */
+  readonly phase: number;
 }
 
 /**
@@ -209,9 +215,9 @@ function segmentBoundaries(schedule: DetuneSchedule, from: number, to: number): 
     .sort((a, b) => a - b);
 }
 
-/** Oscillator phase in [0, 1) at `time`. */
+/** Oscillator phase in [0, 1) at `time`, including the §6 phase offset. */
 function phaseOf(osc: DetuneOscillation, time: number): number {
-  const cycles = (time - osc.since) * osc.rateHz;
+  const cycles = (time - osc.since) * osc.rateHz + osc.phase;
   return cycles - Math.floor(cycles);
 }
 

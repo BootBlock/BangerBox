@@ -129,7 +129,16 @@ export async function hydrateStores(repositories: Repositories, projectId: strin
   useProjectStore.getState().applyProject(rowToProjectSettings(projectRow));
   useProgramStore.getState().setPrograms(programs);
   useProgramStore.getState().setActiveProgram(programRows[0]?.id ?? null);
-  useSequenceStore.getState().hydrate({ sequences, tracks, events, automation, songEntries });
+  useSequenceStore.getState().hydrate({
+    sequences,
+    tracks,
+    events,
+    automation,
+    songEntries,
+    // spec §7.5: the non-destructive groove map and the tracks it is applied to.
+    grooveTemplates: payload.grooveTemplates,
+    trackGrooveIds: payload.trackGrooveIds,
+  });
   useMixerStore.getState().setChannels(channels);
   useBrowserStore.getState().setSamples(sampleRows);
 
@@ -138,6 +147,8 @@ export async function hydrateStores(repositories: Repositories, projectId: strin
   transport.setActiveSequenceId(activeSeq?.id ?? null);
   transport.setBpm(activeSeq?.tempo ?? projectRow.bpm_default);
   if (activeSeq) transport.setSwing(activeSeq.swingAmount, activeSeq.swingDivision);
+  // spec §7.9: a project saved before this field existed loads as "stops at the end".
+  transport.setSongLoopEnabled(payload.songLoopEnabled ?? false);
 
   // A freshly loaded project starts with an empty undo timeline and a clean dot (spec §4.4).
   clearUndoHistory();

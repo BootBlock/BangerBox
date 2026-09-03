@@ -45,7 +45,7 @@ describe('detune schedule (spec §6)', () => {
 
   it('sums oscillations onto the base at the shape each oscillator actually renders', () => {
     const s = schedule({
-      oscillations: [{ wave: 'square', rateHz: 1, amplitudeCents: 100, since: 0 }],
+      oscillations: [{ wave: 'square', rateHz: 1, amplitudeCents: 100, since: 0, phase: 0 }],
     });
     expect(detuneAt(s, 0.25)).toBe(100); // first half of the cycle is +1
     expect(detuneAt(s, 0.75)).toBe(-100);
@@ -84,7 +84,7 @@ describe('region end time (spec §5.4 declick, issue #87)', () => {
 
   it('integrates a pitch-routed LFO, whose mean rate is not the base rate', () => {
     const s = schedule({
-      oscillations: [{ wave: 'sine', rateHz: 3, amplitudeCents: 700, since: 0 }],
+      oscillations: [{ wave: 'sine', rateHz: 3, amplitudeCents: 700, since: 0, phase: 0 }],
     });
     const cents = (t: number) => 700 * Math.sin(2 * Math.PI * 3 * t);
     const end = regionEndTime(s, 0, 1);
@@ -97,8 +97,8 @@ describe('region end time (spec §5.4 declick, issue #87)', () => {
   it('advances whole periods over a long region, matching a step-by-step solve', () => {
     const s = schedule({
       oscillations: [
-        { wave: 'sine', rateHz: 1, amplitudeCents: 600, since: 0 },
-        { wave: 'triangle', rateHz: 3, amplitudeCents: 300, since: 0 },
+        { wave: 'sine', rateHz: 1, amplitudeCents: 600, since: 0, phase: 0 },
+        { wave: 'triangle', rateHz: 3, amplitudeCents: 300, since: 0, phase: 0 },
       ],
     });
     const cents = (t: number) => detuneAt(s, t);
@@ -108,8 +108,8 @@ describe('region end time (spec §5.4 declick, issue #87)', () => {
   it('stays close even when two LFO rates share no small common period', () => {
     const s = schedule({
       oscillations: [
-        { wave: 'sine', rateHz: 1, amplitudeCents: 500, since: 0 },
-        { wave: 'sine', rateHz: 7.31, amplitudeCents: 500, since: 0 },
+        { wave: 'sine', rateHz: 1, amplitudeCents: 500, since: 0, phase: 0 },
+        { wave: 'sine', rateHz: 7.31, amplitudeCents: 500, since: 0, phase: 0 },
       ],
     });
     const cents = (t: number) => detuneAt(s, t);

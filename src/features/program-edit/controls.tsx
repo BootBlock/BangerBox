@@ -19,6 +19,7 @@ export function NumberField({
   step = 1,
   onChange,
   suffix,
+  disabled = false,
 }: {
   label: string;
   value: number;
@@ -27,6 +28,8 @@ export function NumberField({
   step?: number;
   onChange: (value: number) => void;
   suffix?: string;
+  /** Greys the field out where another control decides the value (spec §6 LFO sync). */
+  disabled?: boolean;
 }) {
   const id = useId();
   return (
@@ -38,11 +41,12 @@ export function NumberField({
       <input
         id={id}
         type="number"
-        className={FIELD_CLASS}
+        className={`${FIELD_CLASS}${disabled ? ' opacity-50' : ''}`}
         value={value}
         min={min}
         max={max}
         step={step}
+        disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
       />
     </label>
