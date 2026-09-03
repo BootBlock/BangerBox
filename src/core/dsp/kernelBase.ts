@@ -5,7 +5,62 @@
  * detach them, and `process()` allocates nothing — spec §5.5, §5.6.3). Concrete wrappers
  * (limiter, multiband, reverb, …) extend this and add their typed param setters, so the kernel
  * seam stays uniform and the implementation language remains swappable (§1.3 #5).
+ *
+ * A wrapper is the last TypeScript before linear memory, so it is where §5.7 ranges are
+ * enforced (issue #97). An out-of-range `f64` is not an error inside an AssemblyScript kernel
+ * — it is a coefficient, so a NaN release time becomes a NaN state variable and the kernel
+ * outputs NaN for the rest of its life, silencing every node downstream. The policy is
+ * therefore **clamp what is in range, refuse what is not a number, refuse the structure**:
+ * {@link kernelParam} coerces an out-of-range numeric parameter into its declared range but
+ * REFUSES a non-finite one — returning null so the setter skips the write and the kernel keeps
+ * what it had — while a bad block size, sample rate or band index throws, because there is no
+ * defensible value to substitute for one of those.
+ *
+ * A non-finite value is refused rather than floored because a range floor is not a neutral
+ * value: −60 dB is a compressor's HARDEST setting, 500 Hz collapses a crossover's mid band,
+ * and −6 dBFS is the limiter's tightest ceiling. Substituting one would silently apply an
+ * extreme instead of the value the caller failed to supply. Where a parameter genuinely has a
+ * neutral (a stretch rate of 1, a pitch shift of 0, a documented default), its own wrapper
+ * substitutes that instead.
  */
+
+/** A kernel parameter's inclusive bounds, mirroring the §5.7 table (see `kernelRanges.test.ts`). */
+export type KernelRange = readonly [min: number, max: number];
+
+/**
+ * Coerce a §5.7 parameter into its declared range before it crosses into linear memory, or
+ * return null when it is not a number the kernel can use at all (issue #97).
+ */
+export function kernelParam(value: number, [min, max]: KernelRange): number | null {
+  if (!Number.isFinite(value)) return null;
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
+/**
+ * The same coercion with an explicit neutral for a non-finite value — for the parameters that
+ * genuinely have one, where refusing the whole call would be worse than proceeding unmodified.
+ */
+export function kernelParamOr(value: number, range: KernelRange, neutral: number): number {
+  return kernelParam(value, range) ?? kernelParam(neutral, range) ?? range[0];
+}
+
+/** Reject a structural argument that has no sane substitute (issue #97). */
+export function assertPositiveInteger(name: string, value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer, got ${value}`);
+  }
+  return value;
+}
+
+/** Reject a sample rate that would make every kernel coefficient meaningless (issue #97). */
+export function assertSampleRate(sampleRate: number): number {
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    throw new Error(`kernel sampleRate must be finite and positive, got ${sampleRate}`);
+  }
+  return sampleRate;
+}
 
 /** The lifecycle exports every streaming kernel module shares (spec §5.6.1). */
 export interface StreamingKernelExports {
@@ -39,6 +94,8 @@ export abstract class StreamingKernel<TExports extends StreamingKernelExports> {
     sampleRate: number,
     maxBlock: number,
   ): { exports: TExports; handle: number; inPtr: number; outPtr: number } {
+    assertSampleRate(sampleRate);
+    assertPositiveInteger('kernel maxBlock', maxBlock);
     const instance = new WebAssembly.Instance(module, {});
     const exports = instance.exports as unknown as TExports;
     const handle = exports.create(sampleRate, maxBlock);

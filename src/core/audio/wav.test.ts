@@ -177,3 +177,87 @@ describe('decodeWav — malformed headers are rejected, never hung on', () => {
     expect(() => decodeWav(bytes)).toThrow(/no fmt chunk/);
   });
 });
+
+describe('decodeWav — a malformed fmt chunk is refused, not read past (spec §9.4, issue #66)', () => {
+  /** Build a RIFF/WAVE stream from raw chunks, so a fmt chunk can be deliberately wrong. */
+  function riff(chunks: { id: string; body: Uint8Array }[]): Uint8Array {
+    let size = 4; // 'WAVE'
+    for (const chunk of chunks) size += 8 + chunk.body.length + (chunk.body.length & 1);
+    const bytes = new Uint8Array(8 + size);
+    const view = new DataView(bytes.buffer);
+    const ascii4 = (offset: number, text: string): void => {
+      for (let i = 0; i < 4; i++) view.setUint8(offset + i, text.charCodeAt(i));
+    };
+    ascii4(0, 'RIFF');
+    view.setUint32(4, size, true);
+    ascii4(8, 'WAVE');
+    let cursor = 12;
+    for (const chunk of chunks) {
+      ascii4(cursor, chunk.id);
+      view.setUint32(cursor + 4, chunk.body.length, true);
+      bytes.set(chunk.body, cursor + 8);
+      cursor += 8 + chunk.body.length + (chunk.body.length & 1);
+    }
+    return bytes;
+  }
+
+  /** A canonical 16-byte PCM fmt body. */
+  function fmtBody(over: Partial<{ format: number; channels: number; rate: number; bits: number }> = {}) {
+    const { format = 1, channels = 1, rate = 48_000, bits = 16 } = over;
+    const body = new Uint8Array(16);
+    const view = new DataView(body.buffer);
+    const blockAlign = channels * (bits / 8);
+    view.setUint16(0, format, true);
+    view.setUint16(2, channels, true);
+    view.setUint32(4, rate, true);
+    view.setUint32(8, rate * blockAlign, true);
+    view.setUint16(12, blockAlign, true);
+    view.setUint16(14, bits, true);
+    return body;
+  }
+
+  const data = { id: 'data', body: new Uint8Array(8) };
+
+  it('decodes the well-formed stream this suite builds', () => {
+    const decoded = decodeWav(riff([{ id: 'fmt ', body: fmtBody() }, data]));
+    expect(decoded.channels).toHaveLength(1);
+    expect(decoded.sampleRate).toBe(48_000);
+  });
+
+  it('refuses a fmt chunk that declares fewer than 16 bytes of body', () => {
+    // Only 8 bytes of body, so the decoder would read bitsPerSample out of the NEXT chunk's
+    // header and decode plausible-looking rubbish against it.
+    const short = { id: 'fmt ', body: fmtBody().slice(0, 8) };
+    expect(() => decodeWav(riff([short, data]))).toThrow(/fmt chunk/i);
+  });
+
+  it('refuses a second fmt chunk rather than letting the last one win', () => {
+    const first = { id: 'fmt ', body: fmtBody() };
+    const second = { id: 'fmt ', body: fmtBody({ channels: 2, rate: 44_100 }) };
+    expect(() => decodeWav(riff([first, second, data]))).toThrow(/fmt chunk/i);
+  });
+
+  it('refuses a fmt chunk whose blockAlign contradicts its own channels and bit depth', () => {
+    const body = fmtBody();
+    new DataView(body.buffer).setUint16(12, 99, true); // blockAlign should be 2
+    expect(() => decodeWav(riff([{ id: 'fmt ', body }, data]))).toThrow(/block align/i);
+  });
+});
+
+describe('encodeWav — ragged channels are refused, not padded (spec §9.4, issue #66)', () => {
+  it('refuses channels of differing lengths rather than fabricating samples', () => {
+    const left = Float32Array.from([0.5, 0.5, 0.5]);
+    const right = Float32Array.from([0.5]);
+    expect(() => encodeWav([left, right], 48_000, '16')).toThrow(/length/i);
+  });
+
+  it('still encodes equal-length channels and a single empty channel', () => {
+    expect(() => encodeWav([Float32Array.from([0.5]), Float32Array.from([0.5])], 48_000, '16')).not.toThrow();
+    expect(encodeWav([new Float32Array(0)], 48_000, '16')).toHaveLength(44);
+  });
+
+  it('refuses a non-positive or non-integer sample rate', () => {
+    expect(() => encodeWav([Float32Array.from([0])], 0, '16')).toThrow(/sample rate/i);
+    expect(() => encodeWav([Float32Array.from([0])], Number.NaN, '16')).toThrow(/sample rate/i);
+  });
+});

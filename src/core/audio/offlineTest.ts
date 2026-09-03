@@ -9,6 +9,7 @@ import { DEFAULT_BPM, type EffectType, type Program } from '@/core/project/schem
 import { prepareVoiceWorklets, prepareWorkletEffects } from './context';
 import { createInsert } from './inserts/insert';
 import { EFFECT_PARAM_CHOICES } from './inserts/effectParams';
+import { rampParamLinear, rampParamTarget, setParamNow } from './params/ramps';
 import { lfoWaveCoefficients } from './voiceModulation';
 import { ReversedBufferCache } from './voiceBuffer';
 
@@ -215,6 +216,8 @@ export interface NoteRenderResult {
   /** Dominant frequency in Hz, 0 when effectively silent. */
   readonly frequency: number;
   readonly rms: number;
+  /** Largest absolute sample — how an un-clamped amp modulation shows itself (issue #76). */
+  readonly peak: number;
   /** Seconds from the note-on to the last audible frame — the voice's real length. */
   readonly soundingSeconds: number;
   /** Level of the first and second halves, which is how a reversed layer shows itself. */
@@ -279,6 +282,7 @@ export async function renderProgramNote(
   const empty: NoteRenderResult = {
     frequency: 0,
     rms: 0,
+    peak: 0,
     soundingSeconds: 0,
     firstHalfRms: 0,
     secondHalfRms: 0,
@@ -316,6 +320,7 @@ export async function renderProgramNote(
   return {
     frequency: detectPitch(data, sampleRate),
     rms: rms(data),
+    peak: peak(data),
     soundingSeconds: soundingSeconds(data, sampleRate),
     firstHalfRms: rms(data.subarray(0, half)),
     secondHalfRms: rms(data.subarray(half)),
@@ -423,4 +428,58 @@ export async function renderLfoPhaseOffline(phaseOffset: number): Promise<{ firs
   osc.start(0);
   const rendered = await context.startRendering();
   return { firstSample: rendered.getChannelData(0)[0] ?? 0 };
+}
+
+// --- §4.3 / §5.6 guard renders (spec §11.2, issue #97) --------------------------------
+
+/** What a guarded parameter write did to a real audio path (spec §11.2). */
+export interface GuardRenderResult {
+  /** RMS of the rendered signal — non-zero proves the graph still sounds. */
+  readonly rms: number;
+  /** True when every rendered frame is a finite number. */
+  readonly finite: boolean;
+}
+
+function measure(data: Float32Array): GuardRenderResult {
+  return { rms: rms(data), finite: data.every((value) => Number.isFinite(value)) };
+}
+
+/**
+ * Write a non-finite value through each §4.3 ramp helper onto a real `GainNode.gain`, then
+ * render a tone through it (spec §11.2, issue #97).
+ *
+ * This is the failure the guards exist for and the one a unit test cannot show: on the fake
+ * context a NaN is just a recorded call, while a real `AudioParam` that takes one outputs NaN
+ * for every frame afterwards and silences everything downstream for the rest of the session.
+ */
+export async function renderRampGuardOffline(): Promise<GuardRenderResult> {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, sampleRate / 2, sampleRate);
+  const osc = context.createOscillator();
+  osc.frequency.value = 440;
+  const gain = context.createGain();
+  gain.gain.value = 0.5;
+  osc.connect(gain);
+  gain.connect(context.destination);
+  // Each of these would poison `gain.gain` if it reached the param.
+  rampParamLinear(gain.gain, Number.NaN, 0);
+  rampParamTarget(gain.gain, Number.POSITIVE_INFINITY, 0);
+  setParamNow(gain.gain, Number.NaN, 0);
+  osc.start(0);
+  const rendered = await context.startRendering();
+  osc.stop();
+  return measure(rendered.getChannelData(0));
+}
+
+/**
+ * Drive a §5.6 WASM kernel through the REAL worklet path with non-finite parameters
+ * (spec §11.2, §13.5, issue #97). An un-clamped NaN becomes a NaN coefficient inside linear
+ * memory, and the kernel then outputs NaN forever — which only a real render can show.
+ */
+export async function renderKernelGuardOffline(effectType: EffectType): Promise<GuardRenderResult> {
+  const rendered = await renderEffectOffline(effectType, {
+    toneHz: 220,
+    params: { ceiling: Number.NaN, release: Number.NaN, size: Number.NaN, damping: Number.NaN },
+  });
+  return { rms: rendered.outputRms, finite: Number.isFinite(rendered.outputRms) && rendered.outputRms > 0 };
 }

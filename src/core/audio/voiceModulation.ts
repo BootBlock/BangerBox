@@ -8,7 +8,7 @@
  */
 import type { LfoConfig, ModRoute, PadFilter } from '@/core/project/schemas';
 import { noteDivisionSeconds } from '@/core/sequencer/ppqn';
-import { evaluateModMatrix, type ModSourceValues } from './modMatrix';
+import { clampModSum, evaluateModMatrix, type ModSourceValues } from './modMatrix';
 
 /** Full-scale pitch modulation in cents at mod amount ±1 (±1 octave) — spec §6. */
 export const PITCH_MOD_CENTS = 1200;
@@ -163,6 +163,11 @@ export interface StaticModulation {
  * as live oscillators instead (see the voice pool); envelope-sourced routes to non-hard-
  * wired targets are a later refinement — the built-in pitch/filter envelopes carry the
  * primary envelope modulation in v1.
+ *
+ * Every sum is clamped to the ±1 full scale its target declares before it is scaled into
+ * physical units (issue #76). `modMatrix.ts` leaves the sums un-clamped precisely so this
+ * happens here, at the point each one reaches a parameter; without it, 32 valid routes onto
+ * one target reach 32 octaves of detune or 33× gain.
  */
 export function staticModulation(
   routes: readonly ModRoute[],
@@ -171,9 +176,9 @@ export function staticModulation(
   random: number,
 ): StaticModulation {
   const result = evaluateModMatrix(routes, staticSourceValues(note, velocity, random));
-  const pitch = result.get('pitch') ?? 0;
-  const cutoff = result.get('filterCutoff') ?? 0;
-  const amp = result.get('amp') ?? 0;
+  const pitch = clampModSum(result.get('pitch') ?? 0);
+  const cutoff = clampModSum(result.get('filterCutoff') ?? 0);
+  const amp = clampModSum(result.get('amp') ?? 0);
   return {
     detuneCents: pitch * PITCH_MOD_CENTS,
     cutoffFactor: 2 ** (cutoff * FILTER_MOD_OCTAVES),

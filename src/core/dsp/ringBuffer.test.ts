@@ -87,3 +87,22 @@ describe('RingBuffer — SPSC lock-free Float32 ring (spec §5.5)', () => {
     for (let i = 0; i < seen.length; i++) expect(seen[i]).toBe(i);
   });
 });
+
+describe('RingBuffer guards its slot count (spec §5.5, issue #97)', () => {
+  it('refuses a fractional slot count', () => {
+    expect(() => RingBuffer.create(4.5)).toThrow(/integer/i);
+  });
+
+  it('refuses a non-finite slot count', () => {
+    expect(() => RingBuffer.create(Number.NaN)).toThrow();
+    expect(() => RingBuffer.create(Number.POSITIVE_INFINITY)).toThrow();
+  });
+
+  it('still builds an ordinary ring', () => {
+    expect(RingBuffer.create(16).availableToWrite()).toBe(15);
+  });
+
+  it('refuses a backing buffer that is not a whole number of float slots', () => {
+    expect(() => new RingBuffer(new SharedArrayBuffer(11))).toThrow();
+  });
+});

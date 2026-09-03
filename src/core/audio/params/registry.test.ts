@@ -114,3 +114,26 @@ describe('program-scope addresses (spec §7.8, §6)', () => {
     );
   });
 });
+
+describe('unresolvable addresses are refused (spec §7.8 gate, issue #97)', () => {
+  it('rejects an insert slot beyond the §1.3.1 insert limit', () => {
+    expect(isAutomatable(insertParamPath('master', 999, 'mix'))).toBe(false);
+    expect(isAutomatable(insertParamPath('master', 0, 'mix'))).toBe(false); // slots are 1-based
+    expect(isAutomatable(insertParamPath('master', 1, 'mix'))).toBe(true);
+    expect(isAutomatable(insertParamPath('master', 8, 'mix'))).toBe(true);
+    expect(isAutomatable(insertParamPath('master', 9, 'mix'))).toBe(false);
+  });
+
+  it('rejects a pad index outside the §1.3.1 128-pad range', () => {
+    expect(isAutomatable(programParamPath('abc', 9999, 'pitch'))).toBe(false);
+    expect(isAutomatable(programParamPath('abc', 127, 'pitch'))).toBe(true);
+    expect(isAutomatable(programParamPath('abc', 128, 'pitch'))).toBe(false);
+  });
+
+  it('rejects a non-canonical index that would not round-trip', () => {
+    expect(isAutomatable('mixer.master.sendLevels.00')).toBe(false);
+    expect(isAutomatable('mixer.master.sendLevels.0')).toBe(true);
+    expect(isAutomatable('insert:master:slot01.mix')).toBe(false);
+    expect(isAutomatable('program:abc.pad:007.pitch')).toBe(false);
+  });
+});

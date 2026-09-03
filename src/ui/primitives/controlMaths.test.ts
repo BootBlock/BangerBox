@@ -102,3 +102,21 @@ describe('controlMaths — aria-valuetext in human units (spec §8.2)', () => {
     expect(formatValueText(62.4, '%')).toBe('62 %');
   });
 });
+
+describe('formatValueText guards its input (spec §8.2, issue #97)', () => {
+  it('never puts "NaN" into aria-valuetext', () => {
+    expect(formatValueText(Number.NaN, 'dB')).toBe('— dB');
+    expect(formatValueText(Number.NaN, '')).toBe('—');
+    expect(formatValueText(Number.NaN, 'Hz')).toBe('— Hz');
+  });
+
+  it('reads +∞ as an infinity symbol rather than a huge number', () => {
+    expect(formatValueText(Number.POSITIVE_INFINITY, 'dB')).toBe('∞ dB');
+  });
+
+  it('does not round a hertz value up into a bare "1000 Hz"', () => {
+    // 999.6 rounds to 1000, which reads as if the kHz branch had not been taken.
+    expect(formatValueText(999.6, 'Hz')).toBe('1.0 kHz');
+    expect(formatValueText(999.4, 'Hz')).toBe('999 Hz');
+  });
+});

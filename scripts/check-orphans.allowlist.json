@@ -137,6 +137,21 @@
       "reason": "Internal caller: the visible-window clamp. Exported so the zoom floor is pinned by test."
     },
     {
+      "file": "src/core/dsp/fdnReverbKernel.ts",
+      "export": "FDN_REVERB_RANGES",
+      "reason": "Internal caller: this wrapper’s own §5.7 param setters, which clamp against it before the value crosses into linear memory. Exported so kernelRanges.test.ts can pin it against EFFECT_PARAM_RANGES — the bounds are declared here rather than imported because this module loads inside the DSP-effect worklet, where importing the effect table would drag Zod into the render thread (issue #97)."
+    },
+    {
+      "file": "src/core/dsp/lookaheadLimiterKernel.ts",
+      "export": "LIMITER_RANGES",
+      "reason": "Internal caller: this wrapper’s own §5.7 param setters, which clamp against it before the value crosses into linear memory. Exported so kernelRanges.test.ts can pin it against EFFECT_PARAM_RANGES — the bounds are declared here rather than imported because this module loads inside the DSP-effect worklet, where importing the effect table would drag Zod into the render thread (issue #97)."
+    },
+    {
+      "file": "src/core/dsp/multibandCompKernel.ts",
+      "export": "MULTIBAND_RANGES",
+      "reason": "Internal caller: this wrapper’s own §5.7 param setters, which clamp against it before the value crosses into linear memory. Exported so kernelRanges.test.ts can pin it against EFFECT_PARAM_RANGES — the bounds are declared here rather than imported because this module loads inside the DSP-effect worklet, where importing the effect table would drag Zod into the render thread (issue #97)."
+    },
+    {
       "file": "src/core/midi/bleTransport.ts",
       "export": "BLE_MIDI_SERVICE_UUID",
       "reason": "Internal caller: the GATT filter and service lookup. Exported so the well-known UUID is pinned by test."
@@ -250,11 +265,6 @@
       "file": "src/core/sequencer/clockSync.ts",
       "export": "DRIFT_SNAP_SECONDS",
       "reason": "Internal caller: ClockModel.applySync. Exported so the drift threshold is pinned by test."
-    },
-    {
-      "file": "src/core/sequencer/lookahead.ts",
-      "export": "segmentWindow",
-      "reason": "Internal caller: eventsInWindow. Exported so window maths is testable without running the scheduler."
     },
     {
       "file": "src/core/sequencer/messages.ts",

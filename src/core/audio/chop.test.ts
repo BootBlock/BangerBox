@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { enforceMinSpacing, equalSlices, slicesFromMarkers } from './chop';
+import { enforceMinSpacing, equalSlices, slicesFromMarkers, slicesFromOnsets } from './chop';
 
 describe('chop — pure slice-region maths (spec §8.5.4)', () => {
   describe('equalSlices', () => {
@@ -51,5 +51,37 @@ describe('chop — pure slice-region maths (spec §8.5.4)', () => {
     it('sorts the input and keeps the earliest of a dense cluster', () => {
       expect(enforceMinSpacing([320, 100, 300, 800, 140], 100)).toEqual([100, 300, 800]);
     });
+  });
+});
+
+describe('chop guards its inputs (spec §8.5.4, issue #97)', () => {
+  it('refuses more slices than the sample has frames', () => {
+    // `equalSlices(8, 3)` is fine; the other way round yields five zero-length regions,
+    // which chop-to-pads then assigns as silent pads with no error at all.
+    expect(() => equalSlices(8, 3)).not.toThrow();
+    expect(() => equalSlices(3, 8)).toThrow(/frames/i);
+  });
+
+  it('refuses a zero-frame or non-integer sample length', () => {
+    expect(() => equalSlices(0, 4)).toThrow();
+    expect(() => equalSlices(1000.5, 4)).toThrow();
+    expect(() => equalSlices(Number.NaN, 4)).toThrow();
+  });
+
+  it('drops duplicate markers even when the minimum spacing is zero', () => {
+    expect(enforceMinSpacing([10, 10, 10], 0)).toEqual([10]);
+    expect(enforceMinSpacing([10, 11, 12], 0)).toEqual([10, 11, 12]);
+  });
+
+  it('treats a non-finite minimum spacing as one frame', () => {
+    expect(enforceMinSpacing([10, 10, 20], Number.NaN)).toEqual([10, 20]);
+  });
+
+  it('ignores non-finite markers and onsets rather than emitting NaN regions', () => {
+    expect(slicesFromMarkers(1000, [Number.NaN, 500])).toEqual([
+      { startFrame: 0, endFrame: 500 },
+      { startFrame: 500, endFrame: 1000 },
+    ]);
+    expect(slicesFromOnsets(1000, [Number.NaN, 400])).toEqual([{ startFrame: 400, endFrame: 1000 }]);
   });
 });

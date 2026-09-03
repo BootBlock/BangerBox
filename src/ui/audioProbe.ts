@@ -10,13 +10,15 @@ import type { AudioEngine } from '@/core/audio/engine';
 import {
   renderDelayEchoOffline,
   renderEffectOffline,
+  renderKernelGuardOffline,
   renderLfoPhaseOffline,
   renderLfoRateOffline,
   renderProgramNote,
+  renderRampGuardOffline,
   type DelayEchoResult,
   type EffectRenderResult,
 } from '@/core/audio/offlineTest';
-import { getActiveRepositories, projectService } from '@/core/project';
+import { getActiveRepositories, loadOrCreateActiveProject, projectService } from '@/core/project';
 import { importDecodedSample } from '@/core/audio/sampleImport';
 import { chopSampleToNewSamples, stretchSampleToNewSample } from '@/core/audio/sampleEditService';
 import { sampleEditContext } from '@/features/sample-edit';
@@ -31,6 +33,10 @@ import {
   type VelocityLayer,
 } from '@/core/project/schemas';
 import { useProjectStore, useSequenceStore, useTransportStore } from '@/store';
+import { commitTempo } from '@/store/tempo';
+import { decodeWav, encodeWav } from '@/core/audio/wav';
+import { createPlayheadSab, PlayheadReader, PlayheadWriter } from '@/core/sequencer';
+import { MAX_MOD_ROUTES, type ModRoute } from '@/core/project/schemas';
 
 export interface RecordPlaybackResult {
   /** Notes captured into the track by the recording pass (spec §7.7). */
@@ -100,6 +106,74 @@ export interface AudioProbe {
   refusedSwitchProof: () => Promise<RefusedSwitchResult>;
   /** OPFS tells "absent" from "could not tell" over real handles (spec §9.2, issue #98). */
   storagePolicyProof: () => Promise<StoragePolicyResult>;
+  /** 32 mod routes onto one target stay inside that target's range (spec §6, issue #76). */
+  modClampProof: () => Promise<ModClampResult>;
+  /** A non-finite value never reaches a real AudioParam or kernel (spec §4.3, issue #97). */
+  paramGuardProof: () => Promise<ParamGuardResult>;
+  /** A malformed WAV header is refused rather than decoded against (spec §9.4, issue #66). */
+  wavHeaderProof: () => WavHeaderResult;
+  /** The §7.1 silent-failure modes now report or disarm (spec §7.1.4, §7.7, issue #95). */
+  sequencerGuardProof: () => Promise<SequencerGuardResult>;
+  /** A mid-playback tempo change applies from the change onward (spec §7.2, issue #74). */
+  tempoChangeProof: () => Promise<TempoChangeResult>;
+}
+
+/** Outcome of the §6 mod-matrix clamp proof (see {@link modClampProof}). */
+export interface ModClampResult {
+  /** The pitch a pad with one modest pitch route sounds — the control. */
+  readonly baselineHz: number;
+  /** The pitch with 32 full-depth pitch routes. Un-clamped this is 32 octaves up. */
+  readonly pilePitchHz: number;
+  /** Peak of a pad with one amp route, and with 32. Un-clamped the second is 33x the first. */
+  readonly baselinePeak: number;
+  readonly pileAmpPeak: number;
+}
+
+/** Outcome of the §4.3/§5.6 guard proof (see {@link paramGuardProof}). */
+export interface ParamGuardResult {
+  /** A tone rendered through a GainNode that three ramp helpers tried to write NaN to. */
+  readonly rampRms: number;
+  readonly rampFinite: boolean;
+  /** The same, through the real limiter and reverb worklets driven with NaN parameters. */
+  readonly limiterRms: number;
+  readonly limiterFinite: boolean;
+  readonly reverbRms: number;
+  readonly reverbFinite: boolean;
+}
+
+/** Outcome of the §9.4 WAV header proof (see {@link wavHeaderProof}). */
+export interface WavHeaderResult {
+  /** A well-formed file this proof built itself still decodes. */
+  readonly goodDecodes: boolean;
+  /** Each malformed header, and the message it was refused with (empty = it was accepted). */
+  readonly refusals: { readonly name: string; readonly message: string }[];
+}
+
+/** Outcome of the §7.1 sequencer guard proof (see {@link sequencerGuardProof}). */
+export interface SequencerGuardResult {
+  /** A tear-free SAB read, over real SharedArrayBuffer + Atomics. */
+  readonly freshTick: number;
+  readonly freshStale: boolean;
+  /** A read taken while the seqlock generation is odd: held, and reported as stale. */
+  readonly tornTick: number;
+  readonly tornStale: boolean;
+  /** Notes on the track before a live erase is armed. */
+  readonly eventsBeforeErase: number;
+  /** After a pass with the pad held over Erase — the §7.7 behaviour, and the control. */
+  readonly eventsAfterHeldPass: number;
+  /** After the same notes are restored and a pass runs with NOTHING held (issue #95). */
+  readonly eventsAfterReplay: number;
+}
+
+/** Outcome of the §7.2 tempo-change proof (see {@link tempoChangeProof}). */
+export interface TempoChangeResult {
+  /** Playhead ticks sampled before the tempo change and just after it landed. */
+  readonly beforeChange: number;
+  readonly afterChange: number;
+  /** A later sample, proving the transport kept moving forward at the new tempo. */
+  readonly afterSettling: number;
+  /** The tempo the change committed, read back off the transport mirror. */
+  readonly bpmAfter: number;
 }
 
 /** Outcome of the §4.4 refused-switch proof (see {@link refusedSwitchProof}). */
@@ -664,6 +738,265 @@ async function storagePolicyProof(): Promise<StoragePolicyResult> {
   };
 }
 
+/**
+ * §6 mod-matrix clamping over a real render (spec §11.2, issue #76).
+ *
+ * §6 caps the matrix at 32 routes and each amount at ±1, and forbids nothing about all 32
+ * landing on one target — so this program passes Zod validation and could arrive in a §9.6
+ * `.mpcweb` pack. Un-clamped it detunes 32 octaves, which consumes the buffer before a frame
+ * is audible, and peaks at 33× gain. Measured against a one-route control so the assertion is
+ * a ratio rather than an absolute.
+ */
+async function modClampProof(): Promise<ModClampResult> {
+  const build = (routes: ModRoute[]) => {
+    const program = createDefaultDrumProgram('Mod clamp probe');
+    const pad = createDefaultPad(0);
+    pad.layers = [layer({ sampleId: 'offline' })];
+    pad.modMatrix = routes;
+    program.pads = [pad];
+    return program;
+  };
+  const pile = (target: ModRoute['target']): ModRoute[] =>
+    Array.from({ length: MAX_MOD_ROUTES }, () => ({ source: 'velocity' as const, target, amount: 1 }));
+
+  const options = { baseFrequency: 300, seconds: 0.4 } as const;
+  const baseline = await renderProgramNote(build([]), 0, 127, options);
+  const pilePitch = await renderProgramNote(build(pile('pitch')), 0, 127, options);
+  const pileAmp = await renderProgramNote(build(pile('amp')), 0, 127, options);
+  return {
+    baselineHz: baseline.frequency,
+    pilePitchHz: pilePitch.frequency,
+    baselinePeak: baseline.peak,
+    pileAmpPeak: pileAmp.peak,
+  };
+}
+
+/**
+ * §4.3 and §5.6 guards over real params and real worklets (spec §11.2, §13.5, issue #97).
+ * The unit suite writes NaN to a fake `AudioParam`, which merely records the call; only a real
+ * one goes permanently silent, and only a real WASM kernel keeps a NaN coefficient.
+ */
+async function paramGuardProof(): Promise<ParamGuardResult> {
+  const ramp = await renderRampGuardOffline();
+  const limiter = await renderKernelGuardOffline('limiter');
+  const reverb = await renderKernelGuardOffline('reverb');
+  return {
+    rampRms: ramp.rms,
+    rampFinite: ramp.finite,
+    limiterRms: limiter.rms,
+    limiterFinite: limiter.finite,
+    reverbRms: reverb.rms,
+    reverbFinite: reverb.finite,
+  };
+}
+
+/**
+ * §9.4 WAV header refusals through the shipped decoder (issue #66). Each case is built here
+ * rather than stored, per §11.2; an empty message means the decoder accepted the file.
+ */
+function wavHeaderProof(): WavHeaderResult {
+  const ascii4 = (view: DataView, offset: number, text: string): void => {
+    for (let i = 0; i < 4; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  const riff = (chunks: { id: string; body: Uint8Array }[]): Uint8Array => {
+    let size = 4;
+    for (const chunk of chunks) size += 8 + chunk.body.length + (chunk.body.length & 1);
+    const bytes = new Uint8Array(8 + size);
+    const view = new DataView(bytes.buffer);
+    ascii4(view, 0, 'RIFF');
+    view.setUint32(4, size, true);
+    ascii4(view, 8, 'WAVE');
+    let cursor = 12;
+    for (const chunk of chunks) {
+      ascii4(view, cursor, chunk.id);
+      view.setUint32(cursor + 4, chunk.body.length, true);
+      bytes.set(chunk.body, cursor + 8);
+      cursor += 8 + chunk.body.length + (chunk.body.length & 1);
+    }
+    return bytes;
+  };
+  const fmtBody = (): Uint8Array => {
+    const body = new Uint8Array(16);
+    const view = new DataView(body.buffer);
+    view.setUint16(0, 1, true);
+    view.setUint16(2, 1, true);
+    view.setUint32(4, 48_000, true);
+    view.setUint32(8, 96_000, true);
+    view.setUint16(12, 2, true);
+    view.setUint16(14, 16, true);
+    return body;
+  };
+  // 40 bytes of body keeps every stream past the 44-byte minimum, so each case is refused
+  // for the reason it names rather than for being too short.
+  const data = { id: 'data', body: new Uint8Array(40) };
+  const shortFmt = { id: 'fmt ', body: fmtBody().slice(0, 8) };
+  const badAlign = fmtBody();
+  new DataView(badAlign.buffer).setUint16(12, 99, true);
+
+  const cases: { name: string; bytes: Uint8Array }[] = [
+    { name: 'no fmt chunk', bytes: riff([data]) },
+    { name: 'fmt body shorter than 16 bytes', bytes: riff([shortFmt, data]) },
+    {
+      name: 'two fmt chunks',
+      bytes: riff([{ id: 'fmt ', body: fmtBody() }, { id: 'fmt ', body: fmtBody() }, data]),
+    },
+    { name: 'block align contradicts the header', bytes: riff([{ id: 'fmt ', body: badAlign }, data]) },
+  ];
+
+  let goodDecodes = false;
+  try {
+    const decoded = decodeWav(encodeWav([Float32Array.from([0, 0.5, -0.5])], 48_000, '16'));
+    goodDecodes = decoded.channels.length === 1 && decoded.sampleRate === 48_000;
+  } catch {
+    goodDecodes = false;
+  }
+
+  const refusals = cases.map(({ name, bytes }) => {
+    try {
+      decodeWav(bytes);
+      return { name, message: '' }; // accepted — the defect
+    } catch (error) {
+      return { name, message: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  return { goodDecodes, refusals };
+}
+
+/**
+ * The §7.1 silent-failure modes over the real SAB and the real scheduler worker (issue #95).
+ *
+ * The seqlock half needs a genuine `SharedArrayBuffer` and `Atomics`, so it exists only under
+ * cross-origin isolation (§2.1) — the unit environment cannot reach it. The live-erase half
+ * drives an actual stop and restart through the worker, which is where the stale arming lived.
+ */
+async function sequencerGuardProof(engine: AudioEngine): Promise<SequencerGuardResult> {
+  const sab = createPlayheadSab();
+  const writer = new PlayheadWriter(sab);
+  const reader = new PlayheadReader(sab);
+  writer.write(3_840, true, false, false);
+  const fresh = reader.read();
+  // Leave the generation odd: a write in progress that never completes.
+  const header = new Int32Array(sab, 0, 2);
+  Atomics.store(header, 0, Atomics.load(header, 0) + 1);
+  const torn = reader.read();
+
+  // --- live erase across a stop, over the real worker ---
+  // The shell opens one at boot; opening it here too keeps the probe callable before that
+  // has finished, through the app's own path rather than a test-only shortcut.
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  const seqId = crypto.randomUUID();
+  const trackId = crypto.randomUUID();
+  const note = 36;
+  const sequence = { ...createDefaultSequence(projectId, 0, 'Erase probe', seqId), lengthBars: 1 };
+  const track = createDefaultTrack(seqId, null, 0, 'Erase probe', 'drum', trackId);
+  const restoreEvents = (): void => {
+    useSequenceStore.getState().hydrate({
+      sequences: { [seqId]: sequence },
+      tracks: { [trackId]: track },
+      events: {
+        [trackId]: [0, 960, 1_920, 2_880].map((tickStart) => ({
+          id: crypto.randomUUID(),
+          tickStart,
+          durationTicks: 120,
+          note,
+          velocity: 100,
+          extra: null,
+        })),
+      },
+      automation: {},
+      songEntries: [],
+    });
+  };
+  restoreEvents();
+
+  const transport = useTransportStore.getState();
+  transport.setActiveSequenceId(seqId);
+  transport.setPlaybackMode('sequence');
+  transport.setMetronomeEnabled(false);
+  transport.setCountInBars(0);
+  transport.setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  const eventsBeforeErase = (useSequenceStore.getState().events[trackId] ?? []).length;
+
+  // A pass with the pad held over Erase. Losing the notes here is §7.7 working, and it is the
+  // control: it proves the erase really did reach the worker.
+  useTransportStore.getState().play();
+  await delay(150);
+  engine.scheduler.setLiveErase(trackId, note, true);
+  await delay(2_400);
+  useTransportStore.getState().stop();
+  await delay(250);
+  const eventsAfterHeldPass = (useSequenceStore.getState().events[trackId] ?? []).length;
+
+  // Restore the notes and play again with NOTHING held — the user has finished with Erase and
+  // released it, and the worker was never told, because a stop is what releases it. Un-fixed,
+  // the arming survived the stop and this pass deleted them all over again (issue #95).
+  restoreEvents();
+  await delay(150);
+  useTransportStore.getState().play();
+  await delay(2_400);
+  useTransportStore.getState().stop();
+  await delay(250);
+  const eventsAfterReplay = (useSequenceStore.getState().events[trackId] ?? []).length;
+
+  return {
+    freshTick: fresh.currentTick,
+    freshStale: fresh.stale,
+    tornTick: torn.currentTick,
+    tornStale: torn.stale,
+    eventsBeforeErase,
+    eventsAfterHeldPass,
+    eventsAfterReplay,
+  };
+}
+
+/**
+ * A mid-playback tempo change over the real transport, worker and playhead SAB (issue #74).
+ *
+ * The change goes in through `store/tempo.ts`, which is where a tempo edit enters the model,
+ * so this drives the same path the transport bar's knob does. Un-fixed, halving the tempo
+ * after four seconds re-read the elapsed playback at the new tempo and the playhead jumped
+ * back by half of everything already played.
+ */
+async function tempoChangeProof(engine: AudioEngine): Promise<TempoChangeResult> {
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  const seqId = crypto.randomUUID();
+  const sequence = { ...createDefaultSequence(projectId, 0, 'Tempo probe', seqId), lengthBars: 8 };
+  useSequenceStore.getState().hydrate({
+    sequences: { [seqId]: sequence },
+    tracks: {},
+    events: {},
+    automation: {},
+    songEntries: [],
+  });
+  const transport = useTransportStore.getState();
+  transport.setActiveSequenceId(seqId);
+  transport.setPlaybackMode('sequence');
+  transport.setMetronomeEnabled(false);
+  transport.setCountInBars(0);
+  transport.setRecording(false);
+  transport.setLoop({ enabled: false, startTick: 0, endTick: 0 });
+  commitTempo(160);
+  await delay(120);
+
+  useTransportStore.getState().play();
+  await delay(4_000); // long enough that a retroactive re-time is unmistakable
+  const beforeChange = engine.playheadTick();
+  commitTempo(80);
+  await delay(150); // one scheduler wake plus slack
+  const afterChange = engine.playheadTick();
+  await delay(1_000);
+  const afterSettling = engine.playheadTick();
+  useTransportStore.getState().stop();
+  await delay(150);
+
+  return {
+    beforeChange,
+    afterChange,
+    afterSettling,
+    bpmAfter: useTransportStore.getState().bpm,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -691,5 +1024,10 @@ export function installAudioProbe(engine: AudioEngine): void {
     factoryInstallProof,
     refusedSwitchProof,
     storagePolicyProof,
+    modClampProof,
+    paramGuardProof,
+    wavHeaderProof,
+    sequencerGuardProof: () => sequencerGuardProof(engine),
+    tempoChangeProof: () => tempoChangeProof(engine),
   };
 }

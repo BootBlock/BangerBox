@@ -22,7 +22,9 @@ import {
   ENVELOPE_TIME_MS_RANGE,
   FILTER_CUTOFF_RANGE,
   FILTER_RESONANCE_RANGE,
+  GLOBAL_INSERT_LIMIT_RANGE,
   LEVEL_RANGE,
+  PAD_INDEX_RANGE,
   PAN_RANGE,
   SEND_LEVEL_RANGE,
   SWING_RANGE,
@@ -75,6 +77,26 @@ const TRANSPORT_PATTERN = /^transport\.([a-zA-Z0-9]+)$/;
 const SEND_COUNT = 4;
 
 /**
+ * A decimal index from an address, or null when it is out of range or not canonical
+ * (issue #97).
+ *
+ * §7.8 makes `isAutomatable` the gate on what may be stored: an address that parses but
+ * can never resolve lets a §9.3 `automation_points` row or a §10.3 Q-Link binding persist
+ * against a parameter that does not exist. `insert:master:slot999.mix` and
+ * `program:abc.pad:9999.pitch` both used to pass, because the send index above was the only
+ * one bounded.
+ *
+ * The round-trip test is the second half: `sendLevels.00` names send 0 but is not the
+ * string {@link channelSendPath} builds, so a point saved under it would never be found
+ * again by anything reading the canonical address.
+ */
+function canonicalIndex(raw: string, [min, max]: Range): number | null {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) return null;
+  return String(value) === raw ? value : null;
+}
+
+/**
  * Automatable program-scope sound-design leaves and their ranges (spec §6, §7.8). The two
  * amp-envelope times were added in Phase 8 because §10.3 names Amp Attack and Amp Release
  * among the pad-mode Q-Link defaults, and only registered addresses may be bound (§7.8
@@ -94,8 +116,8 @@ export const PROGRAM_PARAM_RANGES: Readonly<Record<string, Range>> = {
 export function parseParamTarget(path: string): ParamTarget | null {
   const send = SEND_PATTERN.exec(path);
   if (send) {
-    const sendIndex = Number(send[2]);
-    if (sendIndex < 0 || sendIndex >= SEND_COUNT) return null;
+    const sendIndex = canonicalIndex(send[2]!, [0, SEND_COUNT - 1]);
+    if (sendIndex === null) return null;
     return { kind: 'channelSend', channelId: send[1]!, sendIndex };
   }
   const level = LEVEL_PATTERN.exec(path);
@@ -104,7 +126,10 @@ export function parseParamTarget(path: string): ParamTarget | null {
   if (pan) return { kind: 'channelPan', channelId: pan[1]! };
   const insert = INSERT_PATTERN.exec(path);
   if (insert) {
-    return { kind: 'insertParam', channelId: insert[1]!, slot: Number(insert[2]), param: insert[3]! };
+    // Slots are 1-based and bounded by the §1.3.1 configurable insert limit (1..8).
+    const slot = canonicalIndex(insert[2]!, GLOBAL_INSERT_LIMIT_RANGE);
+    if (slot === null) return null;
+    return { kind: 'insertParam', channelId: insert[1]!, slot, param: insert[3]! };
   }
   const transport = TRANSPORT_PATTERN.exec(path);
   if (transport) {
@@ -117,7 +142,9 @@ export function parseParamTarget(path: string): ParamTarget | null {
     const param = program[3]!;
     // Only registered sound-design leaves accept points (spec §7.8 gate).
     if (!(param in PROGRAM_PARAM_RANGES)) return null;
-    return { kind: 'programParam', programId: program[1]!, padIndex: Number(program[2]), param };
+    const padIndex = canonicalIndex(program[2]!, PAD_INDEX_RANGE);
+    if (padIndex === null) return null;
+    return { kind: 'programParam', programId: program[1]!, padIndex, param };
   }
   return null;
 }

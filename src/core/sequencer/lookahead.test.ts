@@ -52,11 +52,13 @@ describe('loopPassAt (spec §7.1.3 loopWrapped)', () => {
 
 describe('segmentWindow (spec §7.1.4)', () => {
   it('is a single identity segment without a loop', () => {
-    expect(segmentWindow(100, 300, NO_LOOP)).toEqual([{ seqStart: 100, seqEnd: 300, linearStart: 100 }]);
+    expect(segmentWindow(100, 300, NO_LOOP).segments).toEqual([
+      { seqStart: 100, seqEnd: 300, linearStart: 100 },
+    ]);
   });
 
   it('splits a window that straddles the loop boundary', () => {
-    const segs = segmentWindow(900, 1200, LOOP_0_1000);
+    const segs = segmentWindow(900, 1200, LOOP_0_1000).segments;
     expect(segs).toEqual([
       { seqStart: 900, seqEnd: 1000, linearStart: 900 },
       { seqStart: 0, seqEnd: 200, linearStart: 1000 },

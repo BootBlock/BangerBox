@@ -3,6 +3,12 @@
  * markers, or WASM-detected transients into contiguous frame regions the editor assigns to
  * pads or a new program. Detection itself is the `transientDetect` WASM kernel (spec §7.5);
  * this module only slices, so it stays dependency-free and trivially testable (spec §2.5).
+ *
+ * A region here becomes a pad assignment, so a nonsensical one is silent audio with no error
+ * anywhere (issue #97). Structural nonsense — more slices than the sample has frames, a
+ * fractional frame count — therefore THROWS, because there is no defensible region to
+ * substitute; a stray marker value is merely dropped, because the rest of the list is still
+ * a usable answer.
  */
 
 /** A half-open frame region `[startFrame, endFrame)` of a sample (spec §8.5.4). */
@@ -14,6 +20,14 @@ export interface SliceRegion {
 /** Divide `totalFrames` into `count` contiguous, gap-free equal regions (spec §8.5.4). */
 export function equalSlices(totalFrames: number, count: number): SliceRegion[] {
   if (count < 1 || !Number.isInteger(count)) throw new Error('equalSlices: count must be a positive integer');
+  if (totalFrames < 1 || !Number.isInteger(totalFrames)) {
+    throw new Error('equalSlices: totalFrames must be a positive integer');
+  }
+  // Without this, `equalSlices(3, 8)` yields five zero-length regions that chop-to-pads then
+  // assigns as silent pads, with no error anywhere (issue #97).
+  if (count > totalFrames) {
+    throw new Error(`equalSlices: cannot cut ${count} slices from ${totalFrames} frames`);
+  }
   const regions: SliceRegion[] = [];
   for (let i = 0; i < count; i++) {
     // Round each boundary from the exact fraction so remainders spread evenly and adjacent
@@ -31,7 +45,7 @@ export function equalSlices(totalFrames: number, count: number): SliceRegion[] {
  * With no valid markers the whole sample is one region.
  */
 export function slicesFromMarkers(totalFrames: number, markers: readonly number[]): SliceRegion[] {
-  const interior = [...new Set(markers.map((m) => Math.round(m)))]
+  const interior = [...new Set(markers.filter((m) => Number.isFinite(m)).map((m) => Math.round(m)))]
     .filter((m) => m > 0 && m < totalFrames)
     .sort((a, b) => a - b);
   const boundaries = [0, ...interior, totalFrames];
@@ -49,7 +63,7 @@ export function slicesFromMarkers(totalFrames: number, markers: readonly number[
  * With no onsets the whole sample is one region.
  */
 export function slicesFromOnsets(totalFrames: number, onsets: readonly number[]): SliceRegion[] {
-  const starts = [...new Set(onsets.map((o) => Math.round(o)))]
+  const starts = [...new Set(onsets.filter((o) => Number.isFinite(o)).map((o) => Math.round(o)))]
     .filter((o) => o >= 0 && o < totalFrames)
     .sort((a, b) => a - b);
   if (starts.length === 0) return [{ startFrame: 0, endFrame: totalFrames }];
@@ -63,12 +77,18 @@ export function slicesFromOnsets(totalFrames: number, onsets: readonly number[])
 /**
  * Thin a marker list so no two kept markers are closer than `minSpacingFrames` (spec §8.5.4 /
  * §7.5 min-spacing). Input is sorted; the earliest of each dense cluster is kept.
+ *
+ * The floor of one frame does not tighten §7.5's minimum — markers are frame indices, so "no
+ * closer than 0 frames" and "no closer than 1 frame" describe the same set of distinct
+ * markers. What it removes is the duplicate case: at a spacing of 0 the comparison held for a
+ * zero delta, so `[10, 10, 10]` kept all three (issue #97).
  */
 export function enforceMinSpacing(markers: readonly number[], minSpacingFrames: number): number[] {
-  const sorted = [...markers].sort((a, b) => a - b);
+  const spacing = Number.isFinite(minSpacingFrames) ? Math.max(1, minSpacingFrames) : 1;
+  const sorted = markers.filter((marker) => Number.isFinite(marker)).sort((a, b) => a - b);
   const kept: number[] = [];
   for (const marker of sorted) {
-    if (kept.length === 0 || marker - kept[kept.length - 1]! >= minSpacingFrames) kept.push(marker);
+    if (kept.length === 0 || marker - kept[kept.length - 1]! >= spacing) kept.push(marker);
   }
   return kept;
 }

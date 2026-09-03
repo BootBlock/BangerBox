@@ -3,6 +3,15 @@
  * during playback; it dezippers changes over `PARAM_RAMP_MS` so live moves do not click.
  * These are the only sanctioned way to write a native `AudioParam` from the bridge
  * (§4.3) and the voice envelopes (§5.4). Kept pure of store/graph imports.
+ *
+ * **Non-finite values are refused, not substituted** (issue #97). A NaN written to an
+ * `AudioParam` poisons that param — and every node downstream of it — for the rest of the
+ * session, with no error and no way back but a reload; that is the worst failure any of
+ * these helpers can cause, so it is the one they will not perform. Substituting a number
+ * instead would be worse than refusing: the graph would keep sounding, at a value nobody
+ * asked for and nothing recorded. Range clamping is deliberately NOT done here — a helper
+ * that takes any param cannot know its range, and the §4.1 store actions, the §6 schemas and
+ * the §7.8 registry each already own that for their own values.
  */
 import { PARAM_RAMP_MS } from '@/core/constants';
 
@@ -12,6 +21,15 @@ import { PARAM_RAMP_MS } from '@/core/constants';
  * `PARAM_RAMP_MS`, which reads as instant-but-click-free.
  */
 const SETTLE_DIVISOR = 3;
+
+/**
+ * True when a value and a context time are both safe to hand to an `AudioParam` (issue #97).
+ * Web Audio throws for a non-finite argument in some engines and silently poisons the param
+ * in others, so neither outcome is left to the browser.
+ */
+function schedulable(value: number, ctxTime: number, ms: number): boolean {
+  return Number.isFinite(value) && Number.isFinite(ctxTime) && Number.isFinite(ms);
+}
 
 /** Absolute context time at which a ramp started at `ctxTime` should complete. */
 export function rampEndTime(ctxTime: number, ms: number = PARAM_RAMP_MS): number {
@@ -34,6 +52,7 @@ export function rampParamLinear(
   ctxTime: number,
   ms: number = PARAM_RAMP_MS,
 ): void {
+  if (!schedulable(target, ctxTime, ms)) return; // refuse rather than poison (issue #97)
   param.setValueAtTime(param.value, ctxTime);
   param.linearRampToValueAtTime(target, rampEndTime(ctxTime, ms));
 }
@@ -49,11 +68,13 @@ export function rampParamTarget(
   ctxTime: number,
   ms: number = PARAM_RAMP_MS,
 ): void {
+  if (!schedulable(target, ctxTime, ms)) return; // refuse rather than poison (issue #97)
   param.setTargetAtTime(target, ctxTime, rampTimeConstantSeconds(ms));
 }
 
 /** Set a value immediately (pre-playback init / graph construction) — no dezipper. */
 export function setParamNow(param: AudioParam, value: number, ctxTime: number): void {
+  if (!schedulable(value, ctxTime, 0)) return; // refuse rather than poison (issue #97)
   param.setValueAtTime(value, ctxTime);
 }
 

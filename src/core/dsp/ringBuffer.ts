@@ -22,14 +22,21 @@ export class RingBuffer {
   private readonly slots: number;
 
   constructor(sab: SharedArrayBuffer) {
+    // A backing buffer that is not a whole number of float slots gives fractional cursors, and
+    // every `% this.slots` after that lands between two array entries (issue #97).
+    const slots = (sab.byteLength - HEADER_BYTES) / 4;
+    if (!Number.isInteger(slots) || slots < 2) {
+      throw new Error(`RingBuffer: backing buffer must hold at least 2 whole float slots, got ${slots}`);
+    }
     this.sab = sab;
     this.header = new Int32Array(sab, 0, HEADER_INTS);
-    this.slots = (sab.byteLength - HEADER_BYTES) / 4;
+    this.slots = slots;
     this.data = new Float32Array(sab, HEADER_BYTES, this.slots);
   }
 
   /** Allocate a ring with `slots` physical float slots (usable capacity `slots − 1`). */
   static create(slots: number): RingBuffer {
+    if (!Number.isInteger(slots)) throw new Error('RingBuffer.create: slots must be an integer');
     if (slots < 2) throw new Error('RingBuffer.create: need at least 2 slots');
     return new RingBuffer(new SharedArrayBuffer(HEADER_BYTES + slots * 4));
   }

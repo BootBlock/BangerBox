@@ -38,6 +38,11 @@ export interface PlayheadReading {
   /** Recording and past the count-in — see {@link PLAYHEAD_FLAG_CAPTURING}. */
   readonly isCapturing: boolean;
   readonly generation: number;
+  /**
+   * True when every seqlock attempt caught the writer mid-write, so the values beside it are
+   * the previous reading held over rather than a fresh snapshot (issue #95).
+   */
+  readonly stale: boolean;
 }
 
 /** Worker-side single writer (spec §7.1.4). Bumps the seqlock around every write. */
@@ -64,10 +69,26 @@ export class PlayheadWriter {
   }
 }
 
-/** Main-thread reader (spec §7.1.4). Retries briefly if it catches a write in progress. */
+/**
+ * Main-thread reader (spec §7.1.4). Retries briefly if it catches a write in progress.
+ *
+ * When all eight attempts tear, the reader HOLDS its last good reading and marks it `stale`
+ * (issue #95). It used to return tick 0 as though it were a real position, which read as the
+ * playhead snapping back to bar 1 mid-playback — a value every consumer believed. Holding is
+ * done here rather than at each call site so no consumer has to remember to.
+ */
 export class PlayheadReader {
   private readonly header: Int32Array;
   private readonly data: Float64Array;
+  /** The last tear-free snapshot, held over whenever a read fails. */
+  private last: PlayheadReading = {
+    currentTick: 0,
+    isPlaying: false,
+    isRecording: false,
+    isCapturing: false,
+    generation: 0,
+    stale: false,
+  };
 
   constructor(sab: SharedArrayBuffer) {
     this.header = new Int32Array(sab, 0, HEADER_INTS);
@@ -75,24 +96,23 @@ export class PlayheadReader {
   }
 
   read(): PlayheadReading {
-    let currentTick = 0;
-    let flags = 0;
-    let generation = 0;
     for (let attempt = 0; attempt < 8; attempt++) {
       const before = Atomics.load(this.header, 0);
       if (before % 2 !== 0) continue; // writer mid-write — retry
-      currentTick = this.data[0]!;
-      flags = Atomics.load(this.header, 1);
+      const currentTick = this.data[0]!;
+      const flags = Atomics.load(this.header, 1);
       const after = Atomics.load(this.header, 0);
-      generation = after;
-      if (before === after) break; // consistent snapshot
+      if (before !== after) continue; // torn — retry
+      this.last = {
+        currentTick,
+        isPlaying: (flags & PLAYHEAD_FLAG_PLAYING) !== 0,
+        isRecording: (flags & PLAYHEAD_FLAG_RECORDING) !== 0,
+        isCapturing: (flags & PLAYHEAD_FLAG_CAPTURING) !== 0,
+        generation: after,
+        stale: false,
+      };
+      return this.last;
     }
-    return {
-      currentTick,
-      isPlaying: (flags & PLAYHEAD_FLAG_PLAYING) !== 0,
-      isRecording: (flags & PLAYHEAD_FLAG_RECORDING) !== 0,
-      isCapturing: (flags & PLAYHEAD_FLAG_CAPTURING) !== 0,
-      generation,
-    };
+    return { ...this.last, stale: true };
   }
 }
