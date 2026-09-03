@@ -3,12 +3,7 @@
  * memory views (via {@link StreamingKernel}) and exposes the limiter's typed params; its
  * reported {@link latencySamples} feeds plugin-delay compensation (spec §5.7.3).
  */
-import {
-  clampKernelParam,
-  StreamingKernel,
-  type KernelRange,
-  type StreamingKernelExports,
-} from './kernelBase';
+import { kernelParam, StreamingKernel, type KernelRange, type StreamingKernelExports } from './kernelBase';
 
 interface LimiterExports extends StreamingKernelExports {
   setCeiling(handle: number, dbfs: number): void;
@@ -60,15 +55,19 @@ export class LookaheadLimiterKernel extends StreamingKernel<LimiterExports> {
     return new LookaheadLimiterKernel(exports, handle, inPtr, outPtr, maxBlock);
   }
 
-  /** Output ceiling in dBFS (spec §5.7: −6..0), clamped before it reaches the kernel. */
+  /** Output ceiling in dBFS (spec §5.7: −6..0). Clamped in range, refused if not a number. */
   setCeiling(dbfs: number): void {
     this.assertLive();
-    this.exports.setCeiling(this.handle, clampKernelParam(dbfs, LIMITER_RANGES.ceiling));
+    const ceiling = kernelParam(dbfs, LIMITER_RANGES.ceiling);
+    if (ceiling === null) return;
+    this.exports.setCeiling(this.handle, ceiling);
   }
 
-  /** Release time in ms (spec §5.7: 10..500), clamped before it reaches the kernel. */
+  /** Release time in ms (spec §5.7: 10..500). Clamped in range, refused if not a number. */
   setRelease(releaseMs: number): void {
     this.assertLive();
-    this.exports.setRelease(this.handle, clampKernelParam(releaseMs, LIMITER_RANGES.release));
+    const release = kernelParam(releaseMs, LIMITER_RANGES.release);
+    if (release === null) return;
+    this.exports.setRelease(this.handle, release);
   }
 }

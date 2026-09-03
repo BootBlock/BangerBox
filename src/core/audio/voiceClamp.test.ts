@@ -104,3 +104,21 @@ describe('VoicePool clamps detune and amp gain (spec §6, issue #76)', () => {
     pool.destroy();
   });
 });
+
+describe('a non-finite tune contributes no detune (spec §6, issue #76)', () => {
+  it('does not send NaN to the range floor, four octaves flat', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { tuneCents: Number.NaN }));
+    expect(detuneOf(fake)).toBe(0);
+    pool.destroy();
+  });
+
+  it('does the same for a non-finite semitone tune', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { tuneSemitones: Number.POSITIVE_INFINITY }));
+    expect(detuneOf(fake)).toBe(0);
+    pool.destroy();
+  });
+});

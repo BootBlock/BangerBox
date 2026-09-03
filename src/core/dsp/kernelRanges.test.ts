@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
 import { FDN_REVERB_RANGES } from './fdnReverbKernel';
+import { kernelParam, kernelParamOr } from './kernelBase';
 import { LIMITER_RANGES } from './lookaheadLimiterKernel';
 import { MULTIBAND_RANGES } from './multibandCompKernel';
 
@@ -35,5 +36,26 @@ describe('kernel wrapper bounds mirror the §5.7 table (spec §13.6)', () => {
     expect(MULTIBAND_RANGES.attack).toEqual(table.band0Attack);
     expect(MULTIBAND_RANGES.release).toEqual(table.band0Release);
     expect(MULTIBAND_RANGES.makeup).toEqual(table.band0Makeup);
+  });
+});
+
+describe('kernelParam refuses rather than floors (spec §5.7, issue #97)', () => {
+  it('clamps an out-of-range value into the range', () => {
+    expect(kernelParam(-100, LIMITER_RANGES.ceiling)).toBe(-6);
+    expect(kernelParam(100, LIMITER_RANGES.ceiling)).toBe(0);
+    expect(kernelParam(-3, LIMITER_RANGES.ceiling)).toBe(-3);
+  });
+
+  it('returns null for a non-finite value, so the caller keeps what the kernel had', () => {
+    // A floored threshold is the compressor's HARDEST setting, not a neutral one, so there is
+    // nothing safe to substitute.
+    expect(kernelParam(Number.NaN, MULTIBAND_RANGES.threshold)).toBeNull();
+    expect(kernelParam(Number.POSITIVE_INFINITY, MULTIBAND_RANGES.crossoverMidHigh)).toBeNull();
+  });
+
+  it('kernelParamOr substitutes an explicit neutral where a parameter has one', () => {
+    expect(kernelParamOr(Number.NaN, [0.25, 4], 1)).toBe(1);
+    expect(kernelParamOr(9, [0.25, 4], 1)).toBe(4);
+    expect(kernelParamOr(2, [0.25, 4], 1)).toBe(2);
   });
 });

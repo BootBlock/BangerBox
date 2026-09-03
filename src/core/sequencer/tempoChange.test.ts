@@ -196,3 +196,70 @@ describe('a tempo change during the count-in re-times the count-in (spec §7.7, 
     for (let i = 1; i < clicks.length; i++) expect(clicks[i]!).toBeGreaterThan(clicks[i - 1]!);
   });
 });
+
+describe('the re-anchor leaves no stale reading behind (spec §7.1.4, issue #74)', () => {
+  it('never publishes a tick outside the loop on the wake that applies the change', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, 's1');
+    core.setTempo(120);
+    core.setLoop({ enabled: true, startTick: 0, endTick: BAR_TICKS });
+    core.setTransport(true, false, 0);
+    core.tick(0);
+    // `originTick` is a LINEAR tick, so after ten seconds it is five bars past the loop end.
+    core.tick(10);
+    core.setTempo(60);
+    core.tick(10);
+    for (const at of [10, 10.5, 11, 12]) {
+      const tick = core.playheadTick(at);
+      expect(tick).toBeGreaterThanOrEqual(0);
+      expect(tick).toBeLessThan(BAR_TICKS);
+    }
+  });
+
+  it('keeps the metronome accenting the bar line after a tempo change', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, 's1');
+    core.setTempo(120);
+    core.setMetronome(true, 0);
+    core.setTransport(true, false, 0);
+    const clicks: { when: number; accented: boolean }[] = [];
+    const collect = (at: number): void => {
+      for (const event of core.tick(at).batch) {
+        if (event.kind === 'click') clicks.push({ when: event.when, accented: event.accented === true });
+      }
+    };
+    collect(0);
+    collect(1);
+    core.setTempo(121); // a nudge, which lands the anchor mid-bar
+    for (let at = 1.5; at <= 20; at += 0.5) collect(at);
+
+    // Once the change has settled, accents must be exactly one bar apart at the NEW tempo —
+    // which is what breaks if the accent phase is read from the moving anchor, or if a click
+    // index is skipped rather than merely left unemitted.
+    const settled = clicks.filter((click) => click.when > 4);
+    const accents = settled.filter((click) => click.accented).map((click) => click.when);
+    expect(accents.length).toBeGreaterThan(2);
+    const barSeconds = 4 * (60 / 121);
+    for (let i = 1; i < accents.length; i++) {
+      expect(accents[i]! - accents[i - 1]!).toBeCloseTo(barSeconds, 6);
+    }
+    // And every fourth click is the accented one, with no beat missing between them.
+    const settledAccentCount = settled.filter((click) => click.accented).length;
+    expect(settled.length).toBeGreaterThanOrEqual(settledAccentCount * 4 - 3);
+  });
+
+  it('schedules no click in the past on a speed-up', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, 's1');
+    core.setTempo(60);
+    core.setMetronome(true, 0);
+    core.setTransport(true, false, 0);
+    core.tick(0);
+    core.tick(4);
+    core.setTempo(240);
+    // The wake that applies it must not dump a burst of already-elapsed beats.
+    const applied = core.tick(4);
+    const clicks = applied.batch.filter((event) => event.kind === 'click');
+    for (const click of clicks) expect(click.when).toBeGreaterThanOrEqual(4);
+  });
+});

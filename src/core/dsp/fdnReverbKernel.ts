@@ -3,12 +3,7 @@
  * views (via {@link StreamingKernel}) and exposes the reverb's typed params. Outputs the wet
  * signal only; the insert wrapper mixes dry/wet (spec §5.7). Native latency is zero for PDC.
  */
-import {
-  clampKernelParam,
-  StreamingKernel,
-  type KernelRange,
-  type StreamingKernelExports,
-} from './kernelBase';
+import { kernelParam, StreamingKernel, type KernelRange, type StreamingKernelExports } from './kernelBase';
 
 interface FdnReverbExports extends StreamingKernelExports {
   setSize(handle: number, seconds: number): void;
@@ -38,21 +33,27 @@ export class FdnReverbKernel extends StreamingKernel<FdnReverbExports> {
     return new FdnReverbKernel(exports, handle, inPtr, outPtr, maxBlock);
   }
 
-  /** Reverb decay time in seconds (spec §5.7: 0.2–10 s), clamped before the kernel sees it. */
+  /** Reverb decay time in seconds (spec §5.7: 0.2–10 s). Clamped in range, else refused. */
   setSize(seconds: number): void {
     this.assertLive();
-    this.exports.setSize(this.handle, clampKernelParam(seconds, FDN_REVERB_RANGES.size));
+    const size = kernelParam(seconds, FDN_REVERB_RANGES.size);
+    if (size === null) return;
+    this.exports.setSize(this.handle, size);
   }
 
-  /** High-frequency damping, 0..1 (spec §5.7), clamped before the kernel sees it. */
+  /** High-frequency damping, 0..1 (spec §5.7). Clamped in range, else refused. */
   setDamping(amount: number): void {
     this.assertLive();
-    this.exports.setDamping(this.handle, clampKernelParam(amount, FDN_REVERB_RANGES.damping));
+    const damping = kernelParam(amount, FDN_REVERB_RANGES.damping);
+    if (damping === null) return;
+    this.exports.setDamping(this.handle, damping);
   }
 
-  /** Pre-delay in ms (spec §5.7: 0–200 ms), clamped before the kernel sees it. */
+  /** Pre-delay in ms (spec §5.7: 0–200 ms). Clamped in range, else refused. */
   setPredelay(ms: number): void {
     this.assertLive();
-    this.exports.setPredelay(this.handle, clampKernelParam(ms, FDN_REVERB_RANGES.predelay));
+    const predelay = kernelParam(ms, FDN_REVERB_RANGES.predelay);
+    if (predelay === null) return;
+    this.exports.setPredelay(this.handle, predelay);
   }
 }

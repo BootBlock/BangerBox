@@ -7,11 +7,14 @@
  * Follows the §5.6.1 guard policy (issue #97): the detection options are clamped into their
  * §7.5/§8.5.4 ranges, and the frame capacity is refused if it is not a positive integer.
  */
-import { assertPositiveInteger, assertSampleRate, clampKernelParam, type KernelRange } from './kernelBase';
+import { assertPositiveInteger, assertSampleRate, kernelParamOr, type KernelRange } from './kernelBase';
 
 /** Detection option bounds (spec §7.5 min-spacing, §8.5.4 sensitivity slider). */
 const SENSITIVITY_RANGE: KernelRange = [0, 1];
 const MIN_SPACING_MS_RANGE: KernelRange = [0, 10_000];
+/** Both options are optional with a documented default, so that default IS their neutral. */
+const DEFAULT_SENSITIVITY = 0.5;
+const DEFAULT_MIN_SPACING_MS = 30;
 
 interface TransientDetectExports {
   memory: WebAssembly.Memory;
@@ -64,7 +67,10 @@ export class TransientDetectKernel {
   }
 
   /** Detect onset frame indices in `samples` (spec §7.5, §8.5.4). */
-  detect(samples: Float32Array, { sensitivity = 0.5, minSpacingMs = 30 }: DetectOptions = {}): number[] {
+  detect(
+    samples: Float32Array,
+    { sensitivity = DEFAULT_SENSITIVITY, minSpacingMs = DEFAULT_MIN_SPACING_MS }: DetectOptions = {},
+  ): number[] {
     this.assertLive();
     const frames = Math.min(samples.length, this.maxFrames);
     for (let i = 0; i < frames; i++) this.inView[i] = samples[i] as number;
@@ -72,8 +78,8 @@ export class TransientDetectKernel {
       this.handle,
       this.inPtr,
       frames,
-      clampKernelParam(sensitivity, SENSITIVITY_RANGE),
-      clampKernelParam(minSpacingMs, MIN_SPACING_MS_RANGE),
+      kernelParamOr(sensitivity, SENSITIVITY_RANGE, DEFAULT_SENSITIVITY),
+      kernelParamOr(minSpacingMs, MIN_SPACING_MS_RANGE, DEFAULT_MIN_SPACING_MS),
     );
     const onsets: number[] = [];
     for (let i = 0; i < count; i++) onsets.push(this.exports.onsetAt(this.handle, i));

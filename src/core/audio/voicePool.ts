@@ -404,11 +404,14 @@ export class VoicePool {
     // already bounds the matrix's own contribution, so this catches a `spec` that reached the
     // pool without passing the §6 schema — detune is the playback rate, and a wild one
     // consumes the buffer before a single frame is audible.
-    const baseDetune = clamp(
-      spec.tuneSemitones * 100 + spec.tuneCents + stat.detuneCents,
-      -MAX_VOICE_DETUNE_CENTS,
-      MAX_VOICE_DETUNE_CENTS,
-    );
+    //
+    // A non-finite tune becomes NO detune, not the range floor. `clamp` sends NaN to `min`,
+    // which here would be four octaves flat — the opposite of `clampModSum`'s policy that a
+    // value nobody can interpret contributes nothing (issue #76).
+    const requestedDetune = spec.tuneSemitones * 100 + spec.tuneCents + stat.detuneCents;
+    const baseDetune = Number.isFinite(requestedDetune)
+      ? clamp(requestedDetune, -MAX_VOICE_DETUNE_CENTS, MAX_VOICE_DETUNE_CENTS)
+      : 0;
 
     const ampGain = this.context.createGain();
     const filterType = spec.filter ? biquadFilterType(spec.filter.type) : null;
@@ -455,7 +458,9 @@ export class VoicePool {
     }
 
     // Amp AHDSR (velocity × gain trim × static amp mod) — spec §5.4/§6, clamped at the
-    // parameter for the same reason as the detune above (issue #76).
+    // parameter for the same reason as the detune above (issue #76). A non-finite gain has no
+    // neutral to fall back to, so it lands on silence — recoverable by fixing the value, where
+    // a NaN written to the gain param would poison the chain for the session (§8.5.6).
     const peak = clamp(velocityToGain(spec.velocity, spec.gainDb) * stat.ampFactor, 0, MAX_VOICE_GAIN);
     scheduleAmpAttack(ampGain.gain, peak, spec.amp, now);
 

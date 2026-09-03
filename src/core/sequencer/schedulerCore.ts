@@ -137,6 +137,15 @@ export class SchedulerCore {
    */
   private nextSongSeconds = 0;
   private nextClickIndex = 0;
+  /**
+   * Which beat of the bar click index 0 falls on (spec §5.9 accents beat 1).
+   *
+   * Captured once from the start tick, never re-derived: `originTick` moves to an arbitrary
+   * mid-bar position when a tempo change re-anchors it (issue #74), and reading the phase
+   * from it there put the accent permanently off the bar line. A tempo change does not move
+   * which beat of the bar the grid is on, so the phase is invariant across one.
+   */
+  private clickBeatPhase = 0;
   private lastLoopPass = 0;
   private lastEntryIndex = -1;
   private lastSongPass = 0;
@@ -335,7 +344,7 @@ export class SchedulerCore {
     // metronome the user hears after the transport has stopped.
     if (this.playbackMode === 'song') this.scheduleSong(now, horizon, result);
     else this.scheduleSequence(horizon, result);
-    if (this.playing) this.scheduleClicks(horizon, result);
+    if (this.playing) this.scheduleClicks(now, horizon, result);
     return result;
   }
 
@@ -374,6 +383,7 @@ export class SchedulerCore {
     this.nextScheduleTick = this.originTick;
     this.nextSongSeconds = this.anchorSongSeconds;
     this.nextClickIndex = 0;
+    this.clickBeatPhase = this.beatPhaseOf(this.originTick);
     this.lastLoopPass = loopPassAt(this.originTick, this.loop);
     this.lastEntryIndex = -1;
     this.lastSongPass = 0;
@@ -419,7 +429,7 @@ export class SchedulerCore {
       return;
     }
     if (now > this.anchorContext) {
-      this.reanchorClicks(now);
+      this.reanchorClicks(now, bpm);
       this.anchorSongSeconds += now - this.anchorContext;
       this.originTick = this.linearTickAt(now); // at the old tempo, before it changes
       this.anchorContext = now;
@@ -434,10 +444,6 @@ export class SchedulerCore {
     const countInSeconds = this.recording && this.countInBars > 0 ? this.countInBars * this.barSeconds() : 0;
     this.contentStartContext = this.playStartContext + countInSeconds;
     this.anchorContext = this.contentStartContext;
-    const beatSeconds = this.beatSeconds();
-    if (beatSeconds > 0) {
-      while (this.playStartContext + this.nextClickIndex * beatSeconds < now) this.nextClickIndex++;
-    }
   }
 
   /**
@@ -445,30 +451,41 @@ export class SchedulerCore {
    * scheduled (issue #74).
    *
    * The grid is `playStartContext + index × beatSeconds`, so changing `beatSeconds` alone
-   * would move every click including the ones already posted. Instead the last click emitted
-   * keeps its place and the grid is rebuilt from there at the new spacing. Any click the new
-   * spacing would put in the past is skipped: a past `when` reaches the dispatcher and Web
-   * Audio plays it immediately, which is an audible stray beat.
+   * would move every click including the ones already posted. The grid is rebuilt around the
+   * NEXT unemitted click instead, which is placed at whichever of three times comes first
+   * without falling in the past:
+   *
+   *  - where the old tempo was going to put it, so the beat the change interrupts finishes at
+   *    the tempo it started under;
+   *  - one NEW beat from here, so a big speed-up does not have to wait out the old, longer
+   *    beat before anything sounds faster;
+   *  - never before `now` or before the click already emitted, because a past `when` reaches
+   *    the dispatcher and Web Audio plays it immediately, as a stray beat.
+   *
+   * No click index is skipped, which is what keeps the §5.9 accent on the bar line: the accent
+   * follows `clickBeatPhase + index`, so dropping an index would move every later accent.
    */
-  private reanchorClicks(now: number): void {
+  private reanchorClicks(now: number, bpm: number): void {
     const oldBeatSeconds = this.beatSeconds();
-    if (!(oldBeatSeconds > 0) || this.nextClickIndex === 0) return;
+    const newBeatSeconds = ticksToSeconds(ticksPerBeat(this.activeTimeSig()), bpm);
+    if (!(oldBeatSeconds > 0) || !(newBeatSeconds > 0) || this.nextClickIndex === 0) return;
     const lastEmitted = this.playStartContext + (this.nextClickIndex - 1) * oldBeatSeconds;
-    const newBeatSeconds = ticksToSeconds(ticksPerBeat(this.activeTimeSig()), this.pendingBpmOrCurrent());
-    if (!(newBeatSeconds > 0)) return;
-    this.playStartContext = lastEmitted - (this.nextClickIndex - 1) * newBeatSeconds;
-    while (this.playStartContext + this.nextClickIndex * newBeatSeconds < now) this.nextClickIndex++;
+    const nextWhen = lastEmitted + oldBeatSeconds;
+    const earliest = Math.max(now, lastEmitted);
+    const at = Math.min(Math.max(nextWhen, now), earliest + newBeatSeconds);
+    this.playStartContext = at - this.nextClickIndex * newBeatSeconds;
   }
 
-  /** The tempo the click grid is being re-phased onto (the pending one has not landed yet). */
-  private pendingBpmOrCurrent(): number {
-    return this.pendingBpm ?? this.bpm;
-  }
-
-  /** Sequence/song tick at a context time (spec §7.1.4). */
+  /**
+   * Sequence/song tick at a context time (spec §7.1.4).
+   *
+   * There is no early return for a zero elapsed: `originTick` is a LINEAR tick, and a
+   * re-anchored one is an arbitrary point part-way through a loop pass, so it has to be
+   * folded onto its sequence tick like any other position. Returning it raw was safe only
+   * while the anchor could not move (issue #74).
+   */
   private positionTickAt(when: number): number {
-    const elapsed = when - this.anchorContext;
-    if (elapsed <= 0) return this.originTick;
+    const elapsed = Math.max(0, when - this.anchorContext);
     if (this.playbackMode === 'song') {
       // Absolute (unwrapped) song seconds, folded back into one pass when the song loops
       // (spec §7.9) so the playhead restarts at 0 rather than clamping at the end.
@@ -481,7 +498,7 @@ export class SchedulerCore {
   }
 
   // --- metronome + count-in (spec §7.7) ---
-  private scheduleClicks(horizon: number, result: SchedulerTickResult): void {
+  private scheduleClicks(now: number, horizon: number, result: SchedulerTickResult): void {
     const beatSeconds = this.beatSeconds();
     const timeSig = this.activeTimeSig();
     // §5.9 accents beat 1, so the accent must follow the *bar line*, not the play gesture:
@@ -489,14 +506,20 @@ export class SchedulerCore {
     // click index by the origin's beat offset within its bar. A count-in is always a whole
     // number of bars, so the same expression accents the count-in on that same bar grid.
     const barBeats = Math.max(1, Math.round(timeSig.numerator));
-    const originBeat = Math.floor(this.originTick / ticksPerBeat(timeSig));
-    const beatPhase = ((originBeat % barBeats) + barBeats) % barBeats;
+    const beatPhase = this.clickBeatPhase;
     let guard = 0;
     while (guard++ < WINDOW_GUARD) {
       const when = this.playStartContext + this.nextClickIndex * beatSeconds;
       if (when > horizon) break;
       const inCountIn = when < this.contentStartContext - 1e-9;
-      if (inCountIn || this.metronomeEnabled) {
+      // A click more than one beat stale is not emitted, but its index is still consumed
+      // (issue #74). Scheduling a past `when` makes Web Audio play it instantly, so a wake
+      // after a backgrounded tab would otherwise dump every elapsed beat as a single burst.
+      // The tolerance is one beat rather than zero because a click a few milliseconds late is
+      // still the beat the user is expecting, and dropping it would silence the metronome. The
+      // index is ADVANCED rather than skipped, which is what keeps the §5.9 accent on the bar
+      // line: the accent follows the index, not the number of clicks emitted.
+      if ((inCountIn || this.metronomeEnabled) && when >= now - beatSeconds) {
         const accented = (beatPhase + this.nextClickIndex) % barBeats === 0;
         result.batch.push({ kind: 'click', when, tick: 0, accented });
       }
@@ -926,6 +949,14 @@ export class SchedulerCore {
   }
 
   // --- musical helpers ---
+  /** Which beat of the bar `tick` falls on, for the §5.9 accent (spec §7.7). */
+  private beatPhaseOf(tick: number): number {
+    const timeSig = this.activeTimeSig();
+    const barBeats = Math.max(1, Math.round(timeSig.numerator));
+    const beat = Math.floor(tick / ticksPerBeat(timeSig));
+    return ((beat % barBeats) + barBeats) % barBeats;
+  }
+
   private activeTimeSig(): TimeSignature {
     const meta = this.activeSequenceId ? this.sequenceMeta.get(this.activeSequenceId) : undefined;
     return meta ? { numerator: meta.numerator, denominator: meta.denominator } : DEFAULT_TIME_SIG;
