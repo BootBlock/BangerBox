@@ -1,14 +1,14 @@
-# BangerBox — Phase Handover (after the §5/§7 playback-wiring closure)
+# BangerBox — Phase Handover (after the data-integrity closure)
 
-Generated at the close of the playback-wiring work per Protocol Alpha (spec §13.1). A new session
+Generated at the close of the data-integrity work per Protocol Alpha (spec §13.1). A new session
 MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and MUST
 reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the playback-wiring work merged to `main` (`--no-ff`, 2368c97). All eight §12 phases were
-already complete; this was a defect closure against §5.4/§5.7/§5.7.9/§6/§7.5/§7.9/§3.4, not a new
-phase, so `package.json` `config.phase` remains **"8"**. Suite: **1461 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **50/50 steps**), plus `lint`, `type-check`, `format:check` and
-`verify` (**no open stubs**).
+**State:** the data-integrity work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §4.4/§9.2/§9.6/§9.7/§9.3, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1537 unit tests**, `test:e2e` real-browser
+smoke (dev + offline, **50/50 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+(**no open stubs**).
 
 **The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
 human developer. Nothing in this work touched it.
@@ -35,6 +35,33 @@ All nineteen stand unchanged. Three that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(aj) — the data-integrity closure (§4.4, §9.2, §9.3, §9.6, §9.7).** The ⚑ items below are
+  settled policy a new session should treat as binding, not as spec text:
+  - **A project switch REFUSES over work autosave could not write.** Not a confirmation modal:
+    the refusal needs no new UI, and the escape hatch it costs is covered three ways — the
+    message says to export, the queue is left standing so a later `saveNow()` still writes, and
+    a permanently-unflushable batch is dropped by the queue's own issue-#72 rule, so a second
+    attempt proceeds. The user is warned once, never trapped.
+  - **Refusing and TEARING THE QUEUE DOWN are separate steps.** `newProject` and
+    `installUnpackedAsNewProject` refuse before writing anything; the teardown stays in
+    `loadProject`. Doing both up front left the still-open project with `markDirty` a no-op the
+    moment anything after it failed — a worse loss than the one being prevented.
+  - **`closeActiveProject` forces**, because §8.1's Safe Mode is the escape hatch and its own
+    offer is to export.
+  - **A tempo edit is UNDOABLE and belongs to the sequence row**, not to the transport mirror.
+    With no active sequence it lands on `projects.bpm_default`, which §9.3 already defines as
+    what a NULL `sequences.tempo` means. Swing has no project-level default, so with no sequence
+    it moves the mirror and no more.
+  - **The transport mirror writes back only what the ROWS changed**, because a §4.1 transient
+    gesture holds it ahead of its row on purpose.
+  - **A damaged `.mpcweb` is REFUSED; a lossy export is WRITTEN and warned about.** Import
+    refuses before a row or byte is written. Export is per-sample recoverable and drops an
+    unreadable sample from both the archive and its rows — the file may be the only copy of the
+    user's work, so producing it and saying what is wrong beats producing nothing. The same rule
+    governs an export that exceeds the import budget.
+  - **`writeFileAtomic` is atomic wherever `FileSystemFileHandle.move()` is**, and best-effort
+    where it is not. There is no atomic replacement to reach for without a rename.
 
 - **(ai) — the §5/§7 playback wiring (§5.4, §5.7, §5.7.9, §6, §7.5, §7.9).** The ⚑ items below are
   settled policy a new session should treat as binding, not as spec text:
@@ -95,8 +122,47 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 
 ## 4. Established patterns (reuse, do not reinvent)
 
-Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam and the (ah)
-automation seam still stands. New this work:
+Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
+automation seam and the (ai) voice-source/scheduler/tempo seams still stand. New this work:
+
+**The storage failure policy (spec §9.2, §9.7):**
+
+- **`src/core/storage/retry.ts` is the only place that decides what a storage failure IS.**
+  `isRecoverableStorageError` says which failures are transient contention (SQLite BUSY/LOCKED,
+  OPFS `NoModificationAllowedError`) and `isNotFoundError` says which are an answer rather than a
+  failure. A new storage call site classifies through those two, never with its own `catch {}`.
+- **`withStorageRetry` rethrows the ORIGINAL typed error** when the budget runs out. A caller must
+  still be able to branch on `DbError.code`, so there is no "gave up" wrapper.
+- **Only idempotent operations go through it**: the three `WorkerDatabaseDriver` data calls and
+  `writeFileAtomic`. `init`, `diagnostics`, `exportBinary` and `close` are deliberately outside.
+- **`src/test/fakes/opfs.ts` is how OPFS policy is unit-tested.** Failures are injected through a
+  mutable control object rather than by entry name, because the atomic write's temp file is named
+  from `crypto.randomUUID()`. The real path is still proven by the §11.4 smoke, per §13.5 — the
+  probe's `storagePolicyProof` is that proof.
+
+**The `.mpcweb` reader (spec §9.6, §9.7):**
+
+- **Unpacking is STREAMED (`Unzip` + `UnzipInflate`), never `unzipSync`.** The budget is checked
+  inside `ondata`, where a throw unwinds straight out of `push`, so the remaining bytes are never
+  inflated. `unzipSync` cannot bound anything, because it returns only once everything is held.
+- **An entry the §9.6 layout does not name is never `start()`ed**, so an unknown entry costs
+  nothing. Adding an entry kind means extending `isLayoutEntry`.
+- **`unpackMpcweb` takes an optional budget** purely so the limits are provable at a size a unit
+  test can build. Production always uses the §2.6 constants.
+- **The archive's audio is reconciled against the sample rows `project.json` declares.** A row
+  with no bytes refuses the import; bytes with no row are ignored.
+
+**Tempo and swing (spec §9.3, §7.9):**
+
+- **`src/store/tempo.ts` is the one place a tempo or swing edit enters the model.** The transport
+  bar and the §10.3 Q-Link runtime both call it, with the §4.1 transient/commit split. Neither
+  store owns the write: the transport store may not, or the mirror becomes authoritative and
+  contradicts §7.9; the sequence store should not have to know which sequence is active.
+- **`src/store/derive/transportMirror.ts` re-derives the mirror, and is NOT part of `syncLayer/`.**
+  §4.3 is store → graph; this is store → store, and mixing them would blur the rule that the sync
+  layer is the only code allowed to touch audio nodes. It is registered by `startProjectSession`.
+- **`useProjectStore.bpmDefault`** is the §9.3 `projects.bpm_default` column, and `flushProject`
+  writes it. Nothing wrote that column before.
 
 **The voice source seam (spec §5.2 stage 1, §5.7.9):**
 
@@ -149,7 +215,13 @@ automation seam still stands. New this work:
 
 ## 5. Repository catalogue — unchanged. No repository or DDL change.
 
+`dumpSnapshot` now reads `samples.listGlobal` as well as `listByProject`, so a §9.6 export carries
+the §9.8 global-library audio its programs reference. No repository method was added.
+
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1**. **No migration added.**
+
+`projects.bpm_default` is now WRITTEN as well as read (issue #93). The column has always existed
+with a default of 120, so a project saved before this loads unchanged and needs no migration.
 
 The §9.3 `projects.payload` gained three optional fields — `grooveTemplates`, `trackGrooveIds` and
 `songLoopEnabled`. All three are `.optional()`, so a project written before them loads with §7.9's
@@ -170,7 +242,19 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-Changes this work, all additive and all recorded in §14 (ai):
+Changes this work, all additive and all recorded in §14 (aj):
+
+- **`useProjectStore.bpmDefault`** with `setBpmDefault`, hydrated from `projects.bpm_default` and
+  persisted by `flushProject`. It is the other half of the §4.2 effective tempo.
+- **`src/store/tempo.ts`** — `commitTempo`/`commitSwing` and their transient pair. Not a slice: a
+  command module over two slices, because neither owns the value alone.
+- **`src/store/derive/transportMirror.ts`** — `subscribeTransportMirror`, registered by
+  `startProjectSession` and disposed by `stopProjectSession`.
+- **`AutosaveQueue.unsavedKeys`** — pending plus permanently-dropped keys, so a refusal can name
+  what it is refusing over. `pendingKeys` alone cannot: a permanent failure clears the queue.
+- **`describeDirtyKeys`** in `core/project/dirty.ts` turns that set into "2 sequences and 1 track".
+
+Changes from the previous work, recorded in §14 (ai):
 
 - **`useTransportStore.songLoopEnabled`** (§4.2's own field) with `setSongLoopEnabled`. It is the
   only setting in that store that persists, because it is arrangement state rather than a
@@ -183,7 +267,8 @@ Changes this work, all additive and all recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-Unchanged except:
+The transport bar's Tempo and Swing knobs now commit through `store/tempo.ts` rather than writing
+the transport mirror directly. Otherwise unchanged except (from the previous work):
 
 - **Song → header:** a **Loop song** `Toggle` beside the duration readout, with a line naming which
   of §7.9's two ends it selects. It is here and not in the §8.1 transport bar, per §8.5.12.
@@ -212,24 +297,47 @@ comments.
 
 **Nearest neighbours to this work, in rough order of how much they cost a musician:**
 
-- **#103** a project switch proceeds after a failed autosave flush and discards what it could not
-  write; **#98** the storage layer turns recoverable failures into silent or fatal ones; **#99** a
-  damaged `.mpcweb` imports as a silently soundless project; **#93** tempo and swing edits are never
-  persisted; **#26** zip import has no decompression limits. These five are the data-integrity
-  cluster and are the natural next piece of work.
+- **#76** mod-matrix sums reach detune and amp gain unclamped, so a valid imported program can play
+  32 octaves off at 33× gain; **#97** missing range, NaN and integer guards in the audio-param and
+  DSP helpers; **#66** `decodeWav` accepts a WAV with no `fmt` chunk and decodes it against silent
+  defaults; **#95** sequencer silent-failure modes; **#74** a mid-playback tempo change
+  retroactively re-times elapsed playback. These five are the correctness-hardening cluster and are
+  the natural next piece of work. **#74 is now adjacent to `store/tempo.ts`**, which is where a
+  tempo change enters the model.
+- **#99 remains OPEN for one point only**: export still holds every sample in memory at once.
+  `zipSync` materialises the whole archive, so streaming it is a redesign of `pack.worker.ts` and
+  `packClient.ts` rather than a fix. Everything else in that issue is closed.
 - **#94** song mode omits automation, note repeat, arp, live erase and the per-pass recording flush.
-  This work rewrote `scheduleSong`'s cursor and its end, not its content selection, so #94 is
-  untouched and the two do not conflict.
-- **#74** a mid-playback tempo change retroactively re-times elapsed playback. It is adjacent to the
-  synced-LFO and synced-delay decisions recorded in §14 (ai), which both assume tempo changes are
-  rare and deliberate.
+  Untouched by this work.
 - **#104** song and stem bounces write a WAV no user can reach.
-- **#76** mod-matrix sums reach detune and amp gain unclamped.
 - **#27, #28** the transient store channel re-renders every consumer per gesture frame, and Grid
   scroll and zoom still route through React state.
 - **#54** destructive edits have no confirmation.
 
 **Honest scope notes for this work:**
+
+- **Export still holds every sample in memory** (issue #99, above). Nothing in this work changed
+  that, and the new export-side warning is a report rather than a bound.
+- **The §2.6 `.mpcweb` budgets are absolute, not ratio-based.** A 1 GiB archive from a 1 MB file is
+  still a 1000× expansion and still allowed. A compression-ratio cap would be tighter but would
+  refuse a legitimate project whose `project.json` happens to compress well, and #26 asked for the
+  three absolute caps.
+- **A permanently-unflushable batch lets the SECOND switch attempt through.** The queue drops such
+  keys by its own issue-#72 rule, so the work really is gone by then — the user was warned once and
+  chose to proceed. The alternative traps them.
+- **An import refused after its rows commit leaves the archive in Recent, unopened.** Reachable
+  only if the user edits between the install's own refusal check and the `loadProject` at its end.
+  Nothing is lost; the project simply is not opened.
+- **Verified in a real browser** at ports 5340 (preview) and 5342/5343 (smoke). Twenty driver
+  checks and 50/50 smoke steps, no console errors: a tempo of 134 and a swing of 58 survived a
+  reload where the unfixed build returned to 120/50; an archive declaring two samples and carrying
+  one was refused by name ("1 of its 2 samples are missing from it (snare)"); a 301 kB archive
+  inflating to 300 MiB was refused in 4.2 s as "too large (over 256 MB)" with the tab intact; a
+  switch over an unwritable key was refused, left the user on the same project with the dot up, and
+  succeeded on retry; and the storage policy round-tripped an atomic write with no temp left behind
+  while an injected `NotReadableError` propagated instead of reading as "absent".
+
+**Judgement calls from the previous work:**
 
 - **The ⚑ policies in §14 (ai) are judgement calls**, not spec text. Each lives in exactly one place
   if a human prefers a different one.
@@ -257,6 +365,6 @@ comments.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1461**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**1537**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **50/50 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
