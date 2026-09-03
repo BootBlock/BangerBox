@@ -104,6 +104,52 @@ const ICON_SIZE: Record<ButtonSize, string> = {
   lg: 'rounded-bb-md p-2 text-sm',
 };
 
+export interface ButtonChassisOptions {
+  readonly variant?: ButtonVariant;
+  readonly size?: ButtonSize;
+  readonly iconOnly?: boolean;
+  readonly block?: boolean;
+  readonly disabled?: boolean;
+}
+
+/**
+ * The chassis class list, shared with {@link FilePickerButton}.
+ *
+ * It is exported rather than inlined because a file picker has to be a `<label>` wrapping an
+ * `<input type="file">` — a `<button>` cannot open the picker — and hand-copying the classes
+ * there is precisely the drift this chassis exists to stop (spec §3.6). The Browser's two
+ * import labels had already drifted that way, which is why they alone never showed a busy
+ * state (issue #54).
+ */
+export function buttonChassis({
+  variant = 'default',
+  size = 'md',
+  iconOnly = false,
+  block = false,
+  disabled = false,
+}: ButtonChassisOptions): string {
+  return [
+    // `shrink-0`: a button squeezed below its label's width clips the label, which is
+    // never what a flex row wants. Several call sites had already discovered this and
+    // pasted `shrink-0` in themselves; it belongs to the chassis.
+    // No radius here — every entry in SIZE/ICON_SIZE sets its own, and specifying one
+    // in both places would leave the winner to stylesheet emission order.
+    'inline-flex shrink-0 items-center justify-center border font-semibold',
+    // Every button clears the ~44 px touch minimum as a hit target regardless of its
+    // drawn size (spec §8.1). `sm`/`md` icon buttons draw at 22–32 px because the rows
+    // they sit in have no room to grow; the pointer area grows instead.
+    'bb-touch-target',
+    // One transition for every button in the app, using the token easing, so a button
+    // never snaps in one mode and eases in another.
+    'transition-colors duration-150 ease-bb-snap',
+    iconOnly ? ICON_SIZE[size] : SIZE[size],
+    block ? 'w-full' : '',
+    VARIANT[variant],
+    // One disabled treatment app-wide, matching Toggle and SegmentControl.
+    disabled ? 'cursor-not-allowed opacity-40' : VARIANT_HOVER[variant],
+  ].join(' ');
+}
+
 export function Button({
   label,
   onClick,
@@ -135,26 +181,7 @@ export function Button({
       title={title ?? (iconOnly ? (accessibleName ?? label) : undefined)}
       data-testid={testId}
       onClick={onClick}
-      className={[
-        // `shrink-0`: a button squeezed below its label's width clips the label, which is
-        // never what a flex row wants. Several call sites had already discovered this and
-        // pasted `shrink-0` in themselves; it belongs to the chassis.
-        // No radius here — every entry in SIZE/ICON_SIZE sets its own, and specifying one
-        // in both places would leave the winner to stylesheet emission order.
-        'inline-flex shrink-0 items-center justify-center border font-semibold',
-        // Every button clears the ~44 px touch minimum as a hit target regardless of its
-        // drawn size (spec §8.1). `sm`/`md` icon buttons draw at 22–32 px because the rows
-        // they sit in have no room to grow; the pointer area grows instead.
-        'bb-touch-target',
-        // One transition for every button in the app, using the token easing, so a button
-        // never snaps in one mode and eases in another.
-        'transition-colors duration-150 ease-bb-snap',
-        iconOnly ? ICON_SIZE[size] : SIZE[size],
-        block ? 'w-full' : '',
-        VARIANT[variant],
-        // One disabled treatment app-wide, matching Toggle and SegmentControl.
-        disabled ? 'cursor-not-allowed opacity-40' : VARIANT_HOVER[variant],
-      ].join(' ')}
+      className={buttonChassis({ variant, size, iconOnly, block, disabled })}
     >
       {icon}
       {!iconOnly && <span>{label}</span>}

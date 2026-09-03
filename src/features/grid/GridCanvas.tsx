@@ -13,6 +13,7 @@
  */
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { AutomationPoint, MidiEvent } from '@/core/project/schemas';
+import type { GridViewportStore } from './gridViewport';
 import { PPQN } from '@/core/constants';
 import { getAudioEngine } from '@/core/project/session';
 import { secondsToTicks } from '@/core/sequencer/ppqn';
@@ -61,7 +62,15 @@ export type GridTool = 'draw' | 'erase' | 'select';
 
 export interface GridCanvasProps {
   events: readonly MidiEvent[];
-  viewport: Omit<GridViewport, 'width' | 'height'>;
+  /**
+   * Scroll and zoom, as a live store rather than a value (spec §3.3, §8.4 — issue #28).
+   *
+   * A prop would mean a re-render per wheel event, and this component already mirrored the
+   * value into a ref because its rAF loop needs it per frame rather than per render. The
+   * store IS that ref, owned one level up so the zoom controls can read it too; nothing
+   * here re-renders when it moves.
+   */
+  viewport: GridViewportStore;
   tool: GridTool;
   /** Snap grid in ticks; 0 = snap off (spec §8.5.2 "grid snap selector incl. off"). */
   snapTicks: number;
@@ -177,11 +186,17 @@ export function GridCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   /** Live props for the rAF loop — reading these avoids restarting the loop per render. */
-  const latest = useRef({ events, viewport, selectedIds, rowLabel, automation });
+  const latest = useRef({ events, selectedIds, rowLabel, automation });
   // Synced in a layout effect rather than during render: mutating a ref mid-render is
   // unsafe under concurrent rendering, and the effect still lands before the next frame.
   useLayoutEffect(() => {
-    latest.current = { events, viewport, selectedIds, rowLabel, automation };
+    latest.current = { events, selectedIds, rowLabel, automation };
+  });
+  // The viewport is not mirrored here at all: it is already a live store, read per frame
+  // and per pointer sample straight from `viewport.get()` (issue #28).
+  const viewportRef = useRef(viewport);
+  useLayoutEffect(() => {
+    viewportRef.current = viewport;
   });
   const visible = useRef(true);
   /**
@@ -237,11 +252,11 @@ export function GridCanvas({
 
       const {
         events: liveEvents,
-        viewport: box,
         selectedIds: selection,
         rowLabel: label,
         automation: lane,
       } = latest.current;
+      const box = viewportRef.current.get();
       const cssWidth = canvas.width / dpr;
       const cssHeight = canvas.height / dpr;
       const laneHeight = lane ? AUTOMATION_LANE_HEIGHT : 0;
@@ -529,7 +544,7 @@ export function GridCanvas({
       const next = pinchMetrics();
       if (!previous || !next) return;
 
-      const { ticksPerPixel, rowHeight } = latest.current.viewport;
+      const { ticksPerPixel, rowHeight } = viewportRef.current.get();
       rowRemainder += previous.centreY - next.centreY;
       const rows = Math.trunc(rowRemainder / rowHeight);
       rowRemainder -= rows * rowHeight;
@@ -824,7 +839,9 @@ export function GridCanvas({
     }
 
     const point = pointFrom(pointerEvent);
-    const view: GridViewport = { ...viewport, width: point.width, height: point.gridHeight };
+    // Read per gesture, not per render: the viewport lives outside React (issue #28).
+    const box = viewport.get();
+    const view: GridViewport = { ...box, width: point.width, height: point.gridHeight };
 
     // --- Automation lane (spec §8.5.2, §7.8) ----------------------------------------
     if (automation && point.y >= point.gridHeight + VELOCITY_LANE_HEIGHT) {
@@ -835,7 +852,7 @@ export function GridCanvas({
     // --- Velocity lane: drag a note's velocity (spec §8.5.2 velocity lane) -----------
     if (point.y >= point.gridHeight) {
       // Bars are 3 px wide, so the press grabs the nearest bar within a small window.
-      const tolerance = 8 * viewport.ticksPerPixel;
+      const tolerance = 8 * box.ticksPerPixel;
       const pressTick = xToTick(point.x, view);
       const anchor = nearestEventToTick(events, pressTick, tolerance);
       if (!anchor) return;
@@ -1003,8 +1020,12 @@ export function GridCanvas({
       onZoom(event.deltaY > 0 ? 1.15 : 1 / 1.15);
       return;
     }
-    if (event.shiftKey) onScroll(event.deltaY * viewport.ticksPerPixel, 0);
-    else onScroll(event.deltaX * viewport.ticksPerPixel, Math.sign(event.deltaY));
+    // The current zoom, read from the store rather than from a rendered prop: a wheel held
+    // down produces events faster than React could hand this component a new value, and it
+    // is not going to be handed one at all any more (issue #28).
+    const { ticksPerPixel } = viewport.get();
+    if (event.shiftKey) onScroll(event.deltaY * ticksPerPixel, 0);
+    else onScroll(event.deltaX * ticksPerPixel, Math.sign(event.deltaY));
   };
 
   return (

@@ -233,3 +233,51 @@ describe('authoring automation points (spec §7.8)', () => {
     expect(screen.queryByTestId('grid-automation-override')).toBeNull();
   });
 });
+
+/**
+ * Issue #28 and spec §3.3: scroll and zoom were React state, so every wheel event
+ * re-rendered this whole mode — including the note sort in its render body — to move a
+ * canvas that was already painting from a ref of its own.
+ *
+ * The canvas is `aria-hidden` and jsdom has no 2D context, so the assertion is made where
+ * the behaviour actually is: the zoom readout and the zoom buttons, which are the only
+ * React-visible consumers left.
+ */
+describe('scroll and zoom stay out of React (spec §3.3, issue #28)', () => {
+  it('paints the zoom readout without re-rendering the mode', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    expect(screen.getByTestId('grid-zoom-readout').textContent).toBe('1.00×');
+
+    // The buttons write the same store a wheel event does, so this drives the whole path.
+    await user.click(screen.getByRole('button', { name: 'Zoom out' }));
+    expect(screen.getByTestId('grid-zoom-readout').textContent).toBe('0.67×');
+    await user.click(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(screen.getByTestId('grid-zoom-readout').textContent).toBe('1.00×');
+  });
+
+  it('enables Reset only once the zoom has actually moved', async () => {
+    const user = userEvent.setup();
+    render(<GridMode />);
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Zoom out' }));
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Reset zoom' }));
+    expect(screen.getByTestId('grid-zoom-readout').textContent).toBe('1.00×');
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toBeDisabled();
+  });
+
+  it('keeps the viewport across a re-render driven by something else', async () => {
+    // The viewport used to be `useState` inside this component, so it survived a re-render by
+    // being part of one. It is now a store, and the store instance must survive too — a
+    // rebuilt one would throw the user's scroll position and zoom away mid-gesture.
+    const user = userEvent.setup();
+    const view = render(<GridMode />);
+    await user.click(screen.getByRole('button', { name: 'Zoom out' }));
+    expect(screen.getByTestId('grid-zoom-readout').textContent).toBe('0.67×');
+
+    view.rerender(<GridMode />);
+    expect(screen.getByTestId('grid-zoom-readout').textContent).toBe('0.67×');
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toBeEnabled();
+  });
+});

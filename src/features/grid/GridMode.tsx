@@ -8,7 +8,7 @@
  * list beside it, which is the keyboard/screen-reader path (spec §8.2 — a canvas alone is
  * not operable). Both routes call the same store actions, so both are undoable (spec §4.5).
  */
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { PPQN } from '@/core/constants';
 import { gridTicks, quantiseEvents, type QuantiseGrid } from '@/core/sequencer/quantise';
 import {
@@ -32,6 +32,8 @@ import { Button, EmptyState, FieldLabel, Modal, SegmentControl, Toggle, ValueRea
 import { announce } from '@/ui/primitives/LiveRegion';
 import { Panel } from '@/ui/shell/Panel';
 import { noteName } from '../pad-perform/scales';
+import { GridZoomControls } from './GridZoomControls';
+import { createGridViewportStore, scrolled, zoomed } from './gridViewport';
 import { GridCanvas, type GridTool } from './GridCanvas';
 import { automationBounds } from './gridGeometry';
 
@@ -47,18 +49,8 @@ const SNAP_OPTIONS = [
 const QUANTISE_DIVISIONS = [4, 8, 16, 32, 64] as const;
 type QuantiseDivision = (typeof QUANTISE_DIVISIONS)[number];
 
-const DEFAULT_ROW_HEIGHT = 20;
-const DEFAULT_TICKS_PER_PIXEL = 8;
-const MIN_TICKS_PER_PIXEL = 1;
-const MAX_TICKS_PER_PIXEL = 64;
 /** A drawn note defaults to a sixteenth — the usual step-sequencing unit. */
 const DEFAULT_DRAW_DURATION = PPQN / 4;
-/**
- * One press of a zoom button. Coarser than the wheel's 1.15 because a button press is a
- * deliberate discrete step, not a continuous scroll — the whole range is then five presses
- * rather than thirty (issue #43).
- */
-const ZOOM_BUTTON_STEP = 1.5;
 
 /**
  * Undo coalesce key for typing into a point's value field (spec §3.3). Suffixed with the
@@ -127,13 +119,22 @@ export function GridMode() {
    * value to write and the field would snap straight back to the point's number.
    */
   const [valueDraft, setValueDraft] = useState<{ id: string; text: string } | null>(null);
-  const [viewport, setViewport] = useState({
-    scrollTicks: 0,
-    ticksPerPixel: DEFAULT_TICKS_PER_PIXEL,
-    rowHeight: DEFAULT_ROW_HEIGHT,
-    scrollRows: 0,
-    topNote: 72,
-  });
+  /**
+   * Scroll and zoom, held OUTSIDE React (spec §3.3, §8.4 — issue #28).
+   *
+   * Wheel and pan events arrive at 60–120 Hz on the target tablet, and each one used to
+   * re-render this whole mode — including the unmemoised note sort below — to move a canvas
+   * that was already mirroring the viewport into a ref and painting from that. The React
+   * round trip bought nothing; the canvas now reads the store directly in its rAF loop, and
+   * the only thing that shows the value is `GridZoomControls`, which paints it by ref.
+   *
+   * `useRef` rather than `useMemo`: a memo is a cache React may discard, and discarding this
+   * one would throw the user's scroll position away mid-pan.
+   */
+  // Lazily-initialised state rather than a ref: the store is created once and the setter is
+  // never called, so this costs no re-render — and unlike a ref it may be read during render,
+  // which is how the canvas and the zoom controls are handed the same instance.
+  const [viewport] = useState(createGridViewportStore);
 
   const sequenceTracks = useMemo(
     () =>
@@ -433,21 +434,14 @@ export function GridMode() {
     setQuantiseOpen(false);
   };
 
-  const zoom = (factor: number) =>
-    setViewport((current) => ({
-      ...current,
-      ticksPerPixel: Math.min(
-        MAX_TICKS_PER_PIXEL,
-        Math.max(MIN_TICKS_PER_PIXEL, current.ticksPerPixel * factor),
-      ),
-    }));
+  // Both write the ref-held store and return; nothing re-renders (spec §3.3, issue #28).
+  // The clamps live in `gridViewport.ts`, where they are testable without a pointer.
+  const zoom = useCallback((factor: number) => viewport.update((box) => zoomed(box, factor)), [viewport]);
 
-  const scroll = (deltaTicks: number, deltaRows: number) =>
-    setViewport((current) => ({
-      ...current,
-      scrollTicks: Math.max(0, current.scrollTicks + deltaTicks),
-      topNote: Math.min(127, Math.max(11, current.topNote - deltaRows)),
-    }));
+  const scroll = useCallback(
+    (deltaTicks: number, deltaRows: number) => viewport.update((box) => scrolled(box, deltaTicks, deltaRows)),
+    [viewport],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -621,39 +615,9 @@ export function GridMode() {
           <ValueReadout label="Notes" value={events.length} showLabel data-testid="grid-note-count" />
           {/* On-screen zoom, so the readout refers to something reachable without a wheel
               — the pinch gesture is the fast path, these are the discoverable one
-              (issue #43). */}
-          <div className="flex items-center gap-2">
-            <ValueReadout
-              label="Zoom"
-              value={`${(DEFAULT_TICKS_PER_PIXEL / viewport.ticksPerPixel).toFixed(2)}×`}
-              showLabel
-            />
-            <Button
-              label="Zoom out"
-              iconOnly
-              icon={<span aria-hidden="true">−</span>}
-              disabled={viewport.ticksPerPixel >= MAX_TICKS_PER_PIXEL}
-              onClick={() => zoom(ZOOM_BUTTON_STEP)}
-              data-testid="grid-zoom-out"
-            />
-            <Button
-              label="Zoom in"
-              iconOnly
-              icon={<span aria-hidden="true">+</span>}
-              disabled={viewport.ticksPerPixel <= MIN_TICKS_PER_PIXEL}
-              onClick={() => zoom(1 / ZOOM_BUTTON_STEP)}
-              data-testid="grid-zoom-in"
-            />
-            <Button
-              label="Reset zoom"
-              variant="quiet"
-              disabled={viewport.ticksPerPixel === DEFAULT_TICKS_PER_PIXEL}
-              onClick={() =>
-                setViewport((current) => ({ ...current, ticksPerPixel: DEFAULT_TICKS_PER_PIXEL }))
-              }
-              data-testid="grid-zoom-reset"
-            />
-          </div>
+              (issue #43). A leaf component, because it is the one thing left that has to
+              watch the viewport, and it must not drag this mode into every frame (#28). */}
+          <GridZoomControls viewport={viewport} />
         </div>
       </Panel>
 

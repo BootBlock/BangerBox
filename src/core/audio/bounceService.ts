@@ -13,7 +13,7 @@
  *   - resample to pad      ({@link resampleSequenceToSample})
  */
 import { PPQN } from '@/core/constants';
-import type { Repositories } from '@/core/storage/repositories';
+import type { Repositories, SampleRow } from '@/core/storage/repositories';
 import { bouncePath, readFile, sampleCandidatePaths, writeFileStreamed } from '@/core/storage/opfs';
 import { assertWriteHeadroom } from '@/core/storage/safeguards';
 import type { BitDepth, Sequence } from '@/core/project/schemas';
@@ -221,16 +221,20 @@ export async function bounceSong(name: string, ctx: BounceContext): Promise<stri
 
 /**
  * Resample the active sequence into a new *sample* rather than a bounce file (spec §9.5
- * "resample-to-pad"), so the result can be assigned to a pad. Returns the new sampleId.
+ * "resample-to-pad"), so the result can be assigned to a pad.
+ *
+ * Returns the whole `samples` row, not just its id: the caller's next step is to offer the
+ * new sample to `AssignTargetDialog`, which needs the name and root note as well — and §9.5
+ * calls this "resample-to-PAD", so stopping at an id would leave the last step of the named
+ * feature unreachable (issue #104).
  */
-export async function resampleSequenceToSample(name: string, ctx: BounceContext): Promise<string> {
+export async function resampleSequenceToSample(name: string, ctx: BounceContext): Promise<SampleRow> {
   const rendered = await renderSegments([activeSequenceSegment(null)], ctx);
-  const created = await saveChannelsAsSample(
+  return saveChannelsAsSample(
     channelsOf(rendered),
     ctx.projectSampleRate,
     name,
     ['resampled'], // inferred tag, matching the import pipeline's convention (spec §9.4)
     ctx,
   );
-  return created.id;
 }

@@ -11,9 +11,11 @@
  * editor operable without a pointer (spec §8.2). Program Edit still uses plain inputs rather
  * than the bespoke `Knob`/`Fader` primitives the rest of the shell uses — see `controls.tsx`.
  */
+import { useState } from 'react';
 import { createDefaultDrumProgram, createDefaultKeygroupProgram } from '@/core/project/schemas';
-import { useProgramStore } from '@/store';
-import { Button } from '@/ui/primitives';
+import { useProgramStore, useUIStore } from '@/store';
+import { announce, Button, ConfirmDialog } from '@/ui/primitives';
+import { describeProgramContents } from './destructive';
 import { ArpControl } from './ArpControl';
 import { KeygroupEditor } from './KeygroupEditor';
 import { PadEditor } from './PadEditor';
@@ -25,9 +27,30 @@ export function ProgramEditPanel() {
   const addProgram = useProgramStore((state) => state.addProgram);
   const removeProgram = useProgramStore((state) => state.removeProgram);
   const renameProgram = useProgramStore((state) => state.renameProgram);
+  /** True while the delete-program confirmation is open (spec §8.1, issue #54). */
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const list = Object.values(programs).sort((a, b) => a.name.localeCompare(b.name));
   const active = activeProgramId !== null ? programs[activeProgramId] : undefined;
+
+  /**
+   * Delete the active program, once confirmed (issue #54).
+   *
+   * This is one of the two Program Edit actions that earns a gate: the button names one
+   * program and removes every pad, layer, envelope, LFO and mod route inside it, none of
+   * which is on screen at the moment it is pressed. Removing a single layer or route does
+   * not, because there the whole subject of the action is the row the button sits on — see
+   * `ConfirmDialog` for the rule.
+   */
+  const deleteActiveProgram = () => {
+    if (!active) return;
+    removeProgram(active.id);
+    setActiveProgram(null);
+    setConfirmingDelete(false);
+    const message = `Deleted ${active.name}. Undo with Ctrl+Z.`;
+    useUIStore.getState().pushToast(message, 'success');
+    announce(message);
+  };
 
   const createProgram = (type: 'drum' | 'keygroup') => {
     const program = type === 'drum' ? createDefaultDrumProgram() : createDefaultKeygroupProgram();
@@ -83,15 +106,30 @@ export function ProgramEditPanel() {
               />
             </label>
             <Button
-              label="Delete program"
+              // The ellipsis promises the review step, matching Safe Mode's "Hard reset…"
+              // and the Browser's "Purge unused samples…" (spec §8.1).
+              label="Delete program…"
               variant="danger"
               size="sm"
-              onClick={() => {
-                removeProgram(active.id);
-                setActiveProgram(null);
-              }}
+              data-testid="program-delete"
+              onClick={() => setConfirmingDelete(true)}
             />
           </div>
+
+          <ConfirmDialog
+            open={confirmingDelete}
+            title={`Delete ${active.name}?`}
+            confirmLabel="Delete program"
+            undoable
+            data-testid="program-delete-confirm"
+            onCancel={() => setConfirmingDelete(false)}
+            onConfirm={deleteActiveProgram}
+          >
+            <p>
+              This removes {describeProgramContents(active)}. Any track pointing at this program falls silent
+              until you give it another.
+            </p>
+          </ConfirmDialog>
 
           {active.type === 'drum' ? <PadEditor program={active} /> : <KeygroupEditor program={active} />}
           <ArpControl />

@@ -99,9 +99,38 @@ vi.mock('@/core/storage/opfs', () => ({
   deleteFile: vi.fn(),
 }));
 
-const packMpcwebInWorker = vi.fn(async () => new Uint8Array([0x50, 0x4b]));
+/**
+ * A fake pack session recording what the export streamed into it (issue #99).
+ *
+ * The export no longer hands the worker one object holding every sample; it opens a session
+ * and pushes samples through it one at a time, so the assertions below read the ORDER of
+ * `addSample` calls and the snapshot handed to `finish` — which together are exactly what
+ * the archive ends up containing.
+ */
+const packedSamples: { sampleId: string; byteLength: number }[] = [];
+const finishedSnapshots: { samples: { id: string }[] }[] = [];
+let packAborted = false;
+const beginMpcwebPack = vi.fn(async () => ({
+  addSample: async ({ sampleId, bytes }: { sampleId: string; bytes: Uint8Array }) => {
+    packedSamples.push({ sampleId, byteLength: bytes.byteLength });
+  },
+  finish: async (snapshot: { samples: { id: string }[] }) => {
+    finishedSnapshots.push(snapshot);
+    // `finish` filters the rows down to what was added, exactly as the real session does —
+    // otherwise the test would pass against an export that packed an inconsistent archive.
+    const added = new Set(packedSamples.map((sample) => sample.sampleId));
+    finishedSnapshots[finishedSnapshots.length - 1] = {
+      ...snapshot,
+      samples: snapshot.samples.filter((row) => added.has(row.id)),
+    };
+    return new Blob([new Uint8Array([0x50, 0x4b])]);
+  },
+  abort: async () => {
+    packAborted = true;
+  },
+}));
 vi.mock('./packClient', () => ({
-  packMpcwebInWorker: (input: unknown) => packMpcwebInWorker(input as never),
+  beginMpcwebPack: (appVersion: string) => beginMpcwebPack(appVersion),
   unpackMpcwebInWorker: vi.fn(),
 }));
 
@@ -117,7 +146,10 @@ beforeEach(() => {
   oversizedSamplePaths.clear();
   restoreSnapshot.mockClear();
   unreadablePaths.clear();
-  packMpcwebInWorker.mockClear();
+  packedSamples.length = 0;
+  finishedSnapshots.length = 0;
+  packAborted = false;
+  beginMpcwebPack.mockClear();
   useUIStore.setState({ toasts: [] });
   flushDirtyKeys.mockClear();
   hydrateStores.mockClear();
@@ -319,11 +351,8 @@ describe('export — one unreadable sample does not lose the whole project (spec
 
   it('exports everything that can be read', async () => {
     await exportWith(['/projects/p/samples/a.wav']);
-
-    const input = packMpcwebInWorker.mock.calls[0]![0] as unknown as {
-      samples: { sampleId: string }[];
-    };
-    expect(input.samples.map((sample) => sample.sampleId)).toEqual(['sample-b']);
+    expect(packedSamples.map((sample) => sample.sampleId)).toEqual(['sample-b']);
+    expect(packAborted).toBe(false);
   });
 
   it('drops the unreadable sample ROW too, so the archive re-imports cleanly', async () => {
@@ -331,10 +360,7 @@ describe('export — one unreadable sample does not lose the whole project (spec
 
     // The §9.6 completeness check refuses an archive declaring a sample it does not carry,
     // so an export that keeps the row would produce a file it then refuses to open.
-    const input = packMpcwebInWorker.mock.calls[0]![0] as unknown as {
-      snapshot: { samples: { id: string }[] };
-    };
-    expect(input.snapshot.samples.map((row) => row.id)).toEqual(['sample-b']);
+    expect(finishedSnapshots[0]!.samples.map((row) => row.id)).toEqual(['sample-b']);
   });
 
   it('tells the user what was left out rather than shrinking the export quietly', async () => {
@@ -363,12 +389,22 @@ describe('export — one unreadable sample does not lose the whole project (spec
   it('leaves a healthy export byte-for-byte as it was', async () => {
     await exportWith([]);
 
-    const input = packMpcwebInWorker.mock.calls[0]![0] as unknown as {
-      snapshot: { samples: { id: string }[] };
-      samples: { sampleId: string }[];
-    };
-    expect(input.samples.map((sample) => sample.sampleId)).toEqual(['sample-a', 'sample-b']);
-    expect(input.snapshot.samples.map((row) => row.id)).toEqual(['sample-a', 'sample-b']);
+    expect(packedSamples.map((sample) => sample.sampleId)).toEqual(['sample-a', 'sample-b']);
+    expect(finishedSnapshots[0]!.samples.map((row) => row.id)).toEqual(['sample-a', 'sample-b']);
     expect(useUIStore.getState().toasts).toEqual([]);
+  });
+
+  /**
+   * Issue #99, the memory half. The export must never be holding more than one sample's
+   * audio: each is read, handed over and dropped before the next is read. Proven by the size
+   * the session was given, since the real session transfers (detaches) the buffer — a caller
+   * that had kept the bytes to pack them all at the end would be measuring a detached view.
+   */
+  it('streams one sample at a time rather than gathering them all first', async () => {
+    await exportWith([]);
+    expect(packedSamples).toEqual([
+      { sampleId: 'sample-a', byteLength: 3 },
+      { sampleId: 'sample-b', byteLength: 3 },
+    ]);
   });
 });

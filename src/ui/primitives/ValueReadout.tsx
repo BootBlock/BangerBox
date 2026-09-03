@@ -7,12 +7,21 @@
  * default because most readouts update far too often to announce (spec §8.2 — the single
  * polite LiveRegion carries transport/save announcements instead).
  */
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { FieldLabel } from './FieldLabel';
 
 export interface ValueReadoutProps {
   label: string;
   value: ReactNode;
+  /**
+   * A handle on the value element, for a readout whose value is a §3.3 continuous one.
+   *
+   * The Grid's zoom factor moves per frame during a pinch, and §3.3 forbids that reaching
+   * React — so the owner paints `textContent` through this ref instead, exactly as
+   * `ControlChassis` lets a Knob paint its own readout mid-drag. `value` is still what the
+   * render pass draws, so the readout is correct on mount and after any discrete change.
+   */
+  valueRef?: RefObject<HTMLSpanElement | null>;
   /** Show the label above the value rather than only to assistive tech. */
   showLabel?: boolean;
   live?: boolean;
@@ -36,6 +45,7 @@ const SIZE: Record<'sm' | 'md' | 'lg', string> = {
 export function ValueReadout({
   label,
   value,
+  valueRef,
   showLabel = false,
   live = false,
   tone = 'default',
@@ -49,6 +59,7 @@ export function ValueReadout({
           which would turn every readout in the app into a live region competing with the
           real announcer and the toasts (spec §8.2 — one polite LiveRegion). */}
       <span
+        ref={valueRef}
         aria-label={showLabel ? undefined : label}
         aria-live={live ? 'polite' : undefined}
         data-testid={testId}

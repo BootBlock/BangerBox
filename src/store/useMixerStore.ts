@@ -20,8 +20,15 @@ import {
   type InsertSlotState,
   type Range,
 } from '@/core/project/schemas';
-import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
+import {
+  channelLevelPath,
+  channelPanPath,
+  channelSendPath,
+  parseParamTarget,
+  targetRange,
+} from '@/core/audio/params/registry';
 import { recordParamGesture } from './automationRecord';
+import { publishTransient, settleTransient } from './transientChannel';
 import { commit } from './commit';
 import { useProjectStore } from './useProjectStore';
 
@@ -66,6 +73,14 @@ interface ParsedPath {
   readonly channelId: string;
   readonly field: ScalarField;
   readonly range: Range;
+  /**
+   * The §7.8 registry address for this field, whatever form the caller wrote.
+   *
+   * The transient channel and the §4.3 sync layer behind it apply an address through the
+   * registry's own parser, so a legacy `<channelId>.<field>` path has to be rewritten before
+   * it is published or it would reach the graph as nothing at all (issue #27).
+   */
+  readonly canonicalPath: string;
 }
 
 const SEND_PATH = /\.sendLevels\.([0-3])$/;
@@ -88,14 +103,25 @@ function parseMixerPath(path: string, strip: ChannelStrip | undefined): ParsedPa
   if (target !== null) {
     switch (target.kind) {
       case 'channelLevel':
-        return { channelId: target.channelId, field: { kind: 'level' }, range: LEVEL_RANGE };
+        return {
+          channelId: target.channelId,
+          field: { kind: 'level' },
+          range: LEVEL_RANGE,
+          canonicalPath: path,
+        };
       case 'channelPan':
-        return { channelId: target.channelId, field: { kind: 'pan' }, range: PAN_RANGE };
+        return {
+          channelId: target.channelId,
+          field: { kind: 'pan' },
+          range: PAN_RANGE,
+          canonicalPath: path,
+        };
       case 'channelSend':
         return {
           channelId: target.channelId,
           field: { kind: 'send', index: target.sendIndex as 0 | 1 | 2 | 3 },
           range: SEND_LEVEL_RANGE,
+          canonicalPath: path,
         };
       case 'insertParam': {
         // Slots are addressed 1-based in the registry grammar (spec §7.8 `slot2`).
@@ -108,6 +134,7 @@ function parseMixerPath(path: string, strip: ChannelStrip | undefined): ParsedPa
           channelId: target.channelId,
           field: { kind: 'insertParam', slotIndex, param: target.param },
           range,
+          canonicalPath: path,
         };
       }
       case 'programParam':
@@ -119,17 +146,32 @@ function parseMixerPath(path: string, strip: ChannelStrip | undefined): ParsedPa
 
   const send = SEND_PATH.exec(path);
   if (send) {
+    const channelId = path.slice(0, send.index);
+    const index = Number(send[1]) as 0 | 1 | 2 | 3;
     return {
-      channelId: path.slice(0, send.index),
-      field: { kind: 'send', index: Number(send[1]) as 0 | 1 | 2 | 3 },
+      channelId,
+      field: { kind: 'send', index },
       range: SEND_LEVEL_RANGE,
+      canonicalPath: channelSendPath(channelId, index),
     };
   }
   if (path.endsWith('.level')) {
-    return { channelId: path.slice(0, -6), field: { kind: 'level' }, range: LEVEL_RANGE };
+    const channelId = path.slice(0, -6);
+    return {
+      channelId,
+      field: { kind: 'level' },
+      range: LEVEL_RANGE,
+      canonicalPath: channelLevelPath(channelId),
+    };
   }
   if (path.endsWith('.pan')) {
-    return { channelId: path.slice(0, -4), field: { kind: 'pan' }, range: PAN_RANGE };
+    const channelId = path.slice(0, -4);
+    return {
+      channelId,
+      field: { kind: 'pan' },
+      range: PAN_RANGE,
+      canonicalPath: channelPanPath(channelId),
+    };
   }
   return null;
 }
@@ -207,21 +249,27 @@ export const useMixerStore = create<MixerState>()(
         return { channels };
       }),
 
+    /**
+     * spec §4.1, §3.3 — a gesture moves the GRAPH and nothing else (issue #27).
+     *
+     * This deliberately does not `set()`. Doing so replaced the `channels` map's identity on
+     * every pointer sample and every rAF-aligned CC frame, re-rendering `MixerMode`,
+     * `MutingMode`, `XyfxMode` and `QLinkEditMode` about sixty times a second — exactly what
+     * §3.3 forbids a mid-gesture value from causing. The value reaches the graph through the
+     * transient channel instead, and React sees it at the commit.
+     */
     setTransient: (path, value) => {
       const channels = get().channels;
       const parsed = resolvePath(channels, path);
       if (parsed === null) return;
       const current = readScalar(channels, parsed);
       if (current === null) return;
-      // Record the pre-gesture value the first time this path moves (spec §4.1).
-      if (!gestureOrigins.has(path)) gestureOrigins.set(path, current);
+      // The pre-gesture value, recorded the first time this path moves (spec §4.1). It is
+      // read from the store, which no longer moves during a gesture — so it is still the
+      // pre-gesture value however many samples the gesture has already sent.
+      if (!gestureOrigins.has(parsed.canonicalPath)) gestureOrigins.set(parsed.canonicalPath, current);
       const clamped = clamp(value, parsed.range[0], parsed.range[1]);
-      set((state) => ({
-        channels: {
-          ...state.channels,
-          [parsed.channelId]: writeScalar(state.channels[parsed.channelId]!, parsed.field, clamped),
-        },
-      }));
+      publishTransient(parsed.canonicalPath, clamped);
       // spec §7.8: a gesture made while recording also writes automation. The tap is here
       // rather than in each mode because Q-Link, XYFX and every on-screen knob and fader
       // reach the graph through this one action. The range comes from the parse that
@@ -235,9 +283,15 @@ export const useMixerStore = create<MixerState>()(
       if (parsed === null) return;
       const current = readScalar(channels, parsed);
       if (current === null) return;
-      const origin = gestureOrigins.get(path) ?? current;
-      gestureOrigins.delete(path);
+      const origin = gestureOrigins.get(parsed.canonicalPath) ?? current;
+      gestureOrigins.delete(parsed.canonicalPath);
       const clamped = clamp(value, parsed.range[0], parsed.range[1]);
+      // Publish BEFORE settling, and before the store write (issue #27). The committed value
+      // is not always where the gesture left off — XYFX's release-return commits where the
+      // axes RESTED — and the store diff below cannot correct that, because the store never
+      // moved during the gesture and so has no change to apply.
+      publishTransient(parsed.canonicalPath, clamped);
+      settleTransient(parsed.canonicalPath);
       const write = (v: number) =>
         set((state) => ({
           channels: {

@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { channelLevelPath } from '@/core/audio/params/registry';
 import { createDefaultChannelStrip, type QLinkBinding } from '@/core/project/schemas';
 import { useHardwareStore, useMixerStore, useUIStore } from '@/store';
+import { readTransientValue, resetTransientChannel } from '@/store/transientChannel';
 import { createHardwareService } from './hardwareService';
 import type { BluetoothDeviceLike, BluetoothLike, BluetoothServerLike } from './bleTypes';
 
@@ -78,6 +79,7 @@ const ccPacket = (controller: number, value: number) => [0x80, 0x80, 0xb0, contr
 
 describe('hardware service (spec §10.2)', () => {
   beforeEach(() => {
+    resetTransientChannel();
     useMixerStore.getState().setChannels({ master: createDefaultChannelStrip('master') });
     useHardwareStore.getState().setBindings([]);
     useHardwareStore.getState().setQLinkMode('project');
@@ -101,7 +103,10 @@ describe('hardware service (spec §10.2)', () => {
     rig.peripheral.notify(ccPacket(70, 0));
     // The CC throttle is rAF-aligned (spec §10.4), so let a frame pass.
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
-    expect(useMixerStore.getState().channels.master!.level).toBe(0);
+    // Mid-turn the value is on the §4.1 transient channel, not in the store: a §3.3
+    // continuous value must not re-render a React consumer, and §10.3 moves the store at
+    // the idle commit (issue #27). This is the whole §10.2 path — BLE bytes to parameter.
+    expect(readTransientValue(channelLevelPath('master'))).toBe(0);
     rig.service.dispose();
   });
 

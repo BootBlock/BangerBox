@@ -1,11 +1,15 @@
 /**
  * `.mpcweb` zip pack/unpack (spec §9.6) — the fflate layer that turns a snapshot + sample bytes
  * into the exact archive layout (`manifest.json`, `project.json`, `samples/<sampleId>.wav`) and
- * back. Runs in `pack.worker.ts` off the main thread (spec §9.6); the logic is a pure function
- * pair so the round-trip is unit-testable in memory (§11.1). fflate is the §1.3 #12 archiver.
+ * back. Runs in `pack.worker.ts` off the main thread (spec §9.6); the logic is pure, so the
+ * round-trip is unit-testable in memory (§11.1). fflate is the §1.3 #12 archiver.
  *
- * Unpacking is STREAMED rather than `unzipSync`, for two reasons that both come down to an
- * archive being untrusted input a user was handed by someone else:
+ * **Both directions stream**, and for the same underlying reason: an archive is the size of a
+ * project's audio, and holding all of it at once is the one way a large project can fail to
+ * open or to export at all on the tablet §11.5 targets.
+ *
+ * Unpacking has a second reason too — an archive is untrusted input a user was handed by
+ * someone else:
  *
  * - **Bounded decompression (spec §9.7, issue #26).** `unzipSync` materialises everything and
  *   only then hands it back, so there is no moment at which a limit could be applied. The
@@ -16,7 +20,7 @@
  *   reconciled against the sample rows `project.json` declares. An archive missing half its
  *   audio used to import cleanly and be discovered by pressing play.
  */
-import { strFromU8, strToU8, Unzip, UnzipInflate, zipSync } from 'fflate';
+import { strFromU8, strToU8, Unzip, UnzipInflate, Zip, ZipDeflate } from 'fflate';
 import { MPCWEB_MAX_ENTRIES, MPCWEB_MAX_ENTRY_BYTES, MPCWEB_MAX_TOTAL_BYTES } from '@/core/constants';
 import {
   buildManifest,
@@ -36,19 +40,6 @@ export interface PackedSample {
   readonly sampleId: string;
   /** Canonical WAV bytes (spec §9.4). */
   readonly bytes: Uint8Array;
-}
-
-export interface PackInput {
-  readonly snapshot: ProjectSnapshot;
-  readonly appVersion: string;
-  readonly samples: readonly PackedSample[];
-  /**
-   * Fixed export timestamp. A user export omits it and gets "now" (spec §9.6). The factory
-   * generator pins it, because §9.8 requires byte-reproducible packs and BOTH the manifest's
-   * `exportedAt` AND the zip's per-entry mtimes are otherwise read from the clock — two
-   * archives of identical content would then differ on every rebuild.
-   */
-  readonly exportedAt?: string;
 }
 
 export interface UnpackedProject {
@@ -74,18 +65,101 @@ const DEFAULT_BUDGET: UnpackBudget = {
   maxTotalBytes: MPCWEB_MAX_TOTAL_BYTES,
 };
 
-/** Pack a project into `.mpcweb` bytes (spec §9.6). */
-export function packMpcweb({ snapshot, appVersion, samples, exportedAt }: PackInput): Uint8Array {
-  const entries: Record<string, Uint8Array> = {
-    [MANIFEST_ENTRY]: strToU8(JSON.stringify(buildManifest(snapshot.project, appVersion, exportedAt))),
-    [PROJECT_ENTRY]: strToU8(serialiseSnapshot(snapshot)),
+/**
+ * A `.mpcweb` archive built one sample at a time (spec §9.6 "worker zips (streamed)").
+ *
+ * The `zipSync` packer this replaces took every sample's bytes as one argument and held the
+ * whole finished archive besides, so exporting a project peaked at roughly twice its audio
+ * in memory — on
+ * the device §11.5 targets, a tablet, that is the one place a large project could fail to
+ * export at all (issue #99). This builds the same archive incrementally: the caller reads one
+ * sample from OPFS, hands it over, and drops its reference before reading the next, while the
+ * compressed output leaves through {@link PackerOptions.onChunk} rather than accumulating.
+ *
+ * It is the ONLY packer: the §9.8 factory generator drives it too, with a pinned
+ * `exportedAt`. A second synchronous `zipSync` implementation beside it would be two pieces
+ * of code writing one format, which is the drift the §9.6 layout constants exist to prevent.
+ *
+ * **`project.json` and `manifest.json` are written LAST, by {@link finish}.** A caller that
+ * reads its samples one at a time only learns which ones it could not read as it goes, and
+ * the §9.6 completeness check on the import side compares the sample rows against the audio
+ * — so the snapshot cannot be serialised until the last sample is in. Zip entry order is not
+ * part of the §9.6 layout, and {@link unpackMpcweb} reads entries by name.
+ *
+ * Only ONE entry is open at a time: fflate's `Zip` buffers a later entry's output until the
+ * earlier one completes, which would put the archive back in memory and defeat the point.
+ */
+export interface PackerOptions {
+  readonly appVersion: string;
+  /** Called with each compressed chunk as it is produced, and a final empty-or-last chunk. */
+  readonly onChunk: (chunk: Uint8Array, final: boolean) => void;
+  /**
+   * Fixed export timestamp. A user export omits it and gets "now" (spec §9.6). The §9.8
+   * factory generator pins it, because §9.8 requires byte-reproducible packs and BOTH the
+   * manifest's `exportedAt` AND the zip's per-entry mtimes are otherwise read from the
+   * clock — two archives of identical content would then differ on every rebuild.
+   */
+  readonly exportedAt?: string;
+}
+
+export interface MpcwebPacker {
+  /** Add one sample's WAV bytes. The bytes are not retained after this returns. */
+  addSample: (sample: PackedSample) => void;
+  /**
+   * Write `manifest.json` and `project.json` for the samples actually added, then close the
+   * archive. The snapshot's own sample rows are filtered down to what was added, so the file
+   * stays internally consistent and re-imports past the §9.6 completeness check.
+   */
+  finish: (snapshot: ProjectSnapshot) => void;
+}
+
+export function createMpcwebPacker({ appVersion, onChunk, exportedAt }: PackerOptions): MpcwebPacker {
+  let failure: Error | null = null;
+  const added = new Set<string>();
+
+  const zip = new Zip((error, chunk, final) => {
+    // fflate reports a stream error through the same callback as data; holding it lets the
+    // failure surface from the call the user is waiting on rather than from a stray throw
+    // inside a callback the caller never sees.
+    if (error) {
+      failure ??= error;
+      return;
+    }
+    onChunk(chunk, final);
+  });
+
+  /** Push one whole entry, start to finish, so no two entries are ever open at once. */
+  const addEntry = (name: string, bytes: Uint8Array): void => {
+    if (failure) throw failure;
+    const entry = new ZipDeflate(name, { level: 6 });
+    // Without a pinned mtime fflate stamps each entry from the clock, as a user export
+    // should — and as a §9.8 factory pack must not (byte-determinism across rebuilds).
+    if (exportedAt !== undefined) entry.mtime = exportedAt;
+    zip.add(entry);
+    entry.push(bytes, true);
+    if (failure) throw failure;
   };
-  for (const sample of samples) {
-    entries[`${SAMPLE_PREFIX}${sample.sampleId}${SAMPLE_SUFFIX}`] = sample.bytes;
-  }
-  // A pinned `exportedAt` also pins the entry mtimes (spec §9.8 byte-determinism); without
-  // it fflate stamps each entry from the clock, as a user export should.
-  return zipSync(entries, exportedAt === undefined ? { level: 6 } : { level: 6, mtime: exportedAt });
+
+  return {
+    addSample: ({ sampleId, bytes }) => {
+      addEntry(`${SAMPLE_PREFIX}${sampleId}${SAMPLE_SUFFIX}`, bytes);
+      added.add(sampleId);
+    },
+
+    finish: (snapshot) => {
+      const packed =
+        snapshot.samples.length === added.size
+          ? snapshot
+          : { ...snapshot, samples: snapshot.samples.filter((row) => added.has(row.id)) };
+      addEntry(
+        MANIFEST_ENTRY,
+        strToU8(JSON.stringify(buildManifest(packed.project, appVersion, exportedAt))),
+      );
+      addEntry(PROJECT_ENTRY, strToU8(serialiseSnapshot(packed)));
+      zip.end();
+      if (failure) throw failure;
+    },
+  };
 }
 
 /** The three entry names the §9.6 layout defines. Anything else is never inflated. */

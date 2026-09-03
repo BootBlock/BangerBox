@@ -39,7 +39,7 @@ import {
   useUIStore,
 } from '@/store';
 import { isGlobalLibraryPath, scopeOfPath } from '../browser/libraryLocation';
-import { Button, EmptyState } from '@/ui/primitives';
+import { Button, EmptyState, FilePickerButton } from '@/ui/primitives';
 import { SegmentControl } from '@/ui/primitives/SegmentControl';
 import { WaveformEditor } from '@/ui/primitives/WaveformEditor';
 import { auditionSample, refreshSamples, reloadSampleList, sampleEditContext } from './sampleContext';
@@ -184,10 +184,7 @@ export function SampleEditPanel() {
     }
   };
 
-  const onImport = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
+  const onImport = (file: File) => {
     const engine = getAudioEngine();
     if (!engine) {
       pushToast('Start the audio engine before importing.', 'warning');
@@ -291,16 +288,14 @@ export function SampleEditPanel() {
           onChange={(value) => setLocation(value === 'global')}
           data-testid="sample-location"
         />
-        <label className="cursor-pointer rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs">
-          Import audio…
-          <input
-            type="file"
-            accept=".wav,.mp3,.flac,.ogg,audio/*"
-            className="sr-only"
-            data-testid="sample-import"
-            onChange={onImport}
-          />
-        </label>
+        <FilePickerButton
+          label="Import audio…"
+          busyLabel="Importing…"
+          accept=".wav,.mp3,.flac,.ogg,audio/*"
+          busy={busy}
+          data-testid="sample-import"
+          onPick={onImport}
+        />
         <span className="text-xs text-bb-muted" data-testid="sample-count">
           {samples.length} sample{samples.length === 1 ? '' : 's'}
         </span>

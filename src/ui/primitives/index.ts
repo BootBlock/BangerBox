@@ -3,7 +3,16 @@
  * from here, never from a component library (spec §1.3 #10) and never by re-styling a
  * primitive at the call site (spec §3.6).
  */
-export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from './Button';
+export {
+  Button,
+  buttonChassis,
+  type ButtonChassisOptions,
+  type ButtonProps,
+  type ButtonVariant,
+  type ButtonSize,
+} from './Button';
+export { FilePickerButton, type FilePickerButtonProps } from './FilePickerButton';
+export { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog';
 export { FieldLabel, type FieldLabelProps } from './FieldLabel';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { Pad, type PadProps } from './Pad';

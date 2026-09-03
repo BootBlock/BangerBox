@@ -36,6 +36,8 @@ export interface FaderProps {
   disabled?: boolean;
   /** Override the readout/`aria-valuetext` — the mixer shows dB for a 0..1.2 position. */
   formatValue?: (value: number) => string;
+  /** The §7.8 address this fader drives, so a §10.3 Q-Link turn moves it live (issue #27). */
+  livePath?: string;
   onTransient?: (value: number) => void;
   onCommit: (value: number) => void;
   'data-testid'?: string;
@@ -52,6 +54,7 @@ export function Fader({
   defaultValue,
   disabled = false,
   formatValue,
+  livePath,
   onTransient,
   onCommit,
   'data-testid': testId,
@@ -80,6 +83,7 @@ export function Fader({
     fineStep,
     defaultValue,
     disabled,
+    livePath,
     onTransient,
     onCommit,
     render: paint,

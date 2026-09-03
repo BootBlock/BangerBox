@@ -34,6 +34,7 @@ import {
   type VelocityLayer,
 } from '@/core/project/schemas';
 import { recordParamGesture } from './automationRecord';
+import { publishTransient, settleTransient } from './transientChannel';
 import { commit } from './commit';
 
 /**
@@ -553,22 +554,22 @@ export const useProgramStore = create<ProgramState>()(
       return ASSIGNED;
     },
 
+    /**
+     * spec §4.1, §3.3 — a gesture moves the GRAPH and nothing else (issue #27).
+     *
+     * The mixer's `setTransient` records the same reasoning at length. The consequence here
+     * is broader: `programs` is selected whole by `MainMode`, `MixerMode`, `MutingMode`,
+     * `GridMode`, `PadPerformMode` and `ProgramEditPanel`, so a `set()` per pointer sample
+     * re-rendered six modes' worth of subscribers to move one filter cutoff.
+     */
     setPadParamTransient: (path, value) => {
       const resolved = resolvePadLeaf(get().programs, path, value);
       if (resolved === null) return;
-      // Record the pre-gesture value the first time this path moves (spec §4.1).
+      // The pre-gesture value, recorded the first time this path moves (spec §4.1). Read
+      // from the store, which no longer moves during a gesture, so it stays pre-gesture
+      // however many samples have already been sent.
       if (!padGestureOrigins.has(path)) padGestureOrigins.set(path, resolved.current);
-      set((state) => ({
-        programs: {
-          ...state.programs,
-          [resolved.programId]: withPad(
-            state.programs[resolved.programId]!,
-            resolved.padIndex,
-            resolved.leaf,
-            resolved.value,
-          ),
-        },
-      }));
+      publishTransient(path, resolved.value);
       // spec §7.8: a gesture made while recording also writes automation — the same tap
       // the mixer's transient channel carries, for the pad-scope §10.3 Q-Link defaults.
       recordParamGesture(path, resolved.value, 'move', resolved.range);
@@ -579,6 +580,11 @@ export const useProgramStore = create<ProgramState>()(
       if (resolved === null) return;
       const origin = padGestureOrigins.get(path) ?? resolved.current;
       padGestureOrigins.delete(path);
+      // Publish before settling and before the store write, for the reason
+      // `useMixerStore.commit` records: the committed value need not be where the gesture
+      // left off, and the store diff cannot see a change the store never made.
+      publishTransient(path, resolved.value);
+      settleTransient(path);
       const write = (next: number) =>
         set((state) => ({
           programs: {

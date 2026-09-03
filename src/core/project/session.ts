@@ -18,6 +18,7 @@ import { useProjectStore } from '@/store';
 import { registerSyncSubscribers, type Unsubscribe } from '@/store/syncLayer';
 import { subscribeSequencerSync } from '@/store/syncLayer/sequencerSync';
 import { subscribeTransportMirror } from '@/store/derive/transportMirror';
+import { resetTransientChannel } from '@/store/transientChannel';
 import { installProjectService, loadOrCreateActiveProject, projectService } from './projectService';
 import { installUnloadGuard } from './unloadGuard';
 
@@ -102,6 +103,10 @@ export function stopProjectSession(): void {
   sequencerSyncDispose = null;
   syncDispose?.();
   syncDispose = null;
+  // Any gesture still in flight belongs to the session going away. Left behind, its reading
+  // would answer the next session's relative encoder for a parameter that no longer exists
+  // (spec §3.5 lens 5, issue #27).
+  resetTransientChannel();
   transportMirrorDispose?.();
   transportMirrorDispose = null;
   audioEngine?.dispose();

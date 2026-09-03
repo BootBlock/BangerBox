@@ -11,8 +11,10 @@
  * same PPQN maths the scheduler uses (spec §7.2) rather than a parallel calculation.
  */
 import { useState } from 'react';
-import { useSequenceStore, useTransportStore, useUIStore } from '@/store';
+import { useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
 import { bounceSong } from '@/core/audio/bounceService';
+import { downloadBlob, downloadFileStem } from '@/core/platform/download';
+import { readFile } from '@/core/storage/opfs';
 import { sampleEditContext } from '../sample-edit/sampleContext';
 import { Button, EmptyState, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
@@ -41,6 +43,7 @@ export function SongMode() {
   const playbackMode = useTransportStore((s) => s.playbackMode);
   const songLoopEnabled = useTransportStore((s) => s.songLoopEnabled);
   const projectBpm = useTransportStore((s) => s.bpm);
+  const projectName = useProjectStore((s) => s.projectName);
   const [bouncing, setBouncing] = useState(false);
 
   const sequenceList = Object.values(sequences).sort((a, b) => a.position - b.position);
@@ -88,14 +91,22 @@ export function SongMode() {
     writeEntries(songEntries.map((entry) => (entry.id === id ? { ...entry, repeats } : entry)));
   };
 
+  /**
+   * Render the song and hand the WAV to the user (spec §9.5, issue #104).
+   *
+   * The read-back is the whole point. A bounce lands at an OPFS path (spec §9.1) that no
+   * part of the UI can browse and no file manager can open, so writing it and stopping at a
+   * toast produced nothing retrievable while reporting success — worse than a dead control,
+   * because a dead one at least does not lie. This is the same three steps the Browser's
+   * sequence bounce has always done: render, read, download.
+   */
   const handleBounce = () => {
     setBouncing(true);
     void bounceSong('song', sampleEditContext())
-      // Deliberately does not name the file. The bounce lands at an OPFS path (spec §9.1)
-      // that no part of the UI can browse and no file manager can open, so quoting it only
-      // sends the user looking for something they cannot reach. Same wording as the
-      // Browser's sequence bounce; getting the file back out is a separate gap.
-      .then(() => useUIStore.getState().pushToast('Song bounced.', 'success'))
+      .then(async (path) => {
+        downloadBlob(await readFile(path), `${downloadFileStem(projectName)}-song.wav`);
+        useUIStore.getState().pushToast('Song bounced.', 'success');
+      })
       .catch((error: unknown) =>
         useUIStore
           .getState()
