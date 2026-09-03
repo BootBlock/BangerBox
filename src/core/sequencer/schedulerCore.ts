@@ -415,6 +415,9 @@ export class SchedulerCore {
       this.lastLoopPass = newPass;
     }
     this.nextScheduleTick = to;
+    // The counterpart of the song cursor's own catch-up: a switch INTO song mode resumes at
+    // the elapsed position instead of replaying the song from its start (spec §8.5.12).
+    this.nextSongSeconds = Math.max(0, horizon - this.contentStartContext);
   }
 
   /** Linear tick reached at context time `when` (sequence mode). */
@@ -461,6 +464,7 @@ export class SchedulerCore {
       note: event.note,
       velocity: shaped.velocity,
       durationSec: ticksToSeconds(event.durationTicks, this.bpm),
+      bpm: this.bpm,
     });
   }
 
@@ -481,6 +485,7 @@ export class SchedulerCore {
         note: hit.note,
         velocity: hit.velocity,
         durationSec: 0,
+        bpm: this.bpm,
       });
       if (this.recording) this.captureAt(owner.trackId, hit.note, hit.velocity, seqTick, seqTick + 1);
     }
@@ -509,6 +514,7 @@ export class SchedulerCore {
           note: hit.note,
           velocity: hit.velocity,
           durationSec: ticksToSeconds(hit.durationTicks, this.bpm),
+          bpm: this.bpm,
         });
         if (this.recording) {
           this.captureAt(trackId, hit.note, hit.velocity, seqTick, seqTick + hit.durationTicks);
@@ -600,7 +606,11 @@ export class SchedulerCore {
     const origin = zeroLength ? 0 : songTickToSeconds(this.songMap, this.originTick);
     // The end is reached when the PLAYHEAD arrives, not when the lookahead does: stopping
     // at schedule time would cut the last `LOOKAHEAD_MS` of the song off the end of it.
-    if ((zeroLength || !this.songLoopEnabled) && now >= this.contentStartContext + (total - origin)) {
+    //
+    // It is the end of the pass IN PROGRESS, not of the first one: turning the loop off
+    // part-way through pass two must end that pass, not stop the transport the instant the
+    // toggle moves because the song is already past where pass one finished.
+    if ((zeroLength || !this.songLoopEnabled) && now >= this.currentPassEnd(total, origin)) {
       this.endSong(now, result);
       return;
     }
@@ -621,6 +631,27 @@ export class SchedulerCore {
       cursor = crosses ? passStart + total : toAbs;
     }
     this.nextSongSeconds = toAbs;
+    // Keep the sequence-mode bookkeeping level with the horizon. The playback mode is
+    // switchable while the transport rolls (spec §8.5.12), and a cursor left behind at the
+    // song's start would make the first sequence-mode wake schedule every tick since then in
+    // one burst — with a loop wrap and a capture flush for every pass it swept through.
+    this.nextScheduleTick = this.linearTickAt(horizon);
+    this.lastLoopPass = loopPassAt(this.nextScheduleTick, this.loop);
+  }
+
+  /**
+   * Wall-clock time at which the pass in progress ends (spec §7.9).
+   *
+   * The pass is the one the scheduler has last emitted for, not the one `now` falls in.
+   * With looping off from the start that is pass 0, so the song ends at its own end. With
+   * looping on it advances each wrap, so turning the toggle off part-way through pass two
+   * ends THAT pass rather than stopping the instant the toggle moves. Near a wrap the
+   * lookahead has already scheduled the next pass, and the answer defers to it — those
+   * notes are going to be heard, so cutting them off would be worse than one more pass.
+   */
+  private currentPassEnd(total: number, origin: number): number {
+    if (total <= 0) return this.contentStartContext;
+    return this.contentStartContext + ((this.lastSongPass + 1) * total - origin);
   }
 
   /**
@@ -674,6 +705,9 @@ export class SchedulerCore {
             note: event.note,
             velocity: shaped.velocity,
             durationSec: ticksToSeconds(event.durationTicks, segment.bpm),
+            // The SEGMENT's tempo, not the transport's: a sequence with a tempo of its own
+            // plays at it (spec §7.9), and a §6 synced LFO has to follow the same one.
+            bpm: segment.bpm,
           });
         }
       }

@@ -109,6 +109,10 @@ interface SharedLfo {
   readonly since: number;
   /** The §6 config this was built for; a changed config rebuilds rather than drifts. */
   readonly signature: string;
+  /** Voices still borrowing it. A retired oscillator is released when this reaches zero. */
+  refs: number;
+  /** True once a config change has replaced it: no new voice takes it, old ones keep it. */
+  retired: boolean;
 }
 
 interface Voice {
@@ -127,7 +131,7 @@ interface Voice {
    * are detached by hand on teardown: disconnecting a gain releases its outputs, not the
    * oscillator still feeding it, and that oscillator outlives the voice.
    */
-  readonly sharedLinks: { readonly from: OscillatorNode; readonly to: GainNode }[];
+  readonly sharedLinks: { readonly lfo: SharedLfo; readonly to: GainNode }[];
   /**
    * Live bend offset in cents, summed into `source.detune` (spec §10.2, §6). Built on the
    * first retune rather than at note-on, so a voice that is never bent costs no extra node.
@@ -159,6 +163,8 @@ export class VoicePool {
   private readonly voices = new Map<string, Voice>();
   /** Free-running §6 LFOs, keyed `${padKey}:${lfoIndex}` — see {@link SharedLfo}. */
   private readonly sharedLfos = new Map<string, SharedLfo>();
+  /** Replaced free-running LFOs still feeding a sounding voice (see {@link sharedLfo}). */
+  private readonly retiredLfos = new Set<SharedLfo>();
 
   constructor(
     private readonly context: BaseAudioContext,
@@ -279,16 +285,11 @@ export class VoicePool {
     this.voices.clear();
     // Free-running LFOs outlive their voices by design (spec §6), so the pool owns their
     // teardown — nothing else would ever release them.
-    for (const shared of this.sharedLfos.values()) {
-      try {
-        shared.osc.stop();
-      } catch {
-        // Never started / already stopped.
-      }
-      cancelParams(shared.osc.frequency, shared.osc.detune);
-      shared.osc.disconnect();
+    for (const shared of [...this.sharedLfos.values(), ...this.retiredLfos]) {
+      this.stopSharedLfo(shared);
     }
     this.sharedLfos.clear();
+    this.retiredLfos.clear();
   }
 
   // --------------------------------------------------------------- internals ---
@@ -369,7 +370,7 @@ export class VoicePool {
   private buildVoice(spec: VoiceTriggerSpec, now: number, glideFrom?: number): Voice {
     const oscillators: OscillatorNode[] = [];
     const modGains: GainNode[] = [];
-    const sharedLinks: { from: OscillatorNode; to: GainNode }[] = [];
+    const sharedLinks: { lfo: SharedLfo; to: GainNode }[] = [];
     const routes = spec.modMatrix ?? [];
     const stat = staticModulation(
       routes,
@@ -520,7 +521,7 @@ export class VoicePool {
     now: number,
     oscillators: OscillatorNode[],
     modGains: GainNode[],
-    sharedLinks: { from: OscillatorNode; to: GainNode }[],
+    sharedLinks: { lfo: SharedLfo; to: GainNode }[],
   ): DetuneOscillation[] {
     const pitchOscillations: DetuneOscillation[] = [];
     const lfos = spec.lfos;
@@ -559,7 +560,10 @@ export class VoicePool {
           osc.connect(gain);
           gain.connect(filter.detune);
         }
-        if (shared) sharedLinks.push({ from: osc, to: gain });
+        if (shared) {
+          shared.refs += 1;
+          sharedLinks.push({ lfo: shared, to: gain });
+        }
         modGains.push(gain);
       }
     });
@@ -602,19 +606,36 @@ export class VoicePool {
     const existing = this.sharedLfos.get(key);
     if (existing && existing.signature === signature) return existing;
     if (existing) {
-      try {
-        existing.osc.stop();
-      } catch {
-        // Never started / already stopped.
-      }
-      cancelParams(existing.osc.frequency, existing.osc.detune);
-      existing.osc.disconnect();
+      // Retired, not destroyed: voices are still sounding through it, and disconnecting it
+      // would cut the modulation out from under them mid-note — their filter or pitch would
+      // snap to the unmodulated value, and a pitch route's scheduled declick would be left
+      // in the wrong place. It goes when the last voice borrowing it ends.
+      existing.retired = true;
+      this.retiredLfos.add(existing);
+      this.releaseSharedLfo(existing);
     }
     const osc = this.buildOscillator(type, rateHz, config.phaseOffset);
     osc.start(now);
-    const shared: SharedLfo = { osc, since: now, signature };
+    const shared: SharedLfo = { osc, since: now, signature, refs: 0, retired: false };
     this.sharedLfos.set(key, shared);
     return shared;
+  }
+
+  /** Release a retired free-running LFO once nothing is borrowing it (spec §3.2). */
+  private releaseSharedLfo(shared: SharedLfo): void {
+    if (!shared.retired || shared.refs > 0) return;
+    this.retiredLfos.delete(shared);
+    this.stopSharedLfo(shared);
+  }
+
+  private stopSharedLfo(shared: SharedLfo): void {
+    try {
+      shared.osc.stop();
+    } catch {
+      // Never started / already stopped.
+    }
+    cancelParams(shared.osc.frequency, shared.osc.detune);
+    shared.osc.disconnect();
   }
 
   private fadeAndStop(voice: Voice, when: number, fadeMs: number): void {
@@ -652,10 +673,12 @@ export class VoicePool {
     // here; disconnecting the gain alone would leave the oscillator holding it (spec §3.2).
     for (const link of voice.sharedLinks) {
       try {
-        link.from.disconnect(link.to);
+        link.lfo.osc.disconnect(link.to);
       } catch {
         // Already disconnected.
       }
+      link.lfo.refs -= 1;
+      this.releaseSharedLfo(link.lfo);
     }
     voice.sharedLinks.length = 0;
     for (const gain of voice.modGains) {

@@ -6,6 +6,7 @@
  * decision §1.3 #11) exactly like the DB RPC bridge (`rpc.ts`, spec §13.6 reference rule).
  *
  * Protocol extensions beyond the §7.1.3 list are recorded in spec §14 (2026-07-17 (f)):
+ * `ScheduledEvent.bpm` (the tempo a note is scheduled at, §7.2/§7.9),
  * `sequenceMeta` (per-sequence length/tempo the worker needs to build the song tempo map,
  * §7.9), `liveNote.trackId` (record-capture destination), `eventsDiff.sequenceId` (the
  * owning sequence, needed to select a segment's tracks in song mode, §7.9), `liveErase`
@@ -54,6 +55,13 @@ export interface ScheduledEvent {
   readonly rampEnd?: number;
   /** Metronome beat-1 accent (spec §5.9) for `click`. */
   readonly accented?: boolean;
+  /**
+   * Effective tempo of the note, in BPM (spec §7.2). Song mode plays sequences at their
+   * own tempi (spec §7.9), so the transport's own `bpm` is not the tempo every note sounds
+   * at — and a §6 tempo-synced LFO resolved against it would run at the wrong rate for
+   * every segment whose sequence carries a tempo of its own.
+   */
+  readonly bpm?: number;
 }
 
 /** Per-sequence metadata the worker needs for the song tempo map (spec §7.9, §14 ext). */
@@ -249,6 +257,7 @@ const scheduledEventSchema = z.object({
   value: z.number().optional(),
   rampEnd: z.number().optional(),
   accented: z.boolean().optional(),
+  bpm: z.number().optional(),
 });
 
 const schedulerResponseSchema: z.ZodType<SchedulerResponse> = z.discriminatedUnion('kind', [

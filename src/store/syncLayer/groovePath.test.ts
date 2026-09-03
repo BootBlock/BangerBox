@@ -136,6 +136,35 @@ describe('groove reaches the scheduler (spec §7.5, §4.3)', () => {
     dispose?.();
   });
 
+  it('re-pushes a template that is saved again under the same key', () => {
+    // A template is keyed by its source sample's name, so re-extracting REPLACES one that
+    // tracks are already assigned to. Watching only the assignment would leave the worker
+    // shaping notes with the template it was handed first.
+    useSequenceStore.getState().setGrooveTemplate('g1', LATE_GROOVE);
+    dispose = subscribeSequencerSync(client);
+    useSequenceStore.getState().assignTrackGroove('t1', 'g1');
+    useSequenceStore.getState().setGrooveTemplate('g1', {
+      ...LATE_GROOVE,
+      points: [{ gridTick: 0, offsetTicks: 60, velocityScale: 1 }],
+    });
+
+    const hits = scheduledNotes();
+    expect(dropped).toEqual([]);
+    expect(hits[0]!.when).toBeCloseTo(60 / 1920, 5);
+    expect(hits[0]!.velocity).toBe(100);
+    dispose?.();
+  });
+
+  it('ignores a template no track is assigned to', () => {
+    dispose = subscribeSequencerSync(client);
+    useSequenceStore.getState().setGrooveTemplate('unused', LATE_GROOVE);
+
+    const hits = scheduledNotes();
+    expect(dropped).toEqual([]);
+    expect(hits[0]!.when).toBeCloseTo(0, 5);
+    dispose?.();
+  });
+
   it('restores straight timing when the assignment is cleared', () => {
     useSequenceStore.getState().setGrooveTemplate('g1', LATE_GROOVE);
     dispose = subscribeSequencerSync(client);

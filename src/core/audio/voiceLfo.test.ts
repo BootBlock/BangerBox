@@ -56,6 +56,12 @@ function oscillators(fake: FakeAudioContext): FakeOscillator[] {
   return fake.nodes.filter((node) => node.nodeType === 'oscillator') as unknown as FakeOscillator[];
 }
 
+/** The nth voice's buffer source, so a test can end it the way Web Audio would. */
+function sourceOf(fake: FakeAudioContext, index: number): { onended: (() => void) | null } {
+  const sources = fake.nodes.filter((node) => node.nodeType === 'bufferSource');
+  return sources[index] as unknown as { onended: (() => void) | null };
+}
+
 function setup(): { context: AudioContext; fake: FakeAudioContext; pool: VoicePool } {
   const { context, fake } = createFakeAudioContext();
   return { context, fake, pool: new VoicePool(context) };
@@ -142,8 +148,36 @@ describe('LfoConfig.retrigger (spec §6)', () => {
     pool.trigger(spec(context, { id: 'b', lfos: lfos({ retrigger: false, rate: 6 }) }));
     const built = oscillators(fake);
     expect(built).toHaveLength(2);
-    expect(built[0]!.stopped).toBe(true);
     expect(built[1]!.frequency.value).toBeCloseTo(6, 6);
+  });
+
+  it('leaves a replaced oscillator running for the voices still sounding through it', () => {
+    const { context, fake, pool } = setup();
+    pool.trigger(spec(context, { id: 'a', lfos: lfos({ retrigger: false, rate: 2 }) }));
+    const old = oscillators(fake)[0]!;
+
+    // The config change replaces the pad's LFO. Stopping the old oscillator here would cut
+    // the modulation out from under the note still sounding through it.
+    pool.trigger(spec(context, { id: 'b', lfos: lfos({ retrigger: false, rate: 6 }) }));
+    expect(old.stopped).toBe(false);
+    expect(old.outputs).toHaveLength(1);
+
+    // …and it goes as soon as that last voice ends, rather than living to the pool's end.
+    sourceOf(fake, 0).onended?.();
+    expect(old.stopped).toBe(true);
+    expect(old.outputs).toHaveLength(0);
+    expect(oscillators(fake)[1]!.stopped).toBe(false);
+  });
+
+  it('releases a replaced oscillator at once when nothing was borrowing it', () => {
+    const { context, fake, pool } = setup();
+    pool.trigger(spec(context, { id: 'a', lfos: lfos({ retrigger: false, rate: 2 }) }));
+    sourceOf(fake, 0).onended?.();
+    const old = oscillators(fake)[0]!;
+    expect(old.stopped).toBe(false); // still free-running with no voice on it
+
+    pool.trigger(spec(context, { id: 'b', lfos: lfos({ retrigger: false, rate: 6 }) }));
+    expect(old.stopped).toBe(true);
   });
 
   it('leaves the shared oscillator running when a voice using it ends', () => {
@@ -172,10 +206,7 @@ describe('LfoConfig.retrigger (spec §6)', () => {
     // A voice reaching the end of its buffer tears itself down through `ended`. The gain it
     // built must leave with it, or the free-running LFO — which survives the voice by design
     // — accumulates one dead gain per note for the life of the pool.
-    const source = fake.nodes.find((node) => node.nodeType === 'bufferSource') as unknown as {
-      onended: (() => void) | null;
-    };
-    source.onended?.();
+    sourceOf(fake, 0).onended?.();
     expect(osc.outputs).toHaveLength(0);
     expect(osc.stopped).toBe(false); // …and the LFO itself keeps running
 

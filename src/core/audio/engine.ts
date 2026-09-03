@@ -329,9 +329,10 @@ export class AudioEngine {
           when: event.when,
           velocity: event.velocity ?? 100,
           programId,
-          // A §6 tempo-synced LFO is resolved against the tempo the transport is at when
-          // the note sounds (spec §6, §7.2).
-          bpm: useTransportStore.getState().bpm,
+          // The tempo the scheduler placed the note at (spec §7.2), which in song mode is
+          // the segment's own rather than the transport's (spec §7.9). A live audition
+          // carries none and falls back to the transport, which is the tempo it is played at.
+          bpm: event.bpm ?? useTransportStore.getState().bpm,
         }),
       );
     };

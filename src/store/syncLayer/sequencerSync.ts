@@ -107,6 +107,7 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
   pushTransport(scheduler);
 
   let prevTrackGrooves = useSequenceStore.getState().trackGrooveIds;
+  let prevTemplates = useSequenceStore.getState().grooveTemplates;
   let prevEvents = useSequenceStore.getState().events;
   let prevAutomation = useSequenceStore.getState().automation;
 
@@ -172,6 +173,22 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
           if (!(trackId in assignments)) scheduler.setGroove(trackId, null);
         }
         prevTrackGrooves = assignments;
+      },
+    ),
+    // A template is keyed by its source sample's name (spec §14 (ai)), so re-extracting
+    // REPLACES one that tracks are already assigned to. Without this the worker keeps
+    // shaping notes with the template it was handed first, and the only way to see the new
+    // one is to toggle the assignment or reload the project.
+    useSequenceStore.subscribe(
+      (s) => s.grooveTemplates,
+      (templates) => {
+        const assignments = useSequenceStore.getState().trackGrooveIds;
+        for (const [trackId, templateId] of Object.entries(assignments)) {
+          if (templates[templateId] !== prevTemplates[templateId]) {
+            scheduler.setGroove(trackId, templates[templateId] ?? null);
+          }
+        }
+        prevTemplates = templates;
       },
     ),
     useSequenceStore.subscribe(

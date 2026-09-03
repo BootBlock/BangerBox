@@ -218,3 +218,86 @@ describe('end of song — a zero-length map (spec §7.9)', () => {
     expect(run(core, 1).endedCount).toBe(1);
   });
 });
+
+describe('changing the loop toggle or the playback mode mid-song (spec §7.9, §8.5.12)', () => {
+  it('ends the pass in progress rather than stopping the moment the loop is turned off', () => {
+    const core = new SchedulerCore();
+    twoEntrySong(core);
+    core.setSongLoop(true);
+    core.setTransport(true, false, 0);
+    // Run into the second pass of a 4 s song, then turn looping off.
+    for (let i = 0; i <= 100; i++) core.tick(i * 0.05);
+    core.setSongLoop(false);
+
+    // The pass in progress must finish: stopping here would cut it off part-way through.
+    expect(core.tick(5.05).songEnded).toBe(false);
+    expect(core.isPlaying).toBe(true);
+
+    let ended = false;
+    for (let i = 102; i <= 200; i++) ended ||= core.tick(i * 0.05).songEnded;
+    expect(ended).toBe(true);
+    expect(core.isPlaying).toBe(false);
+  });
+
+  it('does not replay the whole elapsed span when playback switches to sequence mode', () => {
+    // The mode picker is live while the transport rolls (spec §8.5.12). A sequence cursor
+    // left behind at the song's start would make the first sequence-mode wake schedule
+    // every tick since then in one burst, with a loop wrap and a capture flush per pass.
+    const core = new SchedulerCore();
+    twoEntrySong(core);
+    core.setSongLoop(true);
+    core.setLoop({ enabled: true, startTick: 0, endTick: 3840 });
+    core.setTransport(true, false, 0);
+    for (let i = 0; i <= 200; i++) core.tick(i * 0.05); // ten seconds of song
+
+    core.setSequenceMeta(
+      {
+        A: { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: null },
+        B: { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: null },
+      },
+      120,
+      'A',
+      'sequence',
+    );
+    const first = core.tick(10.05);
+    expect(first.loopWrapped.length).toBeLessThanOrEqual(1);
+    expect(first.batch.filter((e) => e.kind === 'noteOn').length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('the tempo a scheduled note carries (spec §7.2, §7.9)', () => {
+  it('stamps a sequence-mode note with the transport tempo', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['A'], 'sequence');
+    core.setTempo(140);
+    core.setLoop({ enabled: true, startTick: 0, endTick: 3840 });
+    core.applyEventsDiff('ta', 'A', [note('a', 0)], []);
+    core.setTransport(true, false, 0);
+    const hit = run(core, 0.5).batch.find((e) => e.kind === 'noteOn');
+    expect(hit?.bpm).toBe(140);
+  });
+
+  it('stamps a song-mode note with its own segment’s tempo, not the transport’s', () => {
+    // A sequence with a tempo of its own plays at it (spec §7.9), and a §6 tempo-synced
+    // LFO on that note has to follow the same tempo the note is placed against.
+    const core = new SchedulerCore();
+    core.setSequenceMeta(
+      {
+        A: { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: 60 },
+        B: { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: 180 },
+      },
+      120,
+      'A',
+      'song',
+    );
+    core.setSongSequence(['A', 'B']);
+    core.setTempo(120);
+    core.applyEventsDiff('ta', 'A', [note('a', 0, 36)], []);
+    core.applyEventsDiff('tb', 'B', [note('b', 0, 38)], []);
+    core.setTransport(true, false, 0);
+
+    const hits = run(core, 6).batch.filter((e) => e.kind === 'noteOn');
+    expect(hits.find((e) => e.note === 36)?.bpm).toBe(60);
+    expect(hits.find((e) => e.note === 38)?.bpm).toBe(180);
+  });
+});
