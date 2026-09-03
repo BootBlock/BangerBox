@@ -32,7 +32,7 @@ import {
   type KeygroupZone,
   type VelocityLayer,
 } from '@/core/project/schemas';
-import { useProjectStore, useSequenceStore, useTransportStore } from '@/store';
+import { useMixerStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
 import { commitTempo } from '@/store/tempo';
 import { decodeWav, encodeWav } from '@/core/audio/wav';
 import { createPlayheadSab, PlayheadReader, PlayheadWriter } from '@/core/sequencer';
@@ -116,6 +116,10 @@ export interface AudioProbe {
   sequencerGuardProof: () => Promise<SequencerGuardResult>;
   /** A mid-playback tempo change applies from the change onward (spec §7.2, issue #74). */
   tempoChangeProof: () => Promise<TempoChangeResult>;
+  /** Every §9.5 bounce produces a file the user can actually get back (issue #104). */
+  bounceReachProof: () => Promise<BounceReachResult>;
+  /** A gesture moves the graph and re-renders nothing (spec §3.3, §4.1, issue #27). */
+  gestureRenderProof: () => Promise<GestureRenderResult>;
 }
 
 /** Outcome of the §6 mod-matrix clamp proof (see {@link modClampProof}). */
@@ -238,6 +242,37 @@ export interface FactoryInstallResult {
    */
   globalAfterKit: number;
   globalAfterDemo: number;
+}
+
+/** Every §9.5 bounce, read back from OPFS as the UI does before downloading (issue #104). */
+export interface BounceReachResult {
+  /** Bytes readable back for each §9.5 variant; 0 means the file could not be retrieved. */
+  readonly sequenceBytes: number;
+  readonly songBytes: number;
+  readonly stemBytes: number;
+  /** The resample lands in the sample library rather than in `/bounces/` (spec §9.5). */
+  readonly resampledSampleId: string;
+  readonly resampledBytes: number;
+  /** True when the resampled row is listed by the library query the Browser runs. */
+  readonly resampledIsBrowsable: boolean;
+}
+
+/** What a continuous gesture costs React and what it moves in the graph (issue #27). */
+export interface GestureRenderResult {
+  /** `useMixerStore.channels` notifications across the whole gesture. §3.3 requires zero. */
+  readonly notificationsDuringGesture: number;
+  /** Notifications from the single commit that ends it — exactly one (spec §4.1). */
+  readonly notificationsAtCommit: number;
+  /**
+   * Master meter peak from the same demo hit at three points: before the gesture, part-way
+   * through it, and after the commit. A transient that reached the graph is AUDIBLE, so the
+   * middle reading is what proves the gesture did its job without a single re-render.
+   */
+  readonly peakBefore: number;
+  readonly peakDuringGesture: number;
+  readonly peakAfterCommit: number;
+  /** Transient samples sent, so the counts above can be read against a real gesture length. */
+  readonly samplesSent: number;
 }
 
 declare global {
@@ -997,6 +1032,122 @@ async function tempoChangeProof(engine: AudioEngine): Promise<TempoChangeResult>
   };
 }
 
+/**
+ * Every §9.5 bounce, driven over the REAL path and read back (issue #104).
+ *
+ * The defect was never the render: three of the four variants encoded a correct WAV into
+ * `/projects/{id}/bounces/`, which is OPFS — a store no part of the UI browses and no file
+ * manager opens. So this asserts the step that was missing, the read-back, for each variant
+ * in turn, over real OPFS rather than the unit suite's fake (spec §13.5).
+ */
+async function bounceReachProof(): Promise<BounceReachResult> {
+  const { bounceActiveSequence, bounceSong, bounceTrack, resampleSequenceToSample } =
+    await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+  const ctx = sampleEditContext();
+
+  const sequenceId = useTransportStore.getState().activeSequenceId;
+  if (!sequenceId) throw new Error('no active sequence to bounce');
+  const trackId = Object.values(useSequenceStore.getState().tracks).find(
+    (track) => track.sequenceId === sequenceId,
+  )?.id;
+  if (!trackId) throw new Error('the active sequence has no track to bounce as a stem');
+
+  // Song mode needs an entry, and a fresh project has none (spec §7.9).
+  if (useSequenceStore.getState().songEntries.length === 0) {
+    useSequenceStore
+      .getState()
+      .setSongEntries([{ id: crypto.randomUUID(), position: 0, sequenceId, repeats: 1 }]);
+  }
+
+  const bytesAt = async (path: string) => (await readFile(path)).size;
+  const sequenceBytes = await bytesAt(await bounceActiveSequence('probe-sequence', ctx));
+  const songBytes = await bytesAt(await bounceSong('probe-song', ctx));
+  const stemBytes = await bytesAt(await bounceTrack(trackId, 'probe-stem', ctx));
+
+  const resampled = await resampleSequenceToSample('probe-resample', ctx);
+  const resampledBytes = await bytesAt(resampled.opfs_path);
+  // The library query the Browser runs, not the row it was just handed: a resample the user
+  // cannot find in the list is as unreachable as a bounce in `/bounces/`.
+  const listed = await ctx.repos.samples.listByProject(ctx.projectId);
+
+  return {
+    sequenceBytes,
+    songBytes,
+    stemBytes,
+    resampledSampleId: resampled.id,
+    resampledBytes,
+    resampledIsBrowsable: listed.rows.some((row) => row.id === resampled.id),
+  };
+}
+
+/**
+ * A continuous gesture against the live audio graph (spec §3.3, §4.1, issue #27).
+ *
+ * `setTransient` used to be an ordinary `set()`, which replaces the `channels` map's identity
+ * — so every component selecting it re-rendered on every pointer sample and every rAF-aligned
+ * CC frame. This drives sixty samples through the real store, sync layer and graph, counting
+ * what React was asked to do and measuring what the master gain actually did.
+ */
+async function gestureRenderProof(engine: AudioEngine): Promise<GestureRenderResult> {
+  const { channelLevelPath } = await import('@/core/audio/params/registry');
+  const path = channelLevelPath('master');
+
+  /** The master meter's peak from one demo pad hit — the audible reading (spec §5.8). */
+  const peakOfOneHit = async (): Promise<number> => {
+    await engine.triggerDemoPad(110);
+    let peak = 0;
+    const started = performance.now();
+    while (performance.now() - started < 400) {
+      const slot = engine.meterRegistry.slotOf('master');
+      if (slot !== undefined) {
+        const reading = engine.meterRegistry.read(slot);
+        peak = Math.max(peak, reading.peakL, reading.peakR);
+      }
+      await delay(10);
+    }
+    return peak;
+  };
+
+  useMixerStore.getState().commit(path, 1);
+  await delay(60);
+  const peakBefore = await peakOfOneHit();
+
+  let notifications = 0;
+  const stop = useMixerStore.subscribe(
+    (state) => state.channels,
+    () => {
+      notifications += 1;
+    },
+  );
+
+  // A drag from full down to a quarter, at the sample rate a pointer or a §10.4 rAF-aligned
+  // encoder produces. Every one of these used to replace the `channels` map's identity.
+  const samplesSent = 60;
+  for (let sample = 0; sample < samplesSent; sample += 1) {
+    useMixerStore.getState().setTransient(path, 1 - (0.75 * (sample + 1)) / samplesSent);
+  }
+  const notificationsDuringGesture = notifications;
+  await delay(60);
+  const peakDuringGesture = await peakOfOneHit();
+
+  notifications = 0;
+  useMixerStore.getState().commit(path, 1);
+  const notificationsAtCommit = notifications;
+  stop();
+  await delay(60);
+  const peakAfterCommit = await peakOfOneHit();
+
+  return {
+    notificationsDuringGesture,
+    notificationsAtCommit,
+    peakBefore,
+    peakDuringGesture,
+    peakAfterCommit,
+    samplesSent,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -1029,5 +1180,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     wavHeaderProof,
     sequencerGuardProof: () => sequencerGuardProof(engine),
     tempoChangeProof: () => tempoChangeProof(engine),
+    bounceReachProof,
+    gestureRenderProof: () => gestureRenderProof(engine),
   };
 }

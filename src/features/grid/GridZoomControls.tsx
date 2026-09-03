@@ -75,11 +75,10 @@ export function GridZoomControls({ viewport }: GridZoomControlsProps) {
     [viewport],
   );
 
-  // Re-sync after any render, because the render pass draws `initialText` and could write it
-  // back over the ref-painted value — the same re-sync `Knob` performs between gestures.
-  useEffect(() => {
-    if (readoutRef.current) readoutRef.current.textContent = zoomText(viewport.get());
-  });
+  // There is deliberately NO re-sync effect after each render, unlike `Knob`'s. `initialText`
+  // never changes, so React reconciles the same string on every render and never writes to
+  // the text node — the ref paint is the only thing that ever moves it. A re-sync would be
+  // code no test could fail against, which is worse than none: it would read as necessary.
 
   const zoom = (factor: number) => viewport.update((box) => zoomed(box, factor));
 
