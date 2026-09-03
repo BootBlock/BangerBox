@@ -3,13 +3,29 @@
  * memory views (via {@link StreamingKernel}) and exposes the limiter's typed params; its
  * reported {@link latencySamples} feeds plugin-delay compensation (spec §5.7.3).
  */
-import { StreamingKernel, type StreamingKernelExports } from './kernelBase';
+import {
+  clampKernelParam,
+  StreamingKernel,
+  type KernelRange,
+  type StreamingKernelExports,
+} from './kernelBase';
 
 interface LimiterExports extends StreamingKernelExports {
   setCeiling(handle: number, dbfs: number): void;
   setRelease(handle: number, releaseMs: number): void;
   latencySamples(handle: number): number;
 }
+
+/**
+ * The §5.7 bounds this wrapper clamps against (issue #97). Declared here rather than imported
+ * from `effectParams.ts`, because this module is loaded inside the DSP-effect worklet (§5.6.2)
+ * and importing the effect table there would drag `@/core/project/schemas` — and Zod behind it
+ * — into the render thread. `kernelRanges.test.ts` is what stops the two copies drifting.
+ */
+export const LIMITER_RANGES = {
+  ceiling: [-6, 0] as KernelRange,
+  release: [10, 500] as KernelRange,
+};
 
 /** URL of the built kernel binary (emitted by `npm run build:wasm` — spec §5.6). */
 export function lookaheadLimiterWasmUrl(): URL {
@@ -44,15 +60,15 @@ export class LookaheadLimiterKernel extends StreamingKernel<LimiterExports> {
     return new LookaheadLimiterKernel(exports, handle, inPtr, outPtr, maxBlock);
   }
 
-  /** Output ceiling in dBFS (spec §5.7: −6..0). */
+  /** Output ceiling in dBFS (spec §5.7: −6..0), clamped before it reaches the kernel. */
   setCeiling(dbfs: number): void {
     this.assertLive();
-    this.exports.setCeiling(this.handle, dbfs);
+    this.exports.setCeiling(this.handle, clampKernelParam(dbfs, LIMITER_RANGES.ceiling));
   }
 
-  /** Release time in ms (spec §5.7: 10..500). */
+  /** Release time in ms (spec §5.7: 10..500), clamped before it reaches the kernel. */
   setRelease(releaseMs: number): void {
     this.assertLive();
-    this.exports.setRelease(this.handle, releaseMs);
+    this.exports.setRelease(this.handle, clampKernelParam(releaseMs, LIMITER_RANGES.release));
   }
 }

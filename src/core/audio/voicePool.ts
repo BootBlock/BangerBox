@@ -14,6 +14,10 @@ import {
   DEFAULT_BPM,
   FILTER_CUTOFF_RANGE,
   FILTER_RESONANCE_RANGE,
+  GAIN_DB_RANGE,
+  MOD_AMOUNT_RANGE,
+  TUNE_CENTS_RANGE,
+  TUNE_SEMITONES_RANGE,
   type AhdsrEnvelope,
   type LfoConfig,
   type ModRoute,
@@ -46,12 +50,25 @@ import {
   FILTER_MOD_OCTAVES,
   PITCH_MOD_CENTS,
 } from './voiceModulation';
-import { routesForSource } from './modMatrix';
+import { oscillatorDepthScale, routesForSource } from './modMatrix';
 import { cancelParams, rampParamTarget } from './params/ramps';
 import type { ProgramParamTarget } from './voiceParams';
 import { selectChokeVictims, selectStealVictim, type ChokeCandidate, type VoiceRef } from './voiceSelection';
 import { createBufferVoiceSource, createGranularVoiceSource, type VoiceSource } from './voiceSource';
 import { getKernelModule } from '@/core/dsp/kernelModules';
+
+/**
+ * The furthest a voice's detune may reach, in cents (spec §6, issue #76): the §6 layer tune
+ * range at full scale plus one octave of §6 pitch modulation. Derived from the ranges rather
+ * than written down, so tightening any of them tightens this too (spec §13.6).
+ */
+const MAX_VOICE_DETUNE_CENTS = TUNE_SEMITONES_RANGE[1] * 100 + TUNE_CENTS_RANGE[1] + PITCH_MOD_CENTS;
+
+/**
+ * The loudest a voice's amp envelope may peak (spec §6, issue #76): the §6 layer gain trim at
+ * full scale with the mod matrix at its own. Velocity only ever scales this down.
+ */
+const MAX_VOICE_GAIN = 10 ** (GAIN_DB_RANGE[1] / 20) * (1 + MOD_AMOUNT_RANGE[1]);
 
 /** The §6 sound-design surface for one voice (optional — omitted by the demo path). */
 export interface VoiceSoundDesign {
@@ -383,7 +400,15 @@ export class VoicePool {
     // stage 1): the §5.7.9 granular engine for a warp pad, else an `AudioBufferSourceNode`.
     const region = playRegion(spec.buffer, spec.startFrame, spec.endFrame);
     const source = this.buildSource(spec, region, now);
-    const baseDetune = spec.tuneSemitones * 100 + spec.tuneCents + stat.detuneCents;
+    // Clamped at the point it reaches the parameter (spec §6, issue #76): `staticModulation`
+    // already bounds the matrix's own contribution, so this catches a `spec` that reached the
+    // pool without passing the §6 schema — detune is the playback rate, and a wild one
+    // consumes the buffer before a single frame is audible.
+    const baseDetune = clamp(
+      spec.tuneSemitones * 100 + spec.tuneCents + stat.detuneCents,
+      -MAX_VOICE_DETUNE_CENTS,
+      MAX_VOICE_DETUNE_CENTS,
+    );
 
     const ampGain = this.context.createGain();
     const filterType = spec.filter ? biquadFilterType(spec.filter.type) : null;
@@ -429,8 +454,9 @@ export class VoicePool {
       breakpoints = [{ time: now, cents: baseDetune }];
     }
 
-    // Amp AHDSR (velocity × gain trim × static amp mod) — spec §5.4/§6.
-    const peak = velocityToGain(spec.velocity, spec.gainDb) * stat.ampFactor;
+    // Amp AHDSR (velocity × gain trim × static amp mod) — spec §5.4/§6, clamped at the
+    // parameter for the same reason as the detune above (issue #76).
+    const peak = clamp(velocityToGain(spec.velocity, spec.gainDb) * stat.ampFactor, 0, MAX_VOICE_GAIN);
     scheduleAmpAttack(ampGain.gain, peak, spec.amp, now);
 
     // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6). Wired
@@ -528,6 +554,11 @@ export class VoicePool {
     const routes = spec.modMatrix;
     if (!lfos || !routes) return pitchOscillations;
     const bpm = spec.bpm ?? DEFAULT_BPM;
+    // The LFO depths sum in the audio graph, where nothing can clamp them, so they are scaled
+    // in proportion before they are wired (spec §6, issue #76). One route is untouched; 32
+    // full-depth routes onto pitch share the one octave a single route would have reached.
+    const pitchDepthScale = oscillatorDepthScale(routes, 'pitch');
+    const cutoffDepthScale = oscillatorDepthScale(routes, 'filterCutoff');
     lfos.forEach((config, index) => {
       const sourceName = index === 0 ? 'lfo1' : 'lfo2';
       const targets = routesForSource(routes, sourceName).filter(
@@ -545,7 +576,7 @@ export class VoicePool {
       for (const route of targets) {
         const gain = this.context.createGain();
         if (route.target === 'pitch') {
-          gain.gain.value = sign * route.amount * PITCH_MOD_CENTS;
+          gain.gain.value = sign * route.amount * pitchDepthScale * PITCH_MOD_CENTS;
           osc.connect(gain);
           gain.connect(source.detune);
           pitchOscillations.push({
@@ -556,7 +587,7 @@ export class VoicePool {
             phase: config.phaseOffset,
           });
         } else if (filter) {
-          gain.gain.value = sign * route.amount * FILTER_MOD_OCTAVES * 1200;
+          gain.gain.value = sign * route.amount * cutoffDepthScale * FILTER_MOD_OCTAVES * 1200;
           osc.connect(gain);
           gain.connect(filter.detune);
         }

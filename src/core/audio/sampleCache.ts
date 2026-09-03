@@ -44,7 +44,12 @@ export class SampleCache {
       return this.source.decode(bytes);
     })();
     this.cache.set(path, decoded);
-    decoded.catch(() => this.cache.delete(path)); // let a transient failure be retried
+    // Evict by PROMISE identity, not by path (issue #97): an `invalidate` during decode #1
+    // followed by decode #2 would otherwise let #1's later rejection delete #2's good entry,
+    // costing a redundant decode of a file that had already been read.
+    decoded.catch(() => {
+      if (this.cache.get(path) === decoded) this.cache.delete(path); // transient failure: retry
+    });
     return decoded;
   }
 

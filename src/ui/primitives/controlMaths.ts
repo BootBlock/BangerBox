@@ -49,14 +49,23 @@ function withSign(text: string, negative: boolean): string {
  * Human-readable `aria-valuetext` (spec §8.2 — "−6.0 dB", "1.2 kHz"). Unit-aware:
  * hertz abbreviates to kHz above 1 kHz, percentages read as integers, and a −∞ dB
  * fader (true silence, §8.5.6 fader law) reads as "−∞ dB" rather than a huge number.
+ *
+ * A NaN reads as an em dash rather than the literal "NaN", which a screen reader announces
+ * verbatim (issue #97); a positive infinity reads as the infinity symbol.
  */
 export function formatValueText(value: number, unit: string): string {
-  if (value === Number.NEGATIVE_INFINITY) return unit ? `${MINUS}∞ ${unit}` : `${MINUS}∞`;
+  if (Number.isNaN(value)) return unit ? `— ${unit}` : '—';
+  if (!Number.isFinite(value)) {
+    const symbol = value < 0 ? `${MINUS}∞` : '∞';
+    return unit ? `${symbol} ${unit}` : symbol;
+  }
   const negative = value < 0;
   const magnitude = Math.abs(value);
 
   if (unit === 'Hz') {
-    if (magnitude >= 1000) return withSign(`${(magnitude / 1000).toFixed(1)} kHz`, negative);
+    // The rounding happens BEFORE the kHz test, not after it: 999.6 rounds to 1000, which read
+    // as "1000 Hz" and looked as though the abbreviation had simply failed (issue #97).
+    if (Math.round(magnitude) >= 1000) return withSign(`${(magnitude / 1000).toFixed(1)} kHz`, negative);
     return withSign(`${Math.round(magnitude)} Hz`, negative);
   }
   if (unit === '%') return withSign(`${Math.round(magnitude)} %`, negative);

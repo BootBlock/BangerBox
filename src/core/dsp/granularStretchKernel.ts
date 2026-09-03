@@ -10,7 +10,18 @@
  *
  * Both own their module + memory (spec §5.6.3) and hide the pointers from consumers, so the
  * implementation language stays swappable (spec §5.6.1, §1.3 #5).
+ *
+ * Both follow the §5.6.1 guard policy (issue #97): the §5.7.9 `rate`, `pitchSemitones` and
+ * per-block detune are clamped into their declared ranges, and a bad frame capacity or block
+ * size is refused. A NaN rate makes `prepareStream` report zero output frames, which the voice
+ * pool reads as a region of no length — a pad that plays nothing, with no error.
  */
+import { assertPositiveInteger, assertSampleRate, clampKernelParam, type KernelRange } from './kernelBase';
+
+/** §5.7.9 bounds: time-stretch 0.25–4×, pitch ±24 semitones (±2400 cents at the source). */
+const RATE_RANGE: KernelRange = [0.25, 4];
+const PITCH_SEMITONES_RANGE: KernelRange = [-24, 24];
+const DETUNE_CENTS_RANGE: KernelRange = [-2_400, 2_400];
 
 interface GranularStretchExports {
   memory: WebAssembly.Memory;
@@ -67,6 +78,8 @@ export class GranularStretchKernel {
     sampleRate: number,
     maxInputFrames: number,
   ): GranularStretchKernel {
+    assertSampleRate(sampleRate);
+    assertPositiveInteger('GranularStretchKernel maxInputFrames', maxInputFrames);
     const instance = new WebAssembly.Instance(module, {});
     const exports = instance.exports as unknown as GranularStretchExports;
     const handle = exports.create(sampleRate, maxInputFrames);
@@ -87,8 +100,8 @@ export class GranularStretchKernel {
       inFrames,
       this.outPtr,
       this.outCapacity,
-      rate,
-      pitchSemitones,
+      clampKernelParam(rate, RATE_RANGE),
+      clampKernelParam(pitchSemitones, PITCH_SEMITONES_RANGE),
     );
     return this.outView.slice(0, outFrames);
   }
@@ -145,6 +158,8 @@ export class GranularSourceKernel {
     region: Float32Array,
     rate: number,
   ): GranularSourceKernel {
+    assertSampleRate(sampleRate);
+    assertPositiveInteger('GranularSourceKernel maxBlock', maxBlock);
     const instance = new WebAssembly.Instance(module, {});
     const exports = instance.exports as unknown as GranularStretchExports;
     const handle = exports.createStream(sampleRate, maxBlock);
@@ -155,7 +170,12 @@ export class GranularSourceKernel {
     const outPtr = exports.allocateBuffer(maxBlock);
     const regionView = new Float32Array(exports.memory.buffer, regionPtr, frames);
     regionView.set(region.subarray(0, frames));
-    const totalFrames = exports.prepareStream(handle, regionPtr, region.length, rate);
+    const totalFrames = exports.prepareStream(
+      handle,
+      regionPtr,
+      region.length,
+      clampKernelParam(rate, RATE_RANGE),
+    );
     return new GranularSourceKernel(exports, handle, regionPtr, outPtr, maxBlock, totalFrames);
   }
 
@@ -166,7 +186,12 @@ export class GranularSourceKernel {
   process(output: Float32Array, detuneCents: number): number {
     this.assertLive();
     const frames = Math.min(output.length, this.maxBlock);
-    const written = this.exports.streamBlock(this.handle, this.outPtr, frames, detuneCents);
+    const written = this.exports.streamBlock(
+      this.handle,
+      this.outPtr,
+      frames,
+      clampKernelParam(detuneCents, DETUNE_CENTS_RANGE),
+    );
     for (let i = 0; i < written; i++) output[i] = this.outView[i] as number;
     for (let i = written; i < output.length; i++) output[i] = 0;
     return written;

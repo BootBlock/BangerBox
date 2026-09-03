@@ -21,7 +21,14 @@ import {
 import type { SwingDivision } from '@/store/useTransportStore';
 import { arpeggiatorHits, type ArpConfig, type ArpHeldNote } from './arpeggiator';
 import { automationValueAt, resolveEffectivePoints } from './automation';
-import { eventsInWindow, loopActive, loopPassAt, sequenceTickAt, type LoopRegion } from './lookahead';
+import {
+  eventsInWindow,
+  loopActive,
+  loopPassAt,
+  segmentWindow,
+  sequenceTickAt,
+  type LoopRegion,
+} from './lookahead';
 import type { ScheduledEvent } from './messages';
 import { noteRepeatHits, type HeldNote, type NoteRepeatDivision } from './noteRepeat';
 import { secondsToTicks, ticksPerBar, ticksPerBeat, ticksToSeconds } from './ppqn';
@@ -108,7 +115,20 @@ export class SchedulerCore {
   // --- playback timing bookkeeping ---
   private playStartContext = 0; // gesture time (count-in begins here)
   private contentStartContext = 0; // content begins after count-in
-  private originTick = 0; // linear/song tick at contentStartContext
+  /**
+   * The context time the tempo map is measured from, and the tick and song seconds standing at
+   * it (spec §7.2, issue #74).
+   *
+   * Distinct from {@link contentStartContext}, which stays where the content genuinely began
+   * and is what the §7.7 count-in gate compares a live note's timestamp against. The anchor
+   * MOVES: a mid-playback tempo change re-anchors it to the moment of the change, so the new
+   * tempo applies from there onward instead of re-timing everything already played. Keeping
+   * one field for both jobs would have made a §10.2 latency-compensated note, timestamped just
+   * before the change, look like it had arrived during a count-in.
+   */
+  private anchorContext = 0;
+  private anchorSongSeconds = 0;
+  private originTick = 0; // linear/song tick at anchorContext
   private nextScheduleTick = 0; // next linear tick to schedule from (sequence mode)
   /**
    * Song mode's schedule cursor, in song seconds measured from song tick 0 and NOT wrapped
@@ -122,6 +142,8 @@ export class SchedulerCore {
   private lastSongPass = 0;
   private pendingStart = false;
   private stopRequested = false;
+  /** A tempo set while playing, applied at the next wake with a re-anchor (issue #74). */
+  private pendingBpm: number | null = null;
 
   // ---------------------------------------------------------------- setters ----
 
@@ -140,8 +162,20 @@ export class SchedulerCore {
     }
   }
 
+  /**
+   * spec §7.2 — a tempo change applies from the change onward, never retroactively (issue #74).
+   *
+   * The new tempo is held until the next {@link tick}, because the core has no clock of its own:
+   * `tick(now)` is where a trustworthy context time arrives (spec §11.3 — the worker file is a
+   * thin message shell), and re-anchoring needs one. The wait is at most
+   * `SCHEDULER_INTERVAL_MS`, and nothing reads a position in between.
+   */
   setTempo(bpm: number): void {
-    this.bpm = bpm;
+    if (!this.playing) {
+      this.bpm = bpm;
+      return;
+    }
+    this.pendingBpm = bpm;
   }
   setSwing(amount: number, division: SwingDivision): void {
     this.swingAmount = amount;
@@ -280,6 +314,8 @@ export class SchedulerCore {
       songEnded: false,
     };
 
+    this.applyPendingTempo(now);
+
     if (this.stopRequested) {
       this.closeOpenNotes(now, result);
       this.flushRecording(result);
@@ -332,8 +368,11 @@ export class SchedulerCore {
     this.originTick = this.startTick;
     const countInSeconds = this.recording && this.countInBars > 0 ? this.countInBars * this.barSeconds() : 0;
     this.contentStartContext = now + countInSeconds;
+    this.anchorContext = this.contentStartContext;
+    this.anchorSongSeconds = songTickToSeconds(this.songMap, this.originTick);
+    this.pendingBpm = null; // a tempo set before the gesture is already in force
     this.nextScheduleTick = this.originTick;
-    this.nextSongSeconds = songTickToSeconds(this.songMap, this.originTick);
+    this.nextSongSeconds = this.anchorSongSeconds;
     this.nextClickIndex = 0;
     this.lastLoopPass = loopPassAt(this.originTick, this.loop);
     this.lastEntryIndex = -1;
@@ -345,20 +384,95 @@ export class SchedulerCore {
     this.recording = false;
     this.openNotes.clear();
     this.heldNotes.clear();
+    // Live erase is armed by holding a pad over Erase (spec §7.7), and a stop releases neither
+    // for the worker. Leaving it armed meant the next playback silently deleted notes the user
+    // never asked to erase, on a gesture they had finished with (issue #95). Clearing it costs
+    // a user still holding Erase through a stop one re-press; not clearing it costs their notes.
+    this.eraseNotes.clear();
   }
 
   private contentStarted(when: number): boolean {
     return this.playing && when >= this.contentStartContext;
   }
 
+  /**
+   * Apply a tempo set mid-playback, from `now` onward (spec §7.2, issue #74).
+   *
+   * Re-anchoring is the whole of the fix. `positionTickAt` computes the position as
+   * `originTick + secondsToTicks(now − anchorContext, bpm)`; with the anchor left where
+   * playback began, changing `bpm` re-read the ENTIRE elapsed history at the new tempo, so
+   * halving the tempo halved the computed position and the playhead jumped backwards with no
+   * time having passed. Moving the anchor to `now` — with the tick and song seconds standing
+   * there, measured at the OLD tempo — makes the elapsed part immutable and the new tempo
+   * govern only what follows.
+   *
+   * `nextScheduleTick` is deliberately left alone: it marks how far the lookahead has already
+   * scheduled, and those events have been posted. On a slow-down it now sits ahead of the
+   * playhead, so `scheduleSequence` simply schedules nothing until the clock reaches it.
+   */
+  private applyPendingTempo(now: number): void {
+    const bpm = this.pendingBpm;
+    if (bpm === null) return;
+    this.pendingBpm = null;
+    if (!this.playing) {
+      this.bpm = bpm;
+      return;
+    }
+    if (now > this.anchorContext) {
+      this.reanchorClicks(now);
+      this.anchorSongSeconds += now - this.anchorContext;
+      this.originTick = this.linearTickAt(now); // at the old tempo, before it changes
+      this.anchorContext = now;
+      this.bpm = bpm;
+      return;
+    }
+    // Still inside the §7.7 count-in. No content has elapsed — the playhead is parked at
+    // `startTick` — so there is nothing to preserve and the whole count-in simply runs at the
+    // new tempo, which is what "two bars at 90 bpm" means. Its length is re-derived and the
+    // click grid re-phased from the gesture, skipping the beats already posted.
+    this.bpm = bpm;
+    const countInSeconds = this.recording && this.countInBars > 0 ? this.countInBars * this.barSeconds() : 0;
+    this.contentStartContext = this.playStartContext + countInSeconds;
+    this.anchorContext = this.contentStartContext;
+    const beatSeconds = this.beatSeconds();
+    if (beatSeconds > 0) {
+      while (this.playStartContext + this.nextClickIndex * beatSeconds < now) this.nextClickIndex++;
+    }
+  }
+
+  /**
+   * Re-phase the §7.7 click grid onto the new tempo without re-timing the beats already
+   * scheduled (issue #74).
+   *
+   * The grid is `playStartContext + index × beatSeconds`, so changing `beatSeconds` alone
+   * would move every click including the ones already posted. Instead the last click emitted
+   * keeps its place and the grid is rebuilt from there at the new spacing. Any click the new
+   * spacing would put in the past is skipped: a past `when` reaches the dispatcher and Web
+   * Audio plays it immediately, which is an audible stray beat.
+   */
+  private reanchorClicks(now: number): void {
+    const oldBeatSeconds = this.beatSeconds();
+    if (!(oldBeatSeconds > 0) || this.nextClickIndex === 0) return;
+    const lastEmitted = this.playStartContext + (this.nextClickIndex - 1) * oldBeatSeconds;
+    const newBeatSeconds = ticksToSeconds(ticksPerBeat(this.activeTimeSig()), this.pendingBpmOrCurrent());
+    if (!(newBeatSeconds > 0)) return;
+    this.playStartContext = lastEmitted - (this.nextClickIndex - 1) * newBeatSeconds;
+    while (this.playStartContext + this.nextClickIndex * newBeatSeconds < now) this.nextClickIndex++;
+  }
+
+  /** The tempo the click grid is being re-phased onto (the pending one has not landed yet). */
+  private pendingBpmOrCurrent(): number {
+    return this.pendingBpm ?? this.bpm;
+  }
+
   /** Sequence/song tick at a context time (spec §7.1.4). */
   private positionTickAt(when: number): number {
-    const elapsed = when - this.contentStartContext;
+    const elapsed = when - this.anchorContext;
     if (elapsed <= 0) return this.originTick;
     if (this.playbackMode === 'song') {
       // Absolute (unwrapped) song seconds, folded back into one pass when the song loops
       // (spec §7.9) so the playhead restarts at 0 rather than clamping at the end.
-      const absolute = songTickToSeconds(this.songMap, this.originTick) + elapsed;
+      const absolute = this.anchorSongSeconds + elapsed;
       const total = songTotalSeconds(this.songMap);
       const within = this.songLoopEnabled && total > 0 ? absolute % total : absolute;
       return songSecondsToTick(this.songMap, within);
@@ -393,7 +507,20 @@ export class SchedulerCore {
   // --- sequence-mode content (spec §7.1.4, §7.4, §7.1.5) ---
   private scheduleSequence(horizon: number, result: SchedulerTickResult): void {
     const from = this.nextScheduleTick;
-    const to = this.linearTickAt(horizon);
+    const requested = this.linearTickAt(horizon);
+    if (requested <= from) return;
+    // `segmentWindow` bounds its own iteration, and a window it could not walk in full must
+    // shorten this pass rather than be scheduled as though it had (issue #95). Everything
+    // below — including `nextScheduleTick` at the end — then works to the same `to`, so the
+    // remainder is picked up on the next wake instead of being dropped.
+    const walk = segmentWindow(from, requested, this.loop);
+    if (walk.truncated) {
+      console.warn(
+        `[scheduler] lookahead window ${from}..${requested} exceeded the segment guard; ` +
+          `scheduling to ${walk.reachedTo} and deferring the rest`,
+      );
+    }
+    const to = walk.reachedTo;
     if (to <= from) return;
 
     for (const [trackId, track] of this.tracks) {
@@ -417,12 +544,12 @@ export class SchedulerCore {
     this.nextScheduleTick = to;
     // The counterpart of the song cursor's own catch-up: a switch INTO song mode resumes at
     // the elapsed position instead of replaying the song from its start (spec §8.5.12).
-    this.nextSongSeconds = Math.max(0, horizon - this.contentStartContext);
+    this.nextSongSeconds = Math.max(0, this.anchorSongSeconds + (horizon - this.anchorContext));
   }
 
   /** Linear tick reached at context time `when` (sequence mode). */
   private linearTickAt(when: number): number {
-    const elapsed = when - this.contentStartContext;
+    const elapsed = when - this.anchorContext;
     return elapsed <= 0 ? this.originTick : this.originTick + secondsToTicks(elapsed, this.bpm);
   }
 
@@ -455,7 +582,7 @@ export class SchedulerCore {
   ): void {
     const shaped = this.shapeNote(trackId, seqTick, event.velocity);
     const when =
-      this.contentStartContext + ticksToSeconds(linearTick + shaped.offsetTicks - this.originTick, this.bpm);
+      this.anchorContext + ticksToSeconds(linearTick + shaped.offsetTicks - this.originTick, this.bpm);
     result.batch.push({
       kind: 'noteOn',
       when,
@@ -476,7 +603,7 @@ export class SchedulerCore {
       const owner = held.find((h) => h.note === hit.note)!;
       const seqTick = sequenceTickAt(hit.tick, this.loop);
       const swung = hit.tick + swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision);
-      const when = this.contentStartContext + ticksToSeconds(swung - this.originTick, this.bpm);
+      const when = this.anchorContext + ticksToSeconds(swung - this.originTick, this.bpm);
       result.batch.push({
         kind: 'noteOn',
         when,
@@ -505,7 +632,7 @@ export class SchedulerCore {
       for (const hit of arpeggiatorHits(chord, this.arpConfig, from, to)) {
         const seqTick = sequenceTickAt(hit.tick, this.loop);
         const swung = hit.tick + swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision);
-        const when = this.contentStartContext + ticksToSeconds(swung - this.originTick, this.bpm);
+        const when = this.anchorContext + ticksToSeconds(swung - this.originTick, this.bpm);
         result.batch.push({
           kind: 'noteOn',
           when,
@@ -526,8 +653,8 @@ export class SchedulerCore {
   // --- automation (spec §7.8) ---
   private scheduleSequenceAutomation(result: SchedulerTickResult, from: number, to: number): void {
     // Time from linear ticks; value sampled at the wrapped sequence tick (loops with pattern).
-    const when = this.contentStartContext + ticksToSeconds(from - this.originTick, this.bpm);
-    const rampEnd = this.contentStartContext + ticksToSeconds(to - this.originTick, this.bpm);
+    const when = this.anchorContext + ticksToSeconds(from - this.originTick, this.bpm);
+    const rampEnd = this.anchorContext + ticksToSeconds(to - this.originTick, this.bpm);
     const seqTo = sequenceTickAt(to, this.loop);
     for (const targetPath of this.automatedTargets()) {
       const points = this.effectivePoints(targetPath);
@@ -603,7 +730,7 @@ export class SchedulerCore {
     // requires it to stop rather than loop endlessly over a zero-length map — so the
     // zero-length case stops whatever `songLoopEnabled` says.
     const zeroLength = this.songMap.length === 0 || total <= 0;
-    const origin = zeroLength ? 0 : songTickToSeconds(this.songMap, this.originTick);
+    const origin = zeroLength ? 0 : this.anchorSongSeconds;
     // The end is reached when the PLAYHEAD arrives, not when the lookahead does: stopping
     // at schedule time would cut the last `LOOKAHEAD_MS` of the song off the end of it.
     //
@@ -617,7 +744,7 @@ export class SchedulerCore {
     if (zeroLength) return;
 
     const fromAbs = this.nextSongSeconds;
-    let toAbs = origin + (horizon - this.contentStartContext);
+    let toAbs = origin + (horizon - this.anchorContext);
     if (!this.songLoopEnabled && toAbs > total) toAbs = total;
     if (toAbs <= fromAbs) return;
 
@@ -650,8 +777,8 @@ export class SchedulerCore {
    * notes are going to be heard, so cutting them off would be worse than one more pass.
    */
   private currentPassEnd(total: number, origin: number): number {
-    if (total <= 0) return this.contentStartContext;
-    return this.contentStartContext + ((this.lastSongPass + 1) * total - origin);
+    if (total <= 0) return this.anchorContext;
+    return this.anchorContext + ((this.lastSongPass + 1) * total - origin);
   }
 
   /**
@@ -675,7 +802,7 @@ export class SchedulerCore {
       this.lastEntryIndex = -1;
     }
     // Wall-clock time of this pass's song tick 0.
-    const passOrigin = this.contentStartContext + pass * total - origin;
+    const passOrigin = this.anchorContext + pass * total - origin;
 
     for (const slice of songWindowSlices(this.songMap, from, to)) {
       const { segment } = slice;

@@ -28,6 +28,22 @@ export interface LinearSegment {
   readonly linearStart: number;
 }
 
+/**
+ * What {@link segmentWindow} covered, and how far it actually got (issue #95).
+ *
+ * The reach matters because the guard below can stop short of the requested end. Returning
+ * only the segments left the caller unable to tell a complete window from a truncated one, so
+ * `scheduleSequence` advanced its cursor to the end it asked for and every event between the
+ * truncation point and that end was dropped with no signal at all.
+ */
+export interface WindowSegments {
+  readonly segments: readonly LinearSegment[];
+  /** The linear position the segments actually reach — `to` unless the guard tripped. */
+  readonly reachedTo: number;
+  /** True when the guard stopped the walk short of `to`. */
+  readonly truncated: boolean;
+}
+
 /** An event placed at a concrete point in the linear timeline. */
 export interface WindowedItem<T> {
   readonly item: T;
@@ -67,8 +83,14 @@ export function loopPassAt(linear: number, loop: LoopRegion): number {
  * Break a linear window `[from, to)` into segments in which the linear→sequence mapping is
  * contiguous (spec §7.1.4). Breakpoints fall at the loop end and every loop length after
  * it. Callers select events per segment by sequence tick.
+ *
+ * The iteration guard is a bound on work, not a licence to lose events (issue #95): the walk
+ * stops, says so, and reports the position it reached, so the caller can advance its cursor
+ * only that far and pick the rest up on its next wake. Deferring beats both alternatives —
+ * dropping the remainder silently, and throwing, which would stop playback outright over a
+ * window that is merely large.
  */
-export function segmentWindow(from: number, to: number, loop: LoopRegion): LinearSegment[] {
+export function segmentWindow(from: number, to: number, loop: LoopRegion): WindowSegments {
   const segments: LinearSegment[] = [];
   let pos = from;
   const guardMax = 100_000; // structural guard against a zero-length loop slipping through
@@ -80,7 +102,10 @@ export function segmentWindow(from: number, to: number, loop: LoopRegion): Linea
     segments.push({ seqStart, seqEnd: seqStart + (segEnd - pos), linearStart: pos });
     pos = segEnd;
   }
-  return segments;
+  // An empty or reversed window reaches its own start, never `to`, so a caller clamping to the
+  // reach can never be pushed backwards by one.
+  const reachedTo = segments.length === 0 ? from : pos;
+  return { segments, reachedTo, truncated: pos < to };
 }
 
 /** The next linear position (> pos) at which the loop mapping restarts. */
@@ -106,7 +131,7 @@ export function eventsInWindow<T>(
   loop: LoopRegion,
 ): WindowedItem<T>[] {
   const out: WindowedItem<T>[] = [];
-  for (const segment of segmentWindow(from, to, loop)) {
+  for (const segment of segmentWindow(from, to, loop).segments) {
     for (const item of items) {
       const tick = tickOf(item);
       if (tick < segment.seqStart || tick >= segment.seqEnd) continue;

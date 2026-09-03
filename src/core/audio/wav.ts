@@ -42,7 +42,22 @@ export function encodeWav(
 ): Uint8Array<ArrayBuffer> {
   const numChannels = channels.length;
   if (numChannels === 0) throw new Error('encodeWav: at least one channel is required');
+  if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
+    throw new Error(`encodeWav: sample rate must be a positive integer, got ${sampleRate}`);
+  }
   const frames = channels[0]!.length;
+  // The frame count comes from channel 0 alone, so a shorter channel used to be zero-padded
+  // silently by the `?? 0` in the interleave loop below — the encoder inventing samples the
+  // caller never had (issue #66). Every path that builds channels here trims them together,
+  // so ragged input is a caller bug, and fabricating audio is the wrong way to report one.
+  for (let channel = 1; channel < numChannels; channel++) {
+    if (channels[channel]!.length !== frames) {
+      throw new Error(
+        `encodeWav: every channel must be the same length; channel ${channel} has ` +
+          `${channels[channel]!.length} frames, channel 0 has ${frames}`,
+      );
+    }
+  }
   const bytesPerSample = BYTES_PER_SAMPLE[bitDepth];
   const blockAlign = numChannels * bytesPerSample;
   const dataSize = frames * blockAlign;
@@ -94,6 +109,14 @@ export interface DecodedWav {
  * Decode a canonical PCM (16/24-bit) or IEEE-float (32-bit) WAV back to planar Float32
  * channels (spec §11.1 round-trip). Walks the RIFF chunk list so a leading `fmt ` and a
  * later `data` chunk are both found even if other chunks (e.g. `fact`) sit between them.
+ *
+ * The `fmt ` chunk is REFUSED rather than repaired whenever it is missing, duplicated, short
+ * or self-contradictory (spec §9.4, issue #66). This decoder sits on the untrusted-input path
+ * — `readSampleChannels` decodes whatever bytes OPFS holds, and a §9.6 `.mpcweb` import
+ * decodes `samples/<id>.wav` straight out of a user-supplied zip — and a header the decoder
+ * guesses at produces audio that sounds broken while the wrong `channels`/`sample_rate` are
+ * written into the §9.3 `samples` row, so the corruption persists. A rejection the caller can
+ * surface is far easier to diagnose than a sample that merely sounds wrong.
  */
 export function decodeWav(bytes: Uint8Array): DecodedWav {
   if (bytes.byteLength < 44) throw new Error('decodeWav: byte stream too short for a WAV header');
@@ -107,11 +130,11 @@ export function decodeWav(bytes: Uint8Array): DecodedWav {
     );
   if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') throw new Error('decodeWav: not a RIFF/WAVE stream');
 
-  let audioFormat = 1;
-  let numChannels = 1;
-  let sampleRate = 48_000;
-  let bitsPerSample = 16;
-  let sawFmt = false;
+  // No defaults: every format field is undefined until a `fmt ` chunk supplies it, so there
+  // is nothing for a malformed header to be silently decoded against (issue #66).
+  let format: { audioFormat: number; numChannels: number; sampleRate: number; bitsPerSample: number } | null =
+    null;
+  let blockAlign = 0;
   let dataOffset = -1;
   let dataSize = 0;
 
@@ -121,13 +144,22 @@ export function decodeWav(bytes: Uint8Array): DecodedWav {
     const chunkSize = view.getUint32(cursor + 4, true);
     const body = cursor + 8;
     if (chunkId === 'fmt ') {
+      // A second `fmt ` chunk is not a WAVE stream this codec can speak for: RIFF allows one,
+      // and letting the last win means two readers can disagree about the same file.
+      if (format) throw new Error('decodeWav: more than one fmt chunk');
       // A `fmt ` chunk truncated at end-of-buffer would otherwise raise a bare RangeError.
       if (body + 16 > bytes.byteLength) throw new Error('decodeWav: truncated fmt chunk');
-      audioFormat = view.getUint16(body, true);
-      numChannels = view.getUint16(body + 2, true);
-      sampleRate = view.getUint32(body + 4, true);
-      bitsPerSample = view.getUint16(body + 14, true);
-      sawFmt = true;
+      // The chunk must also DECLARE at least the 16 bytes a PCM/float fmt body holds. Without
+      // this, a chunk claiming 8 bytes still had 16 read out of it, so `bitsPerSample` came
+      // from the next chunk's header and the file decoded as plausible rubbish (issue #66).
+      if (chunkSize < 16) throw new Error(`decodeWav: fmt chunk declares only ${chunkSize} bytes`);
+      format = {
+        audioFormat: view.getUint16(body, true),
+        numChannels: view.getUint16(body + 2, true),
+        sampleRate: view.getUint32(body + 4, true),
+        bitsPerSample: view.getUint16(body + 14, true),
+      };
+      blockAlign = view.getUint16(body + 12, true);
     } else if (chunkId === 'data') {
       dataOffset = body;
       dataSize = Math.min(chunkSize, bytes.byteLength - body);
@@ -135,8 +167,9 @@ export function decodeWav(bytes: Uint8Array): DecodedWav {
     // Chunks are word-aligned: an odd size is followed by a pad byte.
     cursor = body + chunkSize + (chunkSize & 1);
   }
-  if (!sawFmt) throw new Error('decodeWav: no fmt chunk found');
+  if (!format) throw new Error('decodeWav: no fmt chunk found');
   if (dataOffset < 0) throw new Error('decodeWav: no data chunk found');
+  const { audioFormat, numChannels, sampleRate, bitsPerSample } = format;
 
   // Validate before allocating: a zero channel count or bit depth makes `blockAlign` zero, and
   // `dataSize / 0` is Infinity — an unbounded loop that wedges the thread rather than throwing.
@@ -154,8 +187,17 @@ export function decodeWav(bytes: Uint8Array): DecodedWav {
   if (sampleRate <= 0) throw new Error(`decodeWav: invalid sample rate ${sampleRate}`);
 
   const bytesPerSample = bitsPerSample / 8;
-  const blockAlign = numChannels * bytesPerSample;
-  const frames = Math.floor(dataSize / blockAlign);
+  const impliedBlockAlign = numChannels * bytesPerSample;
+  // Checked last, because the fields it compares have their own messages and those name the
+  // problem better. A blockAlign that contradicts the channels and bit depth beside it means
+  // the header disagrees with itself, and nothing says which half is right (issue #66).
+  if (blockAlign !== impliedBlockAlign) {
+    throw new Error(
+      `decodeWav: fmt block align ${blockAlign} contradicts ${numChannels} channels at ` +
+        `${bitsPerSample} bits`,
+    );
+  }
+  const frames = Math.floor(dataSize / impliedBlockAlign);
   const channels: Float32Array[] = Array.from({ length: numChannels }, () => new Float32Array(frames));
 
   let offset = dataOffset;
