@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryDriver, type MemoryDriver } from '@/test/drivers/memoryDriver';
 import { createRepositories, type Repositories } from '@/core/storage/repositories';
 import { migrations, runMigrations } from '@/core/storage/migrations';
-import { restoreSnapshot } from './snapshotService';
+import { dumpSnapshot, restoreSnapshot } from './snapshotService';
 import type { ProjectSnapshot } from './mpcweb';
 
 let driver: MemoryDriver;
@@ -243,5 +243,77 @@ describe('restoreSnapshot (spec §9.6)', () => {
     // Committed separately, these rows would outlive the failure and point at files the
     // installer is about to delete.
     expect(await repos.samples.getGlobalByPath(globalPath)).toBeUndefined();
+  });
+});
+
+/**
+ * §9.6: "Every sample referenced by the project ... global-library refs are copied in."
+ *
+ * `dumpSnapshot` listed `samples WHERE project_id = ?` only, so a project playing §9.8 factory
+ * audio — which de-duplicates into `/global_library/` with `project_id = NULL` (§9.1, §9.3) —
+ * exported with no sample rows for it and no audio behind them. That archive imported without
+ * complaint and played nothing, which is the same silent outcome issue #99 is about, reached
+ * from the export side instead of the import side.
+ */
+describe('dumpSnapshot — global-library audio is copied in (spec §9.6)', () => {
+  const GLOBAL_SAMPLE_ID = '11111111-0000-4000-8000-00000000000a';
+  const UNUSED_GLOBAL_ID = '22222222-0000-4000-8000-00000000000b';
+
+  async function seedProject(programPayload: string): Promise<void> {
+    await repos.projects.create({ id: PROJECT_ID, name: 'Exported' });
+    await repos.programs.create({
+      id: PROGRAM_ID,
+      project_id: PROJECT_ID,
+      name: 'Kit',
+      type: 'drum',
+      payload: programPayload,
+    });
+  }
+
+  async function seedGlobalSample(id: string): Promise<void> {
+    await repos.samples.create({
+      id,
+      project_id: null,
+      name: `global-${id.slice(0, 4)}`,
+      opfs_path: `/global_library/${id}.wav`,
+      frames: 100,
+      sample_rate: 48_000,
+      channels: 1,
+      root_note: 60,
+    });
+  }
+
+  it('includes a global sample the programs of the project reference', async () => {
+    await seedProject(JSON.stringify({ pads: [{ layers: [{ sampleId: GLOBAL_SAMPLE_ID }] }] }));
+    await seedGlobalSample(GLOBAL_SAMPLE_ID);
+
+    const dumped = await dumpSnapshot(repos, PROJECT_ID);
+    expect(dumped.samples.map((row) => row.id)).toEqual([GLOBAL_SAMPLE_ID]);
+  });
+
+  it('leaves out a global sample nothing in the project plays', async () => {
+    await seedProject(JSON.stringify({ pads: [{ layers: [{ sampleId: GLOBAL_SAMPLE_ID }] }] }));
+    await seedGlobalSample(GLOBAL_SAMPLE_ID);
+    await seedGlobalSample(UNUSED_GLOBAL_ID);
+
+    const dumped = await dumpSnapshot(repos, PROJECT_ID);
+    expect(dumped.samples.map((row) => row.id)).toEqual([GLOBAL_SAMPLE_ID]);
+  });
+
+  it('lists a project-scoped sample once, never twice', async () => {
+    await seedProject(JSON.stringify({ pads: [{ layers: [{ sampleId: SAMPLE_ID }] }] }));
+    await repos.samples.create({
+      id: SAMPLE_ID,
+      project_id: PROJECT_ID,
+      name: 'kick',
+      opfs_path: `/projects/${PROJECT_ID}/samples/${SAMPLE_ID}.wav`,
+      frames: 100,
+      sample_rate: 48_000,
+      channels: 1,
+      root_note: 60,
+    });
+
+    const dumped = await dumpSnapshot(repos, PROJECT_ID);
+    expect(dumped.samples.map((row) => row.id)).toEqual([SAMPLE_ID]);
   });
 });

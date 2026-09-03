@@ -12,6 +12,15 @@ import { bitDepthSchema } from './schemas/primitives';
 /** Current interchange format version (spec §9.6 manifest.formatVersion). */
 const MPCWEB_FORMAT_VERSION = 1;
 
+/**
+ * Current `project.json` snapshot version (spec §9.6). Separate from the manifest's
+ * `formatVersion`, which describes the ARCHIVE layout; this describes the row set inside it.
+ *
+ * Both are now gated. Only the manifest used to be, so a `project.json` claiming `version:
+ * 999` parsed and imported against schemas that had never seen it (issue #99).
+ */
+export const PROJECT_SNAPSHOT_VERSION = 1;
+
 // --- manifest.json (spec §9.6) ---------------------------------------------------
 const mpcwebManifestSchema = z.object({
   format: z.literal('mpcweb'),
@@ -122,7 +131,13 @@ export function serialiseSnapshot(snapshot: ProjectSnapshot): string {
 
 /** Parse and validate a `project.json` string (spec §9.6; rejects malformed snapshots). */
 export function parseSnapshot(json: string): ProjectSnapshot {
-  return projectSnapshotSchema.parse(JSON.parse(json));
+  const snapshot = projectSnapshotSchema.parse(JSON.parse(json));
+  if (snapshot.version !== PROJECT_SNAPSHOT_VERSION) {
+    throw new Error(
+      `This project file was written by a different version of BangerBox (project version ${snapshot.version}, this build reads ${PROJECT_SNAPSHOT_VERSION}). Please update to open it.`,
+    );
+  }
+  return snapshot;
 }
 
 /** Build the export manifest for a project (spec §9.6). */
@@ -166,6 +181,9 @@ function collectIds(snapshot: ProjectSnapshot): string[] {
   ];
 }
 
+/** The `crypto.randomUUID()` shape every id carries (spec §1.3.1). */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface RemapResult {
   readonly snapshot: ProjectSnapshot;
   readonly projectId: string;
@@ -193,6 +211,18 @@ export function remapSnapshot(snapshot: ProjectSnapshot): RemapResult {
   if (duplicates.length > 0) {
     throw new Error(
       `This project file is corrupt: it reuses the same id for more than one item (${duplicates.join(', ')}).`,
+    );
+  }
+
+  // The substring rewrite below is only safe because an id is a 36-character UUID: short
+  // enough to appear inside unrelated text and the replacement corrupts the snapshot rather
+  // than remapping it (`id: 'a'` rewrites every letter "a" in the JSON). §1.3.1 makes every
+  // id a `crypto.randomUUID()`, so this asserts an invariant rather than adding one — it was
+  // simply relied on in a comment instead of in code (issue #99).
+  const malformed = ids.filter((id) => !UUID_PATTERN.test(id));
+  if (malformed.length > 0) {
+    throw new Error(
+      `This project file is corrupt: ${malformed.length} of its items carry an identifier that is not a UUID (${malformed.slice(0, 3).join(', ')}).`,
     );
   }
 

@@ -23,6 +23,13 @@ describe('engine constants registry (spec §2.6)', () => {
     // Automation capture thinning (spec §7.8) — see §14 2026-09-02 (ah).
     expect(constants.AUTOMATION_MIN_TICK_SPACING).toBe(120);
     expect(constants.AUTOMATION_VALUE_EPSILON).toBe(0.005);
+    // Storage recoverable-failure policy (spec §9.2) — see §14 2026-09-03 (aj), issue #98.
+    expect(constants.STORAGE_RETRY_ATTEMPTS).toBe(3);
+    expect(constants.STORAGE_RETRY_BASE_DELAY_MS).toBe(25);
+    // Bounded `.mpcweb` decompression (spec §9.6, §9.7) — issue #26.
+    expect(constants.MPCWEB_MAX_ENTRIES).toBe(4096);
+    expect(constants.MPCWEB_MAX_ENTRY_BYTES).toBe(256 * 1024 * 1024);
+    expect(constants.MPCWEB_MAX_TOTAL_BYTES).toBe(1024 * 1024 * 1024);
   });
 
   it('exports no constants beyond the §2.6 registry (naming freeze)', () => {
@@ -43,6 +50,11 @@ describe('engine constants registry (spec §2.6)', () => {
         'QUOTA_HARD_STOP_RATIO', // spec §9.7
         'AUTOMATION_MIN_TICK_SPACING', // spec §7.8, changelog 2026-09-02 (ah)
         'AUTOMATION_VALUE_EPSILON', // spec §7.8, changelog 2026-09-02 (ah)
+        'STORAGE_RETRY_ATTEMPTS', // spec §9.2, changelog 2026-09-03 (aj)
+        'STORAGE_RETRY_BASE_DELAY_MS', // spec §9.2, changelog 2026-09-03 (aj)
+        'MPCWEB_MAX_ENTRIES', // spec §9.6/§9.7, changelog 2026-09-03 (aj)
+        'MPCWEB_MAX_ENTRY_BYTES', // spec §9.6/§9.7, changelog 2026-09-03 (aj)
+        'MPCWEB_MAX_TOTAL_BYTES', // spec §9.6/§9.7, changelog 2026-09-03 (aj)
       ].sort(),
     );
   });

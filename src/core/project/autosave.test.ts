@@ -146,6 +146,43 @@ describe('AutosaveQueue', () => {
     expect(queue.hasPending).toBe(false);
   });
 
+  // Issue #103: refusing a project switch is only useful if the refusal can say WHAT was
+  // not saved, and the queue is the only layer that knows.
+  it('reports the keys still unwritten after a transient failure', async () => {
+    const flush = vi.fn(async () => {
+      throw new Error('worker died');
+    });
+    const queue = new AutosaveQueue({ flush, onError: vi.fn() });
+
+    queue.markDirty('sequence:seq-1');
+    queue.markDirty('events:track-1');
+    expect(await queue.flushNow()).toBe('failed');
+
+    expect([...queue.unsavedKeys].sort()).toEqual(['events:track-1', 'sequence:seq-1']);
+  });
+
+  it('still reports a key it dropped as permanently unflushable', async () => {
+    const flush = vi.fn(async (keys: readonly string[]) => {
+      throw new UnflushableKeyError(keys, 'no path');
+    });
+    const queue = new AutosaveQueue({ flush, onError: vi.fn() });
+
+    queue.markDirty('settings:theme');
+    expect(await queue.flushNow()).toBe('failed');
+
+    // Dropped from the retry queue, because retrying could not write it either — but the
+    // work really is unsaved, so it must still be nameable.
+    expect(queue.pendingKeys).toEqual([]);
+    expect(queue.unsavedKeys).toEqual(['settings:theme']);
+  });
+
+  it('has nothing unsaved once a flush lands', async () => {
+    const queue = new AutosaveQueue({ flush: vi.fn(async () => undefined) });
+    queue.markDirty('project:1');
+    expect(await queue.flushNow()).toBe('saved');
+    expect(queue.unsavedKeys).toEqual([]);
+  });
+
   it('reports the flush outcome so an explicit save can announce the truth (issue #41)', async () => {
     let fail = false;
     const flush = vi.fn(async () => {

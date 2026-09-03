@@ -46,4 +46,27 @@ describe('DbError', () => {
     expect(mapResultCode(19 | (5 << 8))).toBe('SQLITE_CONSTRAINT');
     expect(mapResultCode(999999)).toBe('SQLITE_ERROR');
   });
+
+  // Issue #98: only the CONSTRAINT family was collapsed onto its primary code, so genuine
+  // lock contention arrived as SQLITE_ERROR and `isRetryable` said false for exactly the
+  // case §9.2's write queue exists to survive.
+  it('collapses every extended family onto its primary code, not just CONSTRAINT', () => {
+    expect(mapResultCode(261)).toBe('SQLITE_BUSY'); // SQLITE_BUSY_RECOVERY
+    expect(mapResultCode(262)).toBe('SQLITE_LOCKED'); // SQLITE_LOCKED_SHAREDCACHE
+    expect(mapResultCode(517)).toBe('SQLITE_BUSY'); // SQLITE_BUSY_SNAPSHOT
+    expect(mapResultCode(8 | (5 << 8))).toBe('SQLITE_READONLY'); // SQLITE_READONLY_DBMOVED
+    expect(mapResultCode(13 | (3 << 8))).toBe('SQLITE_FULL');
+  });
+
+  it('keeps the foreign-key constraint distinguishable from its family', () => {
+    expect(mapResultCode(787)).toBe('SQLITE_CONSTRAINT_FOREIGNKEY');
+  });
+
+  it('reports extended lock contention as retryable', () => {
+    expect(new DbError(mapResultCode(261), 'busy').isRetryable).toBe(true);
+    expect(new DbError(mapResultCode(262), 'locked').isRetryable).toBe(true);
+    // Disk full and read-only are permanent: retrying them only delays the report.
+    expect(new DbError(mapResultCode(13), 'full').isRetryable).toBe(false);
+    expect(new DbError(mapResultCode(8), 'readonly').isRetryable).toBe(false);
+  });
 });

@@ -40,6 +40,7 @@ export function rowToProjectSettings(row: ProjectRow): ProjectSettings {
     sampleRate: row.sample_rate,
     bitDepth: row.bit_depth,
     globalInsertLimit: row.insert_limit,
+    bpmDefault: row.bpm_default,
   };
 }
 

@@ -23,6 +23,7 @@ import { useProgramStore } from '@/store/useProgramStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useSequenceStore } from '@/store/useSequenceStore';
 import { useTransportStore } from '@/store/useTransportStore';
+import { commitSwing, commitTempo } from '@/store/tempo';
 
 let driver: MemoryDriver;
 let repos: Repositories;
@@ -206,5 +207,35 @@ describe('flushDirtyKeys autosave persistence (spec §4.4)', () => {
     useSequenceStore.getState().removeSequence(sequenceId);
     await flushDirtyKeys(repos, [dirtyKey.sequence(sequenceId)]);
     expect(await repos.sequences.getById(sequenceId)).toBeUndefined();
+  });
+
+  /**
+   * Issue #93: the whole round trip, because the defect was invisible at every single step.
+   * The knob moved, the readout moved, playback followed — and the row never changed, so the
+   * next hydrate put it all back and nothing had warned that it would.
+   */
+  it('survives a tempo and swing edit across flush and re-hydrate', async () => {
+    commitTempo(174);
+    commitSwing(66, 8);
+
+    await flushDirtyKeys(repos, [dirtyKey.sequence(sequenceId)]);
+
+    // Wipe the runtime mirror, then reload from storage exactly as a reload would.
+    useTransportStore.getState().setBpm(120);
+    useTransportStore.getState().setSwing(50, 16);
+    await hydrateStores(repos, projectId);
+
+    expect(useTransportStore.getState().bpm).toBe(174);
+    expect(useTransportStore.getState().swingAmount).toBe(66);
+    expect(useTransportStore.getState().swingDivision).toBe(8);
+    expect(useSequenceStore.getState().sequences[sequenceId]!.tempo).toBe(174);
+  });
+
+  it('survives a project-default tempo edit made with no active sequence', async () => {
+    useTransportStore.getState().setActiveSequenceId(null);
+    commitTempo(88);
+
+    await flushDirtyKeys(repos, [dirtyKey.project(projectId)]);
+    expect((await repos.projects.getById(projectId))!.bpm_default).toBe(88);
   });
 });

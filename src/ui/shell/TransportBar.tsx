@@ -9,6 +9,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { useProjectStore, useTransportStore, useUndoStore } from '@/store';
+import { commitSwing, commitTempo } from '@/store/tempo';
 import { BPM_RANGE, SWING_RANGE } from '@/core/project/schemas';
 import type { SaveOutcome } from '@/core/project/autosave';
 import { Button, FieldLabel, Knob, SegmentControl, Toggle, ValueReadout, announce } from '@/ui/primitives';
@@ -133,7 +134,9 @@ export function TransportBar() {
           step={1}
           fineStep={0.1}
           size="sm"
-          onCommit={(value) => transport().setBpm(value)}
+          // Tempo belongs to the active sequence (spec §9.3), not to the transport mirror
+          // this knob reads — writing the mirror alone lost the edit on reload (issue #93).
+          onCommit={(value) => commitTempo(value)}
           data-testid="transport-bpm"
         />
         <Knob
@@ -144,7 +147,7 @@ export function TransportBar() {
           step={1}
           size="sm"
           defaultValue={50}
-          onCommit={(value) => transport().setSwing(value)}
+          onCommit={(value) => commitSwing(value)}
           data-testid="transport-swing"
         />
       </div>

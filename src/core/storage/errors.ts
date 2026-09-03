@@ -104,9 +104,21 @@ const SQLITE_FULL = 13;
 const SQLITE_CONSTRAINT = 19;
 const SQLITE_CONSTRAINT_FOREIGNKEY = 787; // extended code (19 | (9 << 8))
 
-/** Map a primary or extended SQLite result code to our stable error code. */
+/**
+ * Map a primary or extended SQLite result code to our stable error code.
+ *
+ * An extended code is `primary | (subcode << 8)`, so the primary code is the low byte.
+ * Collapsing the low byte GENERALLY rather than special-casing one family is the whole
+ * point (issue #98): singling out CONSTRAINT left `SQLITE_BUSY_RECOVERY` (261) and
+ * `SQLITE_LOCKED_SHAREDCACHE` (262) falling through to `SQLITE_ERROR`, so `isRetryable`
+ * said false for exactly the lock contention §9.2's write queue exists to survive.
+ *
+ * The foreign-key constraint is checked before the mask because it is the one extended code
+ * this app distinguishes from its family — the 2026-07-18 (r) cascade diagnosis turns on it.
+ */
 export function mapResultCode(resultCode: number): DbErrorCode {
-  switch (resultCode) {
+  if (resultCode === SQLITE_CONSTRAINT_FOREIGNKEY) return 'SQLITE_CONSTRAINT_FOREIGNKEY';
+  switch (resultCode & 0xff) {
     case SQLITE_BUSY:
       return 'SQLITE_BUSY';
     case SQLITE_LOCKED:
@@ -115,13 +127,9 @@ export function mapResultCode(resultCode: number): DbErrorCode {
       return 'SQLITE_READONLY';
     case SQLITE_FULL:
       return 'SQLITE_FULL';
-    case SQLITE_CONSTRAINT_FOREIGNKEY:
-      return 'SQLITE_CONSTRAINT_FOREIGNKEY';
     case SQLITE_CONSTRAINT:
       return 'SQLITE_CONSTRAINT';
     default:
-      // Collapse the extended-code family onto its primary code (low byte).
-      if ((resultCode & 0xff) === SQLITE_CONSTRAINT) return 'SQLITE_CONSTRAINT';
       return 'SQLITE_ERROR';
   }
 }

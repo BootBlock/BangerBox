@@ -18,6 +18,10 @@
  * handles reject with {@link UnflushableKeyError}, which the queue treats as permanent:
  * retrying could not write them either, so they are dropped without `onIdle` (leaving the
  * project marked modified, which is the truth) rather than re-queued into a retry spin.
+ *
+ * Either way the queue can still SAY what is outstanding: `unsavedKeys` covers both the
+ * re-queued and the dropped, which is what lets a project switch refuse over unsaved work
+ * and name it rather than discarding it silently (spec §4.4, issue #103).
  */
 import { AUTOSAVE_DEBOUNCE_MS } from '@/core/constants';
 
@@ -63,6 +67,13 @@ export class AutosaveQueue {
   private readonly onIdle: (() => void) | undefined;
 
   private readonly dirty = new Set<string>();
+  /**
+   * Keys dropped as permanently unflushable. They are no longer queued — retrying could not
+   * write them either — but the work they name really is unsaved, so they stay nameable for
+   * {@link unsavedKeys}. Without this a refusal could not say what it was refusing over
+   * (spec §4.4, issue #103).
+   */
+  private readonly unflushable = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<SaveOutcome> | null = null;
   private disposed = false;
@@ -89,6 +100,18 @@ export class AutosaveQueue {
   /** The currently queued keys (test/diagnostic view). */
   get pendingKeys(): readonly string[] {
     return [...this.dirty];
+  }
+
+  /**
+   * Every entity this queue holds that has NOT reached storage — queued for retry, plus
+   * anything dropped as permanently unflushable (spec §4.4).
+   *
+   * `pendingKeys` alone cannot answer that question: a permanent failure clears the queue by
+   * design, so a caller reading it after one would conclude nothing was lost. A project
+   * switch refusing over unsaved work needs the honest set (issue #103).
+   */
+  get unsavedKeys(): readonly string[] {
+    return [...this.dirty, ...this.unflushable];
   }
 
   /**
@@ -120,6 +143,10 @@ export class AutosaveQueue {
     // Mutations that landed during the flush are persisted on the next pass;
     // otherwise the queue is fully drained.
     if (this.dirty.size > 0) return await this.flushNow();
+    // A batch that landed proves the flush path works again, and `flushDirtyKeys` attempts
+    // every key it is given — so nothing recorded as unflushable can still be outstanding
+    // without also being queued.
+    this.unflushable.clear();
     this.onIdle?.();
     return 'saved';
   }
@@ -129,6 +156,7 @@ export class AutosaveQueue {
     this.disposed = true;
     this.disarm();
     this.dirty.clear();
+    this.unflushable.clear();
   }
 
   /** Persist one batch; on failure re-queue its keys and report. Returns success. */
@@ -139,8 +167,10 @@ export class AutosaveQueue {
     } catch (error) {
       if (error instanceof UnflushableKeyError) {
         // Permanent: re-queueing would rebuild the same doomed batch every debounce, forever.
-        // Drop the keys but report and return failure, so `onIdle` never runs and the project
-        // stays marked modified — the work really is unsaved.
+        // Drop the keys from the retry queue but remember them, report, and return failure —
+        // so `onIdle` never runs, the project stays marked modified, and a caller can still
+        // name what was never written (issue #103).
+        for (const key of error.keys) this.unflushable.add(key);
         this.onError?.(error, error.keys);
         return false;
       }

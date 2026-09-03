@@ -120,6 +120,9 @@ async function flushProject(repositories: Repositories, id: string): Promise<voi
     name: project.projectName,
     sample_rate: project.sampleRate,
     bit_depth: project.bitDepth,
+    // §9.3's fallback for a sequence whose `tempo` is NULL. Never written before, so a tempo
+    // set with no sequence to own it was lost on reload (issue #93).
+    bpm_default: project.bpmDefault,
     insert_limit: project.globalInsertLimit,
     payload: JSON.stringify(payload),
   });

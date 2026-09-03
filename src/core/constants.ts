@@ -72,3 +72,40 @@ export const AUTOMATION_MIN_TICK_SPACING = PPQN / 8;
  * one end of that spread and deaf at the other.
  */
 export const AUTOMATION_VALUE_EPSILON = 0.005;
+
+/**
+ * Attempts a storage operation gets before a recoverable failure becomes the caller's
+ * failure — spec §9.2 (issue #98). Bounded because an unbounded retry turns a stuck OPFS
+ * lock into a hung UI, which is worse than reporting the error.
+ */
+export const STORAGE_RETRY_ATTEMPTS = 3;
+
+/**
+ * First backoff step between storage retries in milliseconds — spec §9.2. Each retry
+ * doubles it, so the three attempts span roughly 75 ms: long enough for another handle to
+ * close, short enough that a genuinely stuck write is reported rather than waited on.
+ */
+export const STORAGE_RETRY_BASE_DELAY_MS = 25;
+
+/**
+ * Entries a `.mpcweb` archive may contain before import refuses it — spec §9.6, §9.7
+ * (issue #26). An archive holds `manifest.json`, `project.json` and one `.wav` per sample,
+ * so this is generous for any real project and still bounds the entry-header work a crafted
+ * file can force.
+ */
+export const MPCWEB_MAX_ENTRIES = 4096;
+
+/**
+ * Inflated bytes one `.mpcweb` entry may produce — spec §9.6, §9.7. A 96 kHz 32-bit stereo
+ * sample runs about 768 kB per second, so 256 MiB is roughly a five-minute recording: past
+ * anything the sampler is for, and far short of what a decompression bomb aims at.
+ */
+export const MPCWEB_MAX_ENTRY_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Inflated bytes a whole `.mpcweb` archive may produce — spec §9.6, §9.7. Counted while
+ * unpacking rather than checked afterwards, because the point is to never HOLD the bytes:
+ * a 1 MB archive of compressible data would otherwise reach gigabytes inside the pack
+ * worker before the §9.7 headroom check ever ran (issue #26).
+ */
+export const MPCWEB_MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
