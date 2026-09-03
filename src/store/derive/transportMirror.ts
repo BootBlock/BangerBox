@@ -22,20 +22,29 @@ import { useProjectStore } from '../useProjectStore';
 import { useSequenceStore } from '../useSequenceStore';
 import { useTransportStore } from '../useTransportStore';
 
+/** What the §9.3 rows say the mirror should hold right now. */
+interface Derived {
+  readonly bpm: number;
+  readonly swingAmount: number | null;
+  readonly swingDivision: 8 | 16 | null;
+}
+
 /**
- * Recompute the mirror from the active sequence, falling back to the project default
- * (spec §9.3: a NULL `sequences.tempo` means `projects.bpm_default`).
+ * Read the mirror's value out of the rows (spec §9.3: a NULL `sequences.tempo` means
+ * `projects.bpm_default`).
  *
- * Swing has no project-level default in §9.3, so with no active sequence the last mirrored
- * value stands rather than being reset to something no row describes.
+ * Swing has no project-level default in §9.3, so with no active sequence there is nothing to
+ * derive and the last mirrored value stands rather than being reset to something no row
+ * describes — hence the nulls rather than a fabricated 50.
  */
-function applyMirror(): void {
+function derive(): Derived {
   const { activeSequenceId } = useTransportStore.getState();
   const sequence = activeSequenceId ? useSequenceStore.getState().sequences[activeSequenceId] : undefined;
-  const transport = useTransportStore.getState();
-
-  transport.setBpm(sequence?.tempo ?? useProjectStore.getState().bpmDefault);
-  if (sequence) transport.setSwing(sequence.swingAmount, sequence.swingDivision);
+  return {
+    bpm: sequence?.tempo ?? useProjectStore.getState().bpmDefault,
+    swingAmount: sequence?.swingAmount ?? null,
+    swingDivision: sequence?.swingDivision ?? null,
+  };
 }
 
 /**
@@ -43,10 +52,41 @@ function applyMirror(): void {
  * teardown (spec §3.5 lens 5).
  *
  * Registration applies it once, matching the "initial full resync then narrow diffs" shape
- * `subscribeSequencerSync` established.
+ * `subscribeSequencerSync` established. After that it writes only what actually changed in the
+ * rows, so a gesture holding the mirror ahead of its row is left alone.
  */
 export function subscribeTransportMirror(): Unsubscribe {
-  applyMirror();
+  let last = derive();
+  const transport = () => useTransportStore.getState();
+  transport().setBpm(last.bpm);
+  if (last.swingAmount !== null && last.swingDivision !== null) {
+    transport().setSwing(last.swingAmount, last.swingDivision);
+  }
+
+  /**
+   * Write back only what the ROWS changed.
+   *
+   * Re-deriving both values on every source change looked equivalent and was not: a §4.1
+   * transient gesture holds the mirror ahead of its row on purpose, and an unrelated edit to
+   * the same row — another Q-Link encoder committing swing during a tempo turn — snapped the
+   * mirror back mid-gesture, so the turn's own commit then persisted a tempo nobody chose.
+   * Comparing against the last derived value confines the mirror to changes that really came
+   * from the source, and a genuine tempo change still overrides a gesture, which is right:
+   * the mirror is a mirror, and the row moved.
+   */
+  const applyMirror = (): void => {
+    const next = derive();
+    if (next.bpm !== last.bpm) transport().setBpm(next.bpm);
+    if (
+      next.swingAmount !== null &&
+      next.swingDivision !== null &&
+      (next.swingAmount !== last.swingAmount || next.swingDivision !== last.swingDivision)
+    ) {
+      transport().setSwing(next.swingAmount, next.swingDivision);
+    }
+    last = next;
+  };
+
   return combineUnsubscribers([
     useTransportStore.subscribe((state) => state.activeSequenceId, applyMirror),
     useSequenceStore.subscribe((state) => state.sequences, applyMirror),

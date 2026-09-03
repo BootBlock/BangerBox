@@ -154,6 +154,38 @@ describe('the transport mirror follows its source (spec §7.9, issue #93)', () =
     }
   });
 
+  /**
+   * A §10.3 relative Q-Link turn reads the mirror, steps it, and writes it back transiently
+   * until the 250 ms idle commit. Re-deriving on ANY sequences change snapped the mirror back
+   * to the row mid-turn, so the eventual commit persisted a tempo the user never chose.
+   */
+  it('leaves a tempo gesture alone when an unrelated sequence field changes', () => {
+    const stop = subscribeTransportMirror();
+    try {
+      setTempoTransient(150); // the turn, still in flight
+      commitSwing(58); // another encoder lands on the same sequence row
+
+      expect(useTransportStore.getState().bpm).toBe(150);
+      expect(useTransportStore.getState().swingAmount).toBe(58);
+    } finally {
+      stop();
+    }
+  });
+
+  it('still re-derives when the tempo itself changes underneath a gesture', () => {
+    const stop = subscribeTransportMirror();
+    try {
+      setTempoTransient(150);
+      useSequenceStore.getState().updateSequence(SEQUENCE_ID, { tempo: 90 });
+
+      // A real tempo change is the one thing that SHOULD override the gesture: the mirror is
+      // a mirror, and the row moved.
+      expect(useTransportStore.getState().bpm).toBe(90);
+    } finally {
+      stop();
+    }
+  });
+
   it('unsubscribes cleanly, leaving the stores alone afterwards', () => {
     const stop = subscribeTransportMirror();
     stop();

@@ -13,7 +13,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/core/storage/client', () => ({ getDatabaseDriver: () => ({}) }));
 
-const projectCreate = vi.fn(async ({ name }: { name: string }) => ({ id: 'new-project', name }));
+let createFailure: Error | null = null;
+const projectCreate = vi.fn(async ({ name }: { name: string }) => {
+  if (createFailure) throw createFailure;
+  return { id: 'new-project', name };
+});
 vi.mock('@/core/storage/repositories', () => ({
   createRepositories: () => ({
     projects: { create: projectCreate },
@@ -45,18 +49,51 @@ const SAMPLE_ROWS = [
   { id: 'sample-b', name: 'snare', opfs_path: '/projects/p/samples/b.wav' },
 ];
 const dumpSnapshot = vi.fn(async () => ({ version: 1, samples: [...SAMPLE_ROWS] }));
+let restoreFailure: Error | null = null;
+const restoreSnapshot = vi.fn(async () => {
+  if (restoreFailure) throw restoreFailure;
+});
 vi.mock('./snapshotService', () => ({
   dumpSnapshot: () => dumpSnapshot(),
-  restoreSnapshot: vi.fn(),
+  restoreSnapshot: () => restoreSnapshot(),
 }));
+
+/** A minimal snapshot the install path can remap — UUID-shaped ids, no samples. */
+function importSnapshot() {
+  const id = (tail: string) => `00000000-0000-4000-8000-00000000000${tail}`;
+  return {
+    version: 1,
+    project: {
+      id: id('1'),
+      name: 'Imported',
+      created_at: 1,
+      modified_at: 1,
+      sample_rate: 48_000,
+      bit_depth: '24' as const,
+      bpm_default: 120,
+      insert_limit: 4,
+      payload: '{}',
+    },
+    sequences: [],
+    tracks: [],
+    midiEvents: [],
+    automation: [],
+    programs: [],
+    samples: [],
+    songEntries: [],
+  };
+}
 
 /** Paths whose read fails, standing in for a sample whose OPFS file is gone. */
 const unreadablePaths = new Set<string>();
+/** Paths that read back larger than the §9.6 import budget allows for one entry. */
+const oversizedSamplePaths = new Set<string>();
 vi.mock('@/core/storage/opfs', () => ({
   samplePath: (projectId: string, sampleId: string) => `/projects/${projectId}/samples/${sampleId}.wav`,
   readFile: async (path: string) => {
     if (unreadablePaths.has(path)) throw new DOMException('gone', 'NotFoundError');
-    return new Blob([new Uint8Array([1, 2, 3])]);
+    const size = oversizedSamplePaths.has(path) ? 300 * 1024 * 1024 : 3;
+    return new Blob([new Uint8Array(size)]);
   },
   writeFileAtomic: vi.fn(),
   deleteFile: vi.fn(),
@@ -68,13 +105,17 @@ vi.mock('./packClient', () => ({
   unpackMpcwebInWorker: vi.fn(),
 }));
 
-const { projectService, closeActiveProject } = await import('./projectService');
+const { projectService, closeActiveProject, installUnpackedAsNewProject } = await import('./projectService');
 const { markDirty } = await import('./dirty');
 const { useProjectStore, useUIStore } = await import('@/store');
 
 beforeEach(() => {
   calls.length = 0;
   flushFailure = null;
+  createFailure = null;
+  restoreFailure = null;
+  oversizedSamplePaths.clear();
+  restoreSnapshot.mockClear();
   unreadablePaths.clear();
   packMpcwebInWorker.mockClear();
   useUIStore.setState({ toasts: [] });
@@ -200,6 +241,58 @@ describe('project switch — a failed flush refuses the switch (spec §4.4)', ()
     expect(projectCreate).not.toHaveBeenCalled();
   });
 
+  /**
+   * The refusal must not cost the open project its autosave. Flushing and TEARING DOWN before
+   * the work would leave `markDirty` a no-op the moment anything after it failed: the unsaved
+   * dot never lights again and every later edit is lost on reload — a worse failure than the
+   * one the refusal exists to prevent.
+   */
+  it('keeps the open project autosaving when the new project cannot be created', async () => {
+    await projectService.loadProject('project-a');
+    createFailure = new Error('disk full');
+
+    await expect(projectService.newProject()).rejects.toThrow(/disk full/);
+
+    // The queue is still wired: an edit still arms it and still reaches storage.
+    flushDirtyKeys.mockClear();
+    markDirty('sequence:seq-1');
+    expect(await projectService.saveNow()).toBe('saved');
+    expect(flushDirtyKeys).toHaveBeenCalledWith(expect.anything(), ['sequence:seq-1']);
+  });
+
+  it('keeps the open project autosaving when an import cannot be installed', async () => {
+    await projectService.loadProject('project-a');
+    restoreFailure = new Error('quota exceeded mid-install');
+
+    await expect(
+      installUnpackedAsNewProject({
+        manifest: {} as never,
+        snapshot: importSnapshot(),
+        samples: new Map(),
+      }),
+    ).rejects.toThrow(/quota exceeded mid-install/);
+
+    flushDirtyKeys.mockClear();
+    markDirty('sequence:seq-1');
+    expect(await projectService.saveNow()).toBe('saved');
+    expect(flushDirtyKeys).toHaveBeenCalledWith(expect.anything(), ['sequence:seq-1']);
+  });
+
+  it('still refuses an import over work it could not write, before touching storage', async () => {
+    await projectService.loadProject('project-a');
+    markDirty('sequence:seq-1');
+    flushFailure = new Error('quota exceeded');
+
+    await expect(
+      installUnpackedAsNewProject({
+        manifest: {} as never,
+        snapshot: importSnapshot(),
+        samples: new Map(),
+      }),
+    ).rejects.toThrow(/not saved|could not/i);
+    expect(restoreSnapshot).not.toHaveBeenCalled();
+  });
+
   it('lets Safe Mode close the project regardless, because that is the escape hatch', async () => {
     await projectService.loadProject('project-a');
     markDirty('sequence:seq-1');
@@ -252,6 +345,19 @@ describe('export — one unreadable sample does not lose the whole project (spec
         .toasts.map((toast) => toast.message)
         .join(' '),
     ).toMatch(/kick/);
+  });
+
+  it('warns when it writes an archive its own import would refuse (spec §9.6)', async () => {
+    // Import enforces MPCWEB_MAX_ENTRY_BYTES; export enforced nothing, so BangerBox could
+    // write a file it then refused to open — while telling the user to ask for a fresh export.
+    oversizedSamplePaths.add('/projects/p/samples/a.wav');
+    await projectService.loadProject('project-a');
+    useProjectStore.setState({ projectId: 'project-a' });
+    await projectService.exportMpcweb();
+
+    const toasts = useUIStore.getState().toasts;
+    expect(toasts.map((toast) => toast.message).join(' ')).toMatch(/too large|cannot be opened|reopen/i);
+    expect(toasts.some((toast) => toast.message.includes('kick'))).toBe(true);
   });
 
   it('leaves a healthy export byte-for-byte as it was', async () => {

@@ -8,6 +8,7 @@ import { getDatabaseDriver } from '@/core/storage/client';
 import { createRepositories, type Repositories } from '@/core/storage/repositories';
 import { deleteFile, readFile, samplePath, writeFileAtomic } from '@/core/storage/opfs';
 import { assertWriteHeadroom } from '@/core/storage/safeguards';
+import { MPCWEB_MAX_ENTRY_BYTES, MPCWEB_MAX_TOTAL_BYTES } from '@/core/constants';
 import { useProjectStore, useUIStore } from '@/store';
 import { AutosaveQueue, type SaveOutcome } from './autosave';
 import { describeDirtyKeys, registerAutosave, unregisterAutosave } from './dirty';
@@ -77,17 +78,36 @@ class UnsavedWorkError extends Error {
  * trap them in the very state they are escaping.
  */
 async function flushAndTeardownAutosave(options: { force?: boolean } = {}): Promise<void> {
+  if (!options.force) await assertOutgoingWorkIsSaved();
+  teardownAutosave();
+}
+
+/**
+ * Flush the open project's queue and REFUSE if it could not be written — without tearing the
+ * queue down (spec §4.4, issue #103).
+ *
+ * The split matters. `newProject` and {@link installUnpackedAsNewProject} have to refuse
+ * before they write anything, so a refusal leaves neither an empty project nor a half-installed
+ * archive behind. But tearing the queue down at that point would mean any later failure — a
+ * rejected `create`, a §9.7 headroom refusal, a rolled-back restore — left the STILL-OPEN
+ * project with `markDirty` a no-op: the unsaved dot would never light again and every
+ * subsequent edit would be lost on reload. That is a worse loss than the one being prevented,
+ * so the teardown stays where the project actually changes, in {@link loadProject}.
+ *
+ * Calling it twice is free: the second flush finds an empty queue and reports `'idle'`.
+ */
+async function assertOutgoingWorkIsSaved(): Promise<void> {
   const active = queue;
-  if (active && (await active.flushNow()) === 'failed' && !options.force) {
+  if (active && (await active.flushNow()) === 'failed') {
     throw new UnsavedWorkError(active.unsavedKeys);
   }
-  teardownAutosave();
 }
 
 async function newProject(name = 'New Project'): Promise<string> {
   // Refuse before creating anything (spec §4.4, issue #103): `loadProject` at the end would
   // refuse anyway, and doing it here means a refused switch leaves no empty project behind.
-  await flushAndTeardownAutosave();
+  // The queue is deliberately left standing — see `assertOutgoingWorkIsSaved`.
+  await assertOutgoingWorkIsSaved();
   const repos = getRepositories();
   const project = await repos.projects.create({ name });
 
@@ -160,6 +180,41 @@ async function saveNow(): Promise<SaveOutcome> {
 }
 
 /**
+ * Warn when an export exceeds what the §9.6 import will accept (issue #26, issue #99).
+ *
+ * Import enforces the §2.6 decompression budget and export enforces nothing, so BangerBox can
+ * write an archive it will later refuse to open — and one of those refusals tells the user to
+ * ask for a fresh export, which is the thing that produced the file.
+ *
+ * It warns rather than refusing, for the reason export is per-sample recoverable at all: this
+ * file may be the only copy of the user's work, so producing it and saying what is wrong beats
+ * producing nothing. The message names the sample, because a project over the total is fixed by
+ * removing audio and the user has to know which.
+ */
+function warnIfImportWouldRefuse(samples: readonly PackedSample[], names: ReadonlyMap<string, string>): void {
+  const oversized = samples.filter((sample) => sample.bytes.byteLength > MPCWEB_MAX_ENTRY_BYTES);
+  const total = samples.reduce((sum, sample) => sum + sample.bytes.byteLength, 0);
+  if (oversized.length === 0 && total <= MPCWEB_MAX_TOTAL_BYTES) return;
+
+  // Named from the snapshot rows being packed, not from the Browser's cached list: this is a
+  // statement about THIS archive, and the two can disagree.
+  const nameOf = (sampleId: string) => names.get(sampleId) ?? sampleId;
+  const detail =
+    oversized.length > 0
+      ? `${oversized.length} sample${oversized.length === 1 ? ' is' : 's are'} too large (${oversized
+          .slice(0, 3)
+          .map((sample) => nameOf(sample.sampleId))
+          .join(', ')})`
+      : 'the project is too large in total';
+  useUIStore
+    .getState()
+    .pushToast(
+      `This export was written, but BangerBox cannot open it again: ${detail}. Split the project or shorten the audio before relying on this file.`,
+      'warning',
+    );
+}
+
+/**
  * Export the active project as a `.mpcweb` archive (spec §9.6): flush autosave, dump the row
  * snapshot, read every referenced sample's WAV bytes from OPFS, then zip in the pack worker.
  *
@@ -194,6 +249,8 @@ async function exportMpcweb(): Promise<Blob> {
       unreadable.push(sample.name);
     }
   }
+
+  warnIfImportWouldRefuse(samples, new Map(snapshot.samples.map((row) => [row.id, row.name])));
 
   const exported = new Set(samples.map((sample) => sample.sampleId));
   const packed =
@@ -314,8 +371,9 @@ export async function installUnpackedAsNewProject(
 ): Promise<string> {
   // Refuse before a byte is written (spec §4.4, issue #103): `loadProject` at the end would
   // refuse anyway, and doing it first means a refused install leaves no rows and no audio.
-  // It also makes the `loadProject` below a no-op flush, since the queue is already gone.
-  await flushAndTeardownAutosave();
+  // The queue is left standing, so an install that fails after this point does not cost the
+  // still-open project its autosave — see `assertOutgoingWorkIsSaved`.
+  await assertOutgoingWorkIsSaved();
 
   const remapped = remapSnapshot(unpacked.snapshot);
   const { projectId, sampleIdMap } = remapped;
