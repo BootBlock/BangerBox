@@ -14,8 +14,8 @@ import { AutosaveQueue, type SaveOutcome } from './autosave';
 import { describeDirtyKeys, registerAutosave, unregisterAutosave } from './dirty';
 import { hydrateStores } from './hydrate';
 import { remapSnapshot, type ProjectSnapshot } from './mpcweb';
-import { packMpcwebInWorker, unpackMpcwebInWorker } from './packClient';
-import type { PackedSample, UnpackedProject } from './mpcwebZip';
+import { beginMpcwebPack, unpackMpcwebInWorker } from './packClient';
+import type { UnpackedProject } from './mpcwebZip';
 import { flushDirtyKeys } from './persist';
 import { planSharedSamples } from './sampleSharing';
 import { registerProjectService, type ProjectService } from './service';
@@ -180,6 +180,19 @@ async function saveNow(): Promise<SaveOutcome> {
 }
 
 /**
+ * One sample's contribution to the archive, kept after its bytes have been handed over.
+ *
+ * The §2.6 budget warning below is about sizes, and the export transfers each sample's buffer
+ * into the pack worker as it reads it (issue #99) — so what is left to reason about afterwards
+ * is a number and a name, not the audio.
+ */
+interface SampleSize {
+  readonly sampleId: string;
+  readonly name: string;
+  readonly byteLength: number;
+}
+
+/**
  * Warn when an export exceeds what the §9.6 import will accept (issue #26, issue #99).
  *
  * Import enforces the §2.6 decompression budget and export enforces nothing, so BangerBox can
@@ -190,20 +203,22 @@ async function saveNow(): Promise<SaveOutcome> {
  * file may be the only copy of the user's work, so producing it and saying what is wrong beats
  * producing nothing. The message names the sample, because a project over the total is fixed by
  * removing audio and the user has to know which.
+ *
+ * It takes sizes rather than the samples themselves because the bytes are transferred to the
+ * pack worker as they are read and are gone by the time this runs (issue #99). The name is
+ * carried alongside for the same reason it always was: this is a statement about THIS
+ * archive, and the Browser's cached list can disagree with it.
  */
-function warnIfImportWouldRefuse(samples: readonly PackedSample[], names: ReadonlyMap<string, string>): void {
-  const oversized = samples.filter((sample) => sample.bytes.byteLength > MPCWEB_MAX_ENTRY_BYTES);
-  const total = samples.reduce((sum, sample) => sum + sample.bytes.byteLength, 0);
+function warnIfImportWouldRefuse(samples: readonly SampleSize[]): void {
+  const oversized = samples.filter((sample) => sample.byteLength > MPCWEB_MAX_ENTRY_BYTES);
+  const total = samples.reduce((sum, sample) => sum + sample.byteLength, 0);
   if (oversized.length === 0 && total <= MPCWEB_MAX_TOTAL_BYTES) return;
 
-  // Named from the snapshot rows being packed, not from the Browser's cached list: this is a
-  // statement about THIS archive, and the two can disagree.
-  const nameOf = (sampleId: string) => names.get(sampleId) ?? sampleId;
   const detail =
     oversized.length > 0
       ? `${oversized.length} sample${oversized.length === 1 ? ' is' : 's are'} too large (${oversized
           .slice(0, 3)
-          .map((sample) => nameOf(sample.sampleId))
+          .map((sample) => sample.name)
           .join(', ')})`
       : 'the project is too large in total';
   useUIStore
@@ -237,26 +252,33 @@ async function exportMpcweb(): Promise<Blob> {
   const repos = getRepositories();
   const snapshot = await dumpSnapshot(repos, projectId);
 
-  const samples: PackedSample[] = [];
+  const session = await beginMpcwebPack(__APP_VERSION__);
+  const sizes: SampleSize[] = [];
   const unreadable: string[] = [];
-  for (const sample of snapshot.samples) {
-    try {
-      samples.push({
-        sampleId: sample.id,
-        bytes: new Uint8Array(await (await readFile(sample.opfs_path)).arrayBuffer()),
-      });
-    } catch {
-      unreadable.push(sample.name);
+  try {
+    for (const sample of snapshot.samples) {
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(await (await readFile(sample.opfs_path)).arrayBuffer());
+      } catch {
+        unreadable.push(sample.name);
+        continue;
+      }
+      // The size is taken BEFORE the transfer: `addSample` detaches the buffer, after which
+      // `byteLength` reads as 0 — the same trap `saveChannelsAsSample` records for the WAV
+      // encoder. It is all the §2.6 budget warning below needs, and it is what lets the
+      // bytes themselves go without being counted up at the end.
+      sizes.push({ sampleId: sample.id, name: sample.name, byteLength: bytes.byteLength });
+      await session.addSample({ sampleId: sample.id, bytes });
     }
+  } catch (error) {
+    // A failed transfer leaves a half-built archive in the worker; release it rather than
+    // letting the packer live for the rest of the session (spec §3.2 resource discipline).
+    await session.abort().catch(() => {});
+    throw error;
   }
 
-  warnIfImportWouldRefuse(samples, new Map(snapshot.samples.map((row) => [row.id, row.name])));
-
-  const exported = new Set(samples.map((sample) => sample.sampleId));
-  const packed =
-    unreadable.length === 0
-      ? snapshot
-      : { ...snapshot, samples: snapshot.samples.filter((row) => exported.has(row.id)) };
+  warnIfImportWouldRefuse(sizes);
 
   if (unreadable.length > 0) {
     useUIStore
@@ -267,8 +289,9 @@ async function exportMpcweb(): Promise<Blob> {
       );
   }
 
-  const bytes = await packMpcwebInWorker({ snapshot: packed, appVersion: __APP_VERSION__, samples });
-  return new Blob([bytes as BlobPart], { type: 'application/zip' });
+  // `finish` filters the snapshot's sample rows down to what was added, so an export that
+  // skipped an unreadable sample still re-imports past the §9.6 completeness check.
+  return session.finish(snapshot);
 }
 
 /**

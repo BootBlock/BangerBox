@@ -60,10 +60,13 @@ export function LayersEditor({
     // Through the store, not `onChange`: removing a layer opens a hole in the velocity axis,
     // and the pad would go silent across it. The store closes the hole (spec §6).
     const result = removePadLayer(programId, padIndex, index);
-    if (!result.ok) {
-      useUIStore.getState().pushToast(result.reason, 'warning');
-      announce(result.reason);
-    }
+    // Deliberately NOT confirmed (issue #54): the whole subject of this button is the row it
+    // sits in, and the user can see exactly what goes. What was missing is that nothing said
+    // the removal was recoverable, so the toast names Undo — see `ConfirmDialog` for the rule
+    // that decides which deletions get a dialog instead.
+    const message = result.ok ? `Removed layer ${index + 1}. Undo with Ctrl+Z.` : result.reason;
+    useUIStore.getState().pushToast(message, result.ok ? 'success' : 'warning');
+    announce(message);
   };
 
   /** Apply the picked sample to whichever target opened the picker, and report either way. */

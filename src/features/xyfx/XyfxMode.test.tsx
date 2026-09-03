@@ -6,16 +6,26 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { channelLevelPath } from '@/core/audio/params/registry';
 import { createDefaultChannelStrip } from '@/core/project/schemas';
 import { useMixerStore } from '@/store';
+import { readTransientValue, resetTransientChannel } from '@/store/transientChannel';
 import { XyfxMode } from './XyfxMode';
 
-/** The X axis defaults to the first assignable parameter — master level. */
+/**
+ * Where the X axis is right now — it defaults to the first assignable parameter, master level.
+ *
+ * §3.3 names "XY touch position" as a value that must never pass through React state, so an
+ * in-flight gesture lives on the §4.1 transient channel and the store holds the value the
+ * gesture started from until it is released (issue #27). Reading the store alone would report
+ * a moving axis as motionless.
+ */
 function masterLevel(): number {
-  return useMixerStore.getState().channels.master!.level;
+  return readTransientValue(channelLevelPath('master')) ?? useMixerStore.getState().channels.master!.level;
 }
 
 beforeEach(() => {
+  resetTransientChannel();
   useMixerStore.getState().setChannels({ master: createDefaultChannelStrip('master') });
 });
 

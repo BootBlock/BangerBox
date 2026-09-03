@@ -19,6 +19,7 @@ import { useTransportStore } from './useTransportStore';
 import { useProjectStore } from './useProjectStore';
 import { useSequenceStore } from './useSequenceStore';
 import { useProgramStore } from './useProgramStore';
+import { subscribeTransientChannel } from './transientChannel';
 import { useMixerStore } from './useMixerStore';
 import { useUIStore } from './useUIStore';
 import { useHardwareStore } from './useHardwareStore';
@@ -99,9 +100,16 @@ describe('useMixerStore transient/commit channel (spec §4.1, §3.3)', () => {
     useMixerStore.getState().upsertChannel(createDefaultChannelStrip('track:1'));
   });
 
-  it('transient updates move the value without undo or autosave', () => {
+  it('transient updates move the graph without undo, autosave, or a re-render', () => {
+    // spec §4.1 gives the gesture the graph and nothing else; §3.3 forbids it reaching React
+    // at all, so it publishes on the §4.1 transient channel rather than writing the store
+    // (issue #27). The store still holds the pre-gesture value until the commit.
+    const published: number[] = [];
+    const stop = subscribeTransientChannel((_, value) => published.push(value));
     useMixerStore.getState().setTransient('track:1.level', 0.5);
-    expect(useMixerStore.getState().channels['track:1']!.level).toBe(0.5);
+    stop();
+    expect(published).toEqual([0.5]);
+    expect(useMixerStore.getState().channels['track:1']!.level).toBe(1);
     expect(useUndoStore.getState().canUndo).toBe(false);
     expect(dirty).not.toHaveBeenCalled();
   });

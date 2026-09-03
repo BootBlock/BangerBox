@@ -5,7 +5,8 @@
  * committed by the parent through the program store (spec §3.4, §4.5).
  */
 import { MOD_AMOUNT_RANGE, type ModRoute, type ModSource } from '@/core/project/schemas';
-import { Button } from '@/ui/primitives';
+import { useUIStore } from '@/store';
+import { announce, Button } from '@/ui/primitives';
 import { IconRemove } from '@/ui/icons';
 import { NumberField, SelectField } from './controls';
 
@@ -45,7 +46,18 @@ export function ModMatrixEditor({
     onChange(routes.map((route, i) => (i === index ? { ...route, ...patch } : route)));
   };
   const addRoute = () => onChange([...routes, { source: 'lfo1', target: 'pitch', amount: 0.5 }]);
-  const removeRoute = (index: number) => onChange(routes.filter((_, i) => i !== index));
+  /**
+   * Deliberately NOT confirmed (issue #54): the button's whole subject is the row it sits in,
+   * and a dialog on every row would make the matrix unusable on a touch device. What was
+   * missing is that nothing said the removal was recoverable — see `ConfirmDialog` for the
+   * rule that decides which deletions get a dialog instead.
+   */
+  const removeRoute = (index: number) => {
+    onChange(routes.filter((_, i) => i !== index));
+    const message = `Removed route ${index + 1}. Undo with Ctrl+Z.`;
+    useUIStore.getState().pushToast(message, 'success');
+    announce(message);
+  };
 
   return (
     <section aria-label="Modulation matrix" className="rounded-bb-sm border border-bb-line bg-bb-surface p-3">

@@ -17,7 +17,7 @@
 // missed re-stamp fails the suite rather than shipping irreproducible archives.
 import { createDefaultDrumProgram, createDefaultPad } from '@/core/project/schemas/program';
 import { createDefaultChannelStrip } from '@/core/project/schemas/mixer';
-import { packMpcweb } from '@/core/project/mpcwebZip';
+import { createMpcwebPacker } from '@/core/project/mpcwebZip';
 import { encodeWav } from '@/core/audio/wav';
 import { samplePath } from '@/core/storage/opfs';
 import { derivedId } from './prng.mjs';
@@ -154,6 +154,22 @@ export function buildProjectRow(projectId, name, { bpm = 120 } = {}) {
  * (spec §9.8). Samples are sorted so entry order never depends on Map iteration incidentals.
  */
 export function packArchive({ snapshot, appVersion, wavs }) {
-  const samples = [...wavs.keys()].sort().map((sampleId) => ({ sampleId, bytes: wavs.get(sampleId) }));
-  return packMpcweb({ snapshot, appVersion, samples, exportedAt: FACTORY_EPOCH_ISO });
+  const chunks = [];
+  const packer = createMpcwebPacker({
+    appVersion,
+    exportedAt: FACTORY_EPOCH_ISO,
+    onChunk: (chunk) => chunks.push(new Uint8Array(chunk)),
+  });
+  for (const sampleId of [...wavs.keys()].sort()) {
+    packer.addSample({ sampleId, bytes: wavs.get(sampleId) });
+  }
+  packer.finish(snapshot);
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
 }

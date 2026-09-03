@@ -48,6 +48,10 @@ export function LooperPanel() {
   const looperRef = useRef<Looper | null>(null);
   const ringSetter = useRef<((progress: number) => void) | null>(null);
   const [recording, setRecording] = useState(false);
+  /** True from the moment a capture stops until its bytes are written (spec §8.5.8). */
+  const [settling, setSettling] = useState(false);
+  /** True while a take is being encoded and written as a sample (spec §9.4). */
+  const [saving, setSaving] = useState(false);
   const [hasTake, setHasTake] = useState(false);
   const [bars, setBars] = useState<number>(0);
   const [source, setSource] = useState<LooperSource>('master');
@@ -59,6 +63,13 @@ export function LooperPanel() {
   const timeSig = useSequenceStore((state) =>
     activeSequenceId ? state.sequences[activeSequenceId]?.timeSig : undefined,
   );
+
+  /**
+   * Any state in which a new capture must not start: recording, draining the last one, or
+   * writing a take out. One flag rather than three at each call site, so a control cannot be
+   * left out of one of them — which is how Record came to be live during the drain (#54).
+   */
+  const busy = recording || settling || saving;
 
   const effectiveTimeSig = timeSig ?? DEFAULT_TIME_SIG;
   const barSeconds = ticksToSeconds(barsToTicks(bars, effectiveTimeSig), bpm);
@@ -128,18 +139,33 @@ export function LooperPanel() {
     setRecording(true);
   };
 
+  /**
+   * End the capture and settle the take (spec §8.5.8).
+   *
+   * `stopRecording` drains the ring buffer, encodes and writes, and the button used to read
+   * **Record** again the instant `recording` went false — so a second tap during that window
+   * armed a NEW capture over a take that was still being written (issue #54). `settling`
+   * holds every transport control until the drain completes, which is also the visible
+   * progress a long operation owes the user.
+   */
   const stop = async () => {
     const looper = looperRef.current;
     if (!looper) return;
     setRecording(false);
-    const captured = await looper.stopRecording();
-    setHasTake(looper.hasTake);
-    if (!captured) pushToast('Nothing was captured.', 'warning');
+    setSettling(true);
+    try {
+      const captured = await looper.stopRecording();
+      setHasTake(looper.hasTake);
+      if (!captured) pushToast('Nothing was captured.', 'warning');
+    } finally {
+      setSettling(false);
+    }
   };
 
   const save = async () => {
     const looper = looperRef.current;
     if (!looper) return;
+    setSaving(true);
     try {
       const row = await looper.save(sampleRate, sampleEditContext());
       if (!row) {
@@ -150,6 +176,8 @@ export function LooperPanel() {
       pushToast('Looper take saved as a sample.', 'success');
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Looper capture failed.', 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -185,7 +213,7 @@ export function LooperPanel() {
             ]}
             onChange={(next) => void changeSource(next)}
             // Swapping the input mid-take would splice two sources into one take.
-            disabled={recording}
+            disabled={busy}
             size="sm"
             data-testid="looper-source"
           />
@@ -198,7 +226,7 @@ export function LooperPanel() {
             options={LENGTH_OPTIONS}
             onChange={setBars}
             // Changing the length mid-capture would mis-size the take already running.
-            disabled={recording}
+            disabled={busy}
             size="sm"
             data-testid="looper-length"
           />
@@ -240,25 +268,30 @@ export function LooperPanel() {
           // Accent marks the confirming action while a take is in flight (spec §3.6).
           <Button label="Stop" variant="accent" data-testid="looper-stop" onClick={() => void stop()} />
         ) : (
-          <Button label="Record" data-testid="looper-record" onClick={() => void capture(false)} />
+          <Button
+            label={settling ? 'Finishing…' : 'Record'}
+            disabled={busy}
+            data-testid="looper-record"
+            onClick={() => void capture(false)}
+          />
         )}
         <Button
           label="Overdub"
-          disabled={recording || !hasTake}
+          disabled={busy || !hasTake}
           data-testid="looper-overdub"
           onClick={() => void capture(true)}
         />
         <Button
-          label="Save as sample"
+          label={saving ? 'Saving…' : 'Save as sample'}
           variant="accent"
-          disabled={recording || !hasTake}
+          disabled={busy || !hasTake}
           data-testid="looper-save"
           onClick={() => void save()}
         />
         <Button
           label="Clear"
           variant="danger"
-          disabled={recording || !hasTake}
+          disabled={busy || !hasTake}
           data-testid="looper-clear"
           onClick={clear}
         />

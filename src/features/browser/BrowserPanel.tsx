@@ -9,13 +9,14 @@
  */
 import { useEffect, useState } from 'react';
 import { getActiveRepositories, getAudioEngine, projectService } from '@/core/project';
-import { bounceActiveSequence } from '@/core/audio/bounceService';
+import { bounceActiveSequence, resampleSequenceToSample } from '@/core/audio/bounceService';
 import { importAudioFile } from '@/core/audio/sampleImport';
+import { downloadBlob, downloadFileStem } from '@/core/platform/download';
 import { deleteFile, projectSamplesRoot, readFile } from '@/core/storage/opfs';
 import type { SampleRow } from '@/core/storage/repositories';
 import { BROWSER_INITIAL_PATH, useBrowserStore, useProjectStore, useUIStore } from '@/store';
 import { IconPlay } from '@/ui/icons';
-import { Button, FieldLabel, Modal, Toggle } from '@/ui/primitives';
+import { Button, FieldLabel, FilePickerButton, Modal, Toggle } from '@/ui/primitives';
 import {
   auditionSample,
   refreshSamples,
@@ -28,18 +29,6 @@ import { FolderTree } from './FolderTree';
 import { SampleWaveformThumb } from './SampleWaveformThumb';
 import { findUnusedSamples } from './purge';
 import { isGlobalLibraryPath, scopeOfPath } from './libraryLocation';
-
-/** Trigger a browser download of a Blob (spec §9.6 export → download). */
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
 
 export function BrowserPanel() {
   const samples = useBrowserStore((state) => state.samples);
@@ -54,7 +43,18 @@ export function BrowserPanel() {
   const projectName = useProjectStore((state) => state.projectName);
   const projectId = useProjectStore((state) => state.projectId);
   const pushToast = useUIStore((state) => state.pushToast);
-  const [busy, setBusy] = useState(false);
+  /**
+   * Which long operation is running, or null (spec §8.5.7, issue #54).
+   *
+   * A single boolean gated every control correctly and labelled them all wrongly: bouncing
+   * relabelled the import pickers "Importing…" and marked them `aria-disabled`, which is the
+   * opposite of the missing-progress problem #54 is about. The name is what each control
+   * shows; `busy` below is what every control is gated on.
+   */
+  const [running, setRunning] = useState<
+    null | 'project-export' | 'project-import' | 'sample-import' | 'bounce' | 'resample' | 'purge'
+  >(null);
+  const busy = running !== null;
   /**
    * The samples the purge would delete, held between the review pass and the confirmation
    * (spec §8.5.7). `null` means no purge is being confirmed; a non-empty array opens the
@@ -127,23 +127,20 @@ export function BrowserPanel() {
   });
 
   const exportProject = async () => {
-    setBusy(true);
+    setRunning('project-export');
     try {
       const blob = await projectService.exportMpcweb();
-      downloadBlob(blob, `${(projectName || 'project').replace(/\s+/g, '-')}.mpcweb`);
+      downloadBlob(blob, `${downloadFileStem(projectName)}.mpcweb`);
       pushToast('Project exported.', 'success');
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Export failed.', 'error');
     } finally {
-      setBusy(false);
+      setRunning(null);
     }
   };
 
-  const importProject = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    setBusy(true);
+  const importProject = (file: File) => {
+    setRunning('project-import');
     void (async () => {
       try {
         await projectService.importMpcweb(file);
@@ -152,7 +149,7 @@ export function BrowserPanel() {
       } catch (error) {
         pushToast(error instanceof Error ? error.message : 'Import failed.', 'error');
       } finally {
-        setBusy(false);
+        setRunning(null);
       }
     })();
   };
@@ -161,16 +158,13 @@ export function BrowserPanel() {
    * Import an audio file into the browsed location (spec §9.4). The folder-tree selection
    * chooses the destination, so this is how a sample gets into the global library (§9.3).
    */
-  const importSample = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
+  const importSample = (file: File) => {
     const engine = getAudioEngine();
     if (!engine) {
       pushToast('Start the audio engine before importing.', 'warning');
       return;
     }
-    setBusy(true);
+    setRunning('sample-import');
     void (async () => {
       try {
         await importAudioFile(file, {
@@ -183,23 +177,54 @@ export function BrowserPanel() {
       } catch (error) {
         pushToast(error instanceof Error ? error.message : 'Import failed.', 'error');
       } finally {
-        setBusy(false);
+        setRunning(null);
       }
     })();
   };
 
   /** Bounce the active sequence to a `/bounces/` WAV and download it (spec §9.5). */
   const bounce = async () => {
-    setBusy(true);
+    setRunning('bounce');
     try {
       const path = await bounceActiveSequence('bounce', sampleEditContext());
       const file = await readFile(path);
-      downloadBlob(file, `${(projectName || 'project').replace(/\s+/g, '-')}-bounce.wav`);
+      downloadBlob(file, `${downloadFileStem(projectName)}-bounce.wav`);
       pushToast('Sequence bounced.', 'success');
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Bounce failed.', 'error');
     } finally {
-      setBusy(false);
+      setRunning(null);
+    }
+  };
+
+  /**
+   * Resample the active sequence into a new sample and offer it to a pad (spec §9.5
+   * "resample-to-pad", issue #104).
+   *
+   * The other three §9.5 paths write a file the user downloads; this one lands in the
+   * library instead, which is the surface this very mode lists — so the result is reachable
+   * the moment it exists. The assignment dialog opens on it straight away because §9.5 names
+   * the feature resample-to-**pad**: stopping at a library row would leave a user who wanted
+   * a sequence on one pad to go and find it themselves.
+   */
+  const resample = async () => {
+    setRunning('resample');
+    try {
+      // `sampleEditContext()` carries no scope, so the write lands under the project's own
+      // `/samples/` root (spec §9.1) whichever node the folder tree has selected. That is
+      // deliberate: this audio is a render of THIS project's sequence and means nothing in
+      // another, so it must not go into the shared library the way §9.8 factory audio does.
+      const row = await resampleSequenceToSample(
+        `${downloadFileStem(projectName)}-resample`,
+        sampleEditContext(),
+      );
+      await refreshSamples();
+      setAssigning(row);
+      pushToast(`Resampled to “${row.name}”. Choose where it lands.`, 'success');
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Resample failed.', 'error');
+    } finally {
+      setRunning(null);
     }
   };
 
@@ -217,7 +242,7 @@ export function BrowserPanel() {
    * dialog showed — recomputing it there would delete something the user never saw.
    */
   const reviewPurge = async () => {
-    setBusy(true);
+    setRunning('purge');
     try {
       const unused = await findUnusedSamples(
         samples,
@@ -236,14 +261,14 @@ export function BrowserPanel() {
       // indistinguishable from "every sample is unused" (spec §5.1).
       pushToast(error instanceof Error ? error.message : 'Could not work out what is unused.', 'error');
     } finally {
-      setBusy(false);
+      setRunning(null);
     }
   };
 
   /** Delete the reviewed samples — irreversible, and outside the undo stack (spec §8.5.7). */
   const confirmPurge = async () => {
     if (!purgeCandidates) return;
-    setBusy(true);
+    setRunning('purge');
     try {
       const repos = getActiveRepositories();
       let deleted = 0;
@@ -269,7 +294,7 @@ export function BrowserPanel() {
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Purge failed.', 'error');
     } finally {
-      setBusy(false);
+      setRunning(null);
     }
   };
 
@@ -279,41 +304,51 @@ export function BrowserPanel() {
     <div className="flex min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          label="Export .mpcweb"
+          label={running === 'project-export' ? 'Exporting…' : 'Export .mpcweb'}
           disabled={busy || !projectId}
           data-testid="project-export"
           onClick={() => void exportProject()}
         />
-        <label className="cursor-pointer rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs">
-          Import .mpcweb…
-          <input
-            type="file"
-            accept=".mpcweb,application/zip"
-            className="sr-only"
-            data-testid="project-import"
-            onChange={importProject}
-          />
-        </label>
+        <FilePickerButton
+          label="Import .mpcweb…"
+          busyLabel="Importing…"
+          accept=".mpcweb,application/zip"
+          // `busy` is what this control is doing; `disabled` is every other reason it cannot
+          // start. Only the first changes the label, so a bounce no longer claims to be an
+          // import (issue #54).
+          busy={running === 'project-import'}
+          disabled={busy}
+          data-testid="project-import"
+          onPick={importProject}
+        />
         <Button
-          label="Bounce sequence"
+          label={running === 'bounce' ? 'Bouncing…' : 'Bounce sequence'}
           disabled={busy || !projectId}
           data-testid="bounce-sequence"
           onClick={() => void bounce()}
         />
-        <label className="cursor-pointer rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs">
-          Import sample…
-          <input
-            type="file"
-            accept="audio/*"
-            className="sr-only"
-            data-testid="sample-import"
-            onChange={importSample}
-          />
-        </label>
+        {/* spec §9.5 resample-to-pad — the fourth bounce path, and the only one whose result
+            is a sample rather than a downloaded file (issue #104). */}
+        <Button
+          label={running === 'resample' ? 'Resampling…' : 'Resample to pad…'}
+          disabled={busy || !projectId}
+          title="Render the active sequence to a new sample and choose the pad it lands on"
+          data-testid="resample-to-pad"
+          onClick={() => void resample()}
+        />
+        <FilePickerButton
+          label="Import sample…"
+          busyLabel="Importing…"
+          accept="audio/*"
+          busy={running === 'sample-import'}
+          disabled={busy}
+          data-testid="sample-import"
+          onPick={importSample}
+        />
         <Button
           // The trailing ellipsis promises the review step, matching Safe Mode's
           // "Hard reset…" (spec §8.1) — this button no longer deletes on its own.
-          label="Purge unused samples…"
+          label={running === 'purge' ? 'Purging…' : 'Purge unused samples…'}
           variant="danger"
           // Purging judges what is unused from the loaded list, so a failed query would have
           // it delete against a stale or empty picture of the library. Without an open project

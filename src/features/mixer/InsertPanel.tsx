@@ -219,6 +219,9 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                           curve={
                             param.toLowerCase().includes('freq') || param === 'cutoff' ? 'log' : 'linear'
                           }
+                          // spec §10.3 "UI reacts concurrently": a Q-Link turn moves this
+                          // knob live, painted by ref rather than by a re-render (issue #27).
+                          livePath={insertParamPath(channelId, index + 1, param)}
                           onTransient={(value) => setParam(index, param, value, false)}
                           onCommit={(value) => setParam(index, param, value, true)}
                           data-testid={`insert-param-${index}-${param}`}

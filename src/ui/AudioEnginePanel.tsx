@@ -95,6 +95,10 @@ export function AudioEnginePanel() {
             range={LEVEL_RANGE}
             defaultValue={1}
             formatValue={(level) => formatValueText(faderLevelToDb(level), 'dB')}
+            // spec §10.3 "UI reacts concurrently": a project-mode Q-Link turn of the master
+            // level, or an XYFX axis bound to it, moves this fader as it happens — painted
+            // by ref rather than by a re-render, as the Mixer's strips are (issue #27).
+            livePath={channelLevelPath('master')}
             onTransient={(value) => setMaster(value, false)}
             onCommit={(value) => setMaster(value, true)}
             data-testid="master-fader"

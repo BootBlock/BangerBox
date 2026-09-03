@@ -12,6 +12,7 @@ import { subscribeTransportSync } from './transportSync';
 import { subscribeProgramSync } from './programSync';
 import { subscribeProgramParamSync } from './programParams';
 import { subscribeHardwareSync } from './hardwareSync';
+import { subscribeTransientSync } from './transientSync';
 
 export type { SyncBridge, Unsubscribe } from './bridge';
 export { noopBridge } from './bridge';
@@ -24,5 +25,8 @@ export function registerSyncSubscribers(bridge: SyncBridge = noopBridge): Unsubs
     subscribeProgramSync(bridge),
     subscribeProgramParamSync(bridge),
     subscribeHardwareSync(bridge),
+    // The §4.1 transient channel (issue #27) — a continuous gesture reaches the graph here
+    // rather than through a store write, so it never re-renders a React consumer (§3.3).
+    subscribeTransientSync(bridge),
   ]);
 }

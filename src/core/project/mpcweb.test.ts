@@ -8,7 +8,7 @@ import {
   serialiseSnapshot,
   type ProjectSnapshot,
 } from './mpcweb';
-import { packMpcweb, unpackMpcweb } from './mpcwebZip';
+import { createMpcwebPacker, unpackMpcweb } from './mpcwebZip';
 
 // UUID-shaped, because `remapSnapshot` rewrites ids by substring and now asserts that
 // shape before it does (issue #99). Section 1.3.1 makes every id a `crypto.randomUUID()`
@@ -163,13 +163,64 @@ describe('mpcweb remap — collision-free UUIDs (spec §9.6)', () => {
   });
 });
 
+/**
+ * Collect a streamed archive, the way `packClient` does over the worker boundary.
+ *
+ * There is only one packer now (issue #99): a `zipSync` one beside it would be two pieces of
+ * code writing one format. Every archive these tests build therefore goes through the same
+ * path a real export does.
+ */
+function packStreamed(
+  snapshot: ProjectSnapshot,
+  samples: readonly { sampleId: string; bytes: Uint8Array }[],
+  exportedAt?: string,
+): Uint8Array {
+  const chunks: Uint8Array[] = [];
+  const packer = createMpcwebPacker({
+    appVersion: '1.2.3',
+    exportedAt,
+    onChunk: (chunk) => chunks.push(new Uint8Array(chunk)),
+  });
+  for (const sample of samples) packer.addSample(sample);
+  packer.finish(snapshot);
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+/**
+ * An archive whose `project.json` declares a sample the archive does not carry.
+ *
+ * BangerBox cannot produce one — `finish` reconciles the rows against what was added — so it
+ * is built by hand, which is what the damaged file the §9.6 check exists for actually is:
+ * something truncated after it was written (issue #99).
+ */
+function damagedArchive(snapshot: ProjectSnapshot): Uint8Array {
+  return zipSync({
+    'manifest.json': strToU8(
+      JSON.stringify({
+        format: 'mpcweb',
+        formatVersion: 1,
+        appVersion: '1.2.3',
+        projectId: snapshot.project.id,
+        projectName: snapshot.project.name,
+        exportedAt: new Date(0).toISOString(),
+      }),
+    ),
+    'project.json': strToU8(JSON.stringify(snapshot)),
+  });
+}
+
 describe('mpcweb zip — pack/unpack round-trip (spec §9.6, §11.1)', () => {
   it('packs a snapshot + samples and unpacks them byte-identical', () => {
     const snapshot = fixtureSnapshot();
     const bytes = new Uint8Array([0, 1, 2, 3, 255, 128, 64]);
-    const packed = packMpcweb({ snapshot, appVersion: '1.2.3', samples: [{ sampleId, bytes }] });
-
-    const unpacked = unpackMpcweb(packed);
+    const unpacked = unpackMpcweb(packStreamed(snapshot, [{ sampleId, bytes }]));
     expect(unpacked.manifest.appVersion).toBe('1.2.3');
     expect(unpacked.manifest.projectId).toBe(projectId);
     expect(unpacked.snapshot).toEqual(snapshot);
@@ -178,11 +229,55 @@ describe('mpcweb zip — pack/unpack round-trip (spec §9.6, §11.1)', () => {
 
   it('round-trips a sample of zero length', () => {
     const snapshot = fixtureSnapshot();
-    const packed = packMpcweb({
-      snapshot,
+    const packed = packStreamed(snapshot, [{ sampleId, bytes: new Uint8Array(0) }]);
+    expect(unpackMpcweb(packed).samples.get(sampleId)).toEqual(new Uint8Array(0));
+  });
+});
+
+/**
+ * Issue #99: `zipSync` materialises the whole archive, so exporting a project held its audio
+ * twice over — once as the samples handed in and once as the finished file. The streaming
+ * packer takes one sample at a time and emits the archive as it goes. These pin that it
+ * produces the SAME archive, since a memory fix that changed the file would be a new format.
+ */
+describe('mpcweb zip — streaming packer (spec §9.6, issue #99)', () => {
+  it('produces an archive `unpackMpcweb` reads exactly as it reads a zipSync one', () => {
+    const snapshot = fixtureSnapshot();
+    const bytes = new Uint8Array([0, 1, 2, 3, 255, 128, 64]);
+    const unpacked = unpackMpcweb(packStreamed(snapshot, [{ sampleId, bytes }]));
+
+    expect(unpacked.manifest.appVersion).toBe('1.2.3');
+    expect(unpacked.manifest.projectId).toBe(projectId);
+    expect(unpacked.snapshot).toEqual(snapshot);
+    expect(Array.from(unpacked.samples.get(sampleId)!)).toEqual(Array.from(bytes));
+  });
+
+  it('emits chunks as samples arrive rather than only at the end', () => {
+    // The whole claim of the streaming path. If output only appeared during `finish`, the
+    // archive would still be assembled in one piece and nothing would be bounded.
+    const chunks: number[] = [];
+    const packer = createMpcwebPacker({
       appVersion: '1.2.3',
-      samples: [{ sampleId, bytes: new Uint8Array(0) }],
+      onChunk: (chunk) => chunks.push(chunk.length),
     });
+    packer.addSample({ sampleId, bytes: new Uint8Array(4096) });
+    expect(chunks.length).toBeGreaterThan(0);
+    packer.finish(fixtureSnapshot());
+  });
+
+  it('writes the sample rows the archive actually carries, not the ones it was offered', () => {
+    // The export learns which samples it cannot read as it goes, so the snapshot has to be
+    // reconciled at the end — or the §9.6 completeness check would refuse BangerBox's own
+    // archive on re-import.
+    const snapshot = fixtureSnapshot();
+    const unpacked = unpackMpcweb(packStreamed(snapshot, []));
+    expect(unpacked.snapshot.samples).toEqual([]);
+    expect(unpacked.snapshot.project.id).toBe(projectId);
+  });
+
+  it('round-trips a sample of zero length', () => {
+    const snapshot = fixtureSnapshot();
+    const packed = packStreamed(snapshot, [{ sampleId, bytes: new Uint8Array(0) }]);
     expect(unpackMpcweb(packed).samples.get(sampleId)).toEqual(new Uint8Array(0));
   });
 });
@@ -192,27 +287,25 @@ describe('mpcweb zip — pack/unpack round-trip (spec §9.6, §11.1)', () => {
 describe('mpcweb import — a damaged archive fails loudly (spec §9.6)', () => {
   it('refuses an archive whose snapshot declares a sample the archive does not carry', () => {
     const snapshot = fixtureSnapshot();
-    const packed = packMpcweb({ snapshot, appVersion: '1.2.3', samples: [] });
+    // `finish` normally reconciles the rows down to what was added, so a hand-built archive
+    // is what reaches the damaged case: this is a file some other tool truncated.
+    const packed = damagedArchive(snapshot);
     expect(() => unpackMpcweb(packed)).toThrow(/damaged/i);
   });
 
   it('names the missing audio, so the message is actionable', () => {
     const snapshot = fixtureSnapshot();
-    const packed = packMpcweb({ snapshot, appVersion: '1.2.3', samples: [] });
+    const packed = damagedArchive(snapshot);
     expect(() => unpackMpcweb(packed)).toThrow(/kick/);
   });
 
   it('accepts an archive carrying audio no row references, which harms nothing', () => {
     const snapshot = fixtureSnapshot();
     const spare = '00000000-0000-4000-8000-0000000000ff';
-    const packed = packMpcweb({
-      snapshot,
-      appVersion: '1.2.3',
-      samples: [
-        { sampleId, bytes: new Uint8Array([1]) },
-        { sampleId: spare, bytes: new Uint8Array([2]) },
-      ],
-    });
+    const packed = packStreamed(snapshot, [
+      { sampleId, bytes: new Uint8Array([1]) },
+      { sampleId: spare, bytes: new Uint8Array([2]) },
+    ]);
     expect(() => unpackMpcweb(packed)).not.toThrow();
   });
 
@@ -278,7 +371,7 @@ describe('mpcweb import — bounded decompression (spec §9.6, §9.7)', () => {
   it('lets a legitimate archive through the default budget untouched', () => {
     const snapshot = fixtureSnapshot();
     const bytes = new Uint8Array(256).fill(7);
-    const packed = packMpcweb({ snapshot, appVersion: '1.2.3', samples: [{ sampleId, bytes }] });
+    const packed = packStreamed(snapshot, [{ sampleId, bytes }]);
     expect(unpackMpcweb(packed).samples.get(sampleId)).toEqual(bytes);
   });
 

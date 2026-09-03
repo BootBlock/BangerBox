@@ -22,6 +22,7 @@ import {
   type PointerEvent,
 } from 'react';
 import { clamp } from '@/core/math';
+import { subscribeTransientPath } from '@/store/transientChannel';
 import {
   normalisedToValue,
   quantiseToStep,
@@ -55,6 +56,16 @@ export interface ContinuousControlOptions {
   readonly defaultValue?: number;
   /** Continuous, non-undoable update during the gesture (spec §4.1 transient channel). */
   readonly onTransient?: (value: number) => void;
+  /**
+   * The §7.8 address this control drives, for a value moving under it (spec §10.3).
+   *
+   * §10.3 ends its execution flow with "UI reacts concurrently": a Q-Link encoder turn has
+   * to move the knob as it turns, not at the 250 ms idle commit. The value it turns reaches
+   * the graph through the §4.1 transient channel and deliberately never touches React state
+   * (§3.3, issue #27) — so the control subscribes to that address and paints itself the same
+   * way it paints its own drag, by ref. Omitting this costs nothing but that liveness.
+   */
+  readonly livePath?: string;
   /** Exactly one call per gesture, and once per keyboard step (spec §3.3). */
   readonly onCommit: (value: number) => void;
   /** Paint the new value straight to the DOM — no React state (spec §3.3). */
@@ -191,6 +202,21 @@ export function useContinuousControl(options: ContinuousControlOptions): Continu
     event.preventDefault();
     o.onCommit(o.defaultValue);
   }, []);
+
+  // Paint a value moving under this control from elsewhere — a §10.3 Q-Link turn, an XY
+  // axis, an automation-driven transient (spec §3.3: a ref write, never a re-render). A
+  // control's own drag is skipped: it has already painted that frame from `publish`, and
+  // repainting the identical number would be work for nothing.
+  const livePath = options.livePath;
+  useEffect(() => {
+    if (livePath === undefined) return;
+    return subscribeTransientPath(livePath, (value) => {
+      if (dragging.current) return;
+      const o = latest.current;
+      gestureValue.current = value;
+      o.render?.(value, valueToNormalised(value, o.range, o.curve ?? 'linear'));
+    });
+  }, [livePath]);
 
   // A gesture must never outlive the control (spec §3.5 lens 5 — no dangling listeners).
   useEffect(

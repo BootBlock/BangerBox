@@ -39,7 +39,7 @@ import {
   useUIStore,
 } from '@/store';
 import { isGlobalLibraryPath, scopeOfPath } from '../browser/libraryLocation';
-import { Button, EmptyState } from '@/ui/primitives';
+import { Button, EmptyState, FilePickerButton } from '@/ui/primitives';
 import { SegmentControl } from '@/ui/primitives/SegmentControl';
 import { WaveformEditor } from '@/ui/primitives/WaveformEditor';
 import { auditionSample, refreshSamples, reloadSampleList, sampleEditContext } from './sampleContext';
@@ -79,6 +79,13 @@ export function SampleEditPanel() {
   const [selected, setSelected] = useState<SampleRow | null>(null);
   const [pyramid, setPyramid] = useState<PeakPyramid | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * The label of the §8.5.4 operation running, or null (issue #54).
+   *
+   * `busy` gates every tool, which is right; it labels only the one that is actually running,
+   * or a Normalise in progress would relabel the import picker "Importing…".
+   */
+  const [runningLabel, setRunningLabel] = useState<string | null>(null);
   const [fadeMs, setFadeMs] = useState(50);
   const [stretchRate, setStretchRate] = useState(1);
   const [stretchPitch, setStretchPitch] = useState(0);
@@ -173,6 +180,7 @@ export function SampleEditPanel() {
 
   const run = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(true);
+    setRunningLabel(label);
     try {
       await fn();
       await refreshSamples();
@@ -181,13 +189,11 @@ export function SampleEditPanel() {
       pushToast(error instanceof Error ? error.message : `${label} failed.`, 'error');
     } finally {
       setBusy(false);
+      setRunningLabel(null);
     }
   };
 
-  const onImport = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
+  const onImport = (file: File) => {
     const engine = getAudioEngine();
     if (!engine) {
       pushToast('Start the audio engine before importing.', 'warning');
@@ -291,16 +297,18 @@ export function SampleEditPanel() {
           onChange={(value) => setLocation(value === 'global')}
           data-testid="sample-location"
         />
-        <label className="cursor-pointer rounded-bb-sm border border-bb-line bg-bb-raised px-3 py-1.5 text-xs">
-          Import audio…
-          <input
-            type="file"
-            accept=".wav,.mp3,.flac,.ogg,audio/*"
-            className="sr-only"
-            data-testid="sample-import"
-            onChange={onImport}
-          />
-        </label>
+        <FilePickerButton
+          label="Import audio…"
+          busyLabel="Importing…"
+          accept=".wav,.mp3,.flac,.ogg,audio/*"
+          // `busy` covers every §8.5.4 tool, so it says only what this control is doing;
+          // `disabled` carries the rest, or a running Normalise would relabel this
+          // "Importing…" (issue #54).
+          busy={runningLabel?.startsWith('Import') ?? false}
+          disabled={busy}
+          data-testid="sample-import"
+          onPick={onImport}
+        />
         <span className="text-xs text-bb-muted" data-testid="sample-count">
           {samples.length} sample{samples.length === 1 ? '' : 's'}
         </span>

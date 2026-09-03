@@ -16,7 +16,12 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { clamp, clampInt } from '@/core/math';
-import { parseParamTarget, targetRange } from '@/core/audio/params/registry';
+import {
+  parseParamTarget,
+  programParamPath,
+  PROGRAM_PARAM_RANGES,
+  targetRange,
+} from '@/core/audio/params/registry';
 import { dirtyKey } from '@/core/project/dirty';
 import {
   createDefaultKeygroupZone,
@@ -34,6 +39,12 @@ import {
   type VelocityLayer,
 } from '@/core/project/schemas';
 import { recordParamGesture } from './automationRecord';
+import {
+  anyTransientInFlight,
+  publishTransient,
+  readTransientValue,
+  settleTransient,
+} from './transientChannel';
 import { commit } from './commit';
 
 /**
@@ -178,6 +189,36 @@ interface ResolvedPadLeaf {
   readonly current: number;
   /** The §7.8 registered bounds the value was clamped to; the recorder scales by them. */
   readonly range: Range;
+}
+
+/**
+ * A program as it sounds RIGHT NOW: its committed state with any in-flight §4.1 gesture on
+ * `padIndex` applied (issue #27).
+ *
+ * A transient reaches the graph through `bridge.applyParam`, which acts on nodes that already
+ * exist — so it moves a SOUNDING voice and cannot move one that has not been built yet. While
+ * the transient also wrote the store, the voice builder picked the live value up for free;
+ * now that it does not, a pad struck mid-turn would be built from the value the turn started
+ * from, and the two §10.3 pad-mode encoders bound to `amp.attack` and `amp.release` — which
+ * `programParamChange` cannot apply to a live voice at all — would do nothing whatsoever
+ * until the 250 ms idle commit.
+ *
+ * The §9.5 bounce deliberately does NOT call this: a render is of committed state, and a
+ * knob held mid-gesture is not part of the arrangement.
+ */
+export function programWithLiveGestures(program: Program, padIndex: number): Program {
+  // The overwhelmingly common case is no gesture at all, and this is on the note path.
+  if (!anyTransientInFlight() || program.type !== 'drum') return program;
+  const pad = program.pads.find((candidate) => candidate.padIndex === padIndex);
+  if (pad === undefined) return program;
+
+  let live = pad;
+  for (const leaf of Object.keys(PROGRAM_PARAM_RANGES)) {
+    const value = readTransientValue(programParamPath(program.id, padIndex, leaf));
+    if (value !== undefined) live = writePadLeaf(live, leaf, value);
+  }
+  if (live === pad) return program;
+  return { ...program, pads: program.pads.map((candidate) => (candidate === pad ? live : candidate)) };
 }
 
 /** Resolve a program address against the live programs, clamped to its registered range. */
@@ -553,32 +594,47 @@ export const useProgramStore = create<ProgramState>()(
       return ASSIGNED;
     },
 
+    /**
+     * spec §4.1, §3.3 — a gesture moves the GRAPH and nothing else (issue #27).
+     *
+     * The mixer's `setTransient` records the same reasoning at length. The consequence here
+     * is broader: `programs` is selected whole by `MainMode`, `MixerMode`, `MutingMode`,
+     * `GridMode`, `PadPerformMode` and `ProgramEditPanel`, so a `set()` per pointer sample
+     * re-rendered six modes' worth of subscribers to move one filter cutoff.
+     */
     setPadParamTransient: (path, value) => {
       const resolved = resolvePadLeaf(get().programs, path, value);
       if (resolved === null) return;
-      // Record the pre-gesture value the first time this path moves (spec §4.1).
+      // The pre-gesture value, recorded the first time this path moves (spec §4.1). Read
+      // from the store, which no longer moves during a gesture, so it stays pre-gesture
+      // however many samples have already been sent.
       if (!padGestureOrigins.has(path)) padGestureOrigins.set(path, resolved.current);
-      set((state) => ({
-        programs: {
-          ...state.programs,
-          [resolved.programId]: withPad(
-            state.programs[resolved.programId]!,
-            resolved.padIndex,
-            resolved.leaf,
-            resolved.value,
-          ),
-        },
-      }));
+      publishTransient(path, resolved.value);
       // spec §7.8: a gesture made while recording also writes automation — the same tap
       // the mixer's transient channel carries, for the pad-scope §10.3 Q-Link defaults.
       recordParamGesture(path, resolved.value, 'move', resolved.range);
     },
 
     commitPadParam: (path, value) => {
+      // Settle FIRST, whatever happens below (issue #27). A pad deleted or a program swapped
+      // inside the §10.3 idle window makes the address stop resolving, and an early return
+      // would leave the overlay answering for it forever — so the next relative encoder turn
+      // would step from an abandoned value and a later undo would revert to one the
+      // parameter never held.
+      settleTransient(path);
       const resolved = resolvePadLeaf(get().programs, path, value);
-      if (resolved === null) return;
+      if (resolved === null) {
+        padGestureOrigins.delete(path);
+        return;
+      }
       const origin = padGestureOrigins.get(path) ?? resolved.current;
       padGestureOrigins.delete(path);
+      // Publish the committed value explicitly, for the reason `useMixerStore.commit`
+      // records: it need not be where the gesture left off, and the store diff cannot see a
+      // change the store never made. The settle above has already run, so this leaves no
+      // entry behind — a publish writes the overlay, so it is settled again below.
+      publishTransient(path, resolved.value);
+      settleTransient(path);
       const write = (next: number) =>
         set((state) => ({
           programs: {

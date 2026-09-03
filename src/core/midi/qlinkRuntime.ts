@@ -14,6 +14,7 @@
 import { parseParamTarget, targetRange, type ParamTarget } from '@/core/audio/params/registry';
 import type { QLinkBinding } from '@/core/project/schemas';
 import { useHardwareStore, useMixerStore, useProgramStore, useTransportStore, useUIStore } from '@/store';
+import { readTransientValue } from '@/store/transientChannel';
 import { commitSwing, commitTempo, setSwingTransient, setTempoTransient } from '@/store/tempo';
 import { bindingForCc, defaultBindingsForMode, DEFAULT_QLINK_CC_BASE, nextValueForCc } from './qlink';
 
@@ -162,7 +163,11 @@ export function createQLinkRuntime(): QLinkRuntime {
       const target = parseParamTarget(path);
       if (!target) return; // unregistered address — never dispatched (spec §7.8 gate)
 
-      const current = readCurrentValue(target);
+      // A relative encoder steps from where the parameter is NOW. Mid-turn that is the
+      // §4.1 transient channel's reading, not the store's: the store holds the value the
+      // turn started from until the idle commit (issue #27), so stepping from it would make
+      // every frame of a relative turn move by one increment from the same origin.
+      const current = readTransientValue(path) ?? readCurrentValue(target);
       const next = nextValueForCc(current ?? binding.minValue, value, binding);
       dispatch(target, path, next, false);
 

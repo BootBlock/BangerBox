@@ -466,6 +466,102 @@ async function assertShellAndSelfTest(page, label) {
     await page.getByTestId('transport-play').click(); // stop
   });
 
+  // A continuous gesture reaches the graph and re-renders nothing (spec §3.3, §4.1, issue
+  // #27). The mechanism IS the store notification count, so that is what is counted; the
+  // meter peak is what proves the gesture still did its job while React was left alone.
+  await step(`${label}: a gesture moves the graph without a re-render (spec §3.3, issue #27)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.gestureRenderProof());
+    if (r.notificationsDuringGesture !== 0) {
+      throw new Error(
+        `${r.samplesSent} transient samples woke ${r.notificationsDuringGesture} store subscribers — §3.3 requires 0`,
+      );
+    }
+    if (r.notificationsAtCommit !== 1) {
+      throw new Error(`the commit woke ${r.notificationsAtCommit} subscribers — expected exactly 1`);
+    }
+    if (!(r.peakBefore > 0.02)) throw new Error(`no audible signal before the gesture (${r.peakBefore})`);
+    // Pulled down to a quarter of the fader: the hit has to be measurably quieter, or the
+    // transient never reached the graph at all and the zero above would be meaningless.
+    if (!(r.peakDuringGesture < r.peakBefore * 0.6)) {
+      throw new Error(`the gesture did not reach the graph: peak ${r.peakBefore} → ${r.peakDuringGesture}`);
+    }
+    if (!(r.peakAfterCommit > r.peakDuringGesture * 1.5)) {
+      throw new Error(
+        `the commit did not restore the level: peak ${r.peakDuringGesture} → ${r.peakAfterCommit}`,
+      );
+    }
+  });
+
+  // Grid scroll and zoom are held outside React (spec §3.3, §8.4, issue #28). Driven through
+  // real wheel events on the real canvas, with the frame time measured across them — §11.5's
+  // budget is 60 fps, and a mode re-rendering per wheel event is what used to threaten it.
+  await step(`${label}: Grid pans and zooms at 60 fps without React (spec §3.3, issue #28)`, async () => {
+    await page.getByTestId('mode-tab-grid').click();
+    await page.locator('[data-testid="grid-canvas"]').waitFor({ timeout: 5_000 });
+    const readout = page.locator('[data-testid="grid-zoom-readout"]');
+    const before = await readout.textContent();
+
+    const result = await page.evaluate(async () => {
+      const canvas = document.querySelector('[data-testid="grid-canvas"]');
+      if (!canvas) throw new Error('no grid canvas');
+      const box = canvas.getBoundingClientRect();
+      const at = (init) =>
+        canvas.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            clientX: box.left + box.width / 2,
+            clientY: box.top + box.height / 2,
+            ...init,
+          }),
+        );
+
+      // Measure across the gesture, not around it: a frame the wheel handler blocked is the
+      // cost being measured, and it only shows up if the sampling overlaps the events.
+      const frames = [];
+      let last = performance.now();
+      let running = true;
+      const sample = () => {
+        const now = performance.now();
+        frames.push(now - last);
+        last = now;
+        if (running) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+
+      for (let event = 0; event < 120; event += 1) {
+        at({ deltaX: 40, deltaY: 0 });
+        if (event % 20 === 0) at({ deltaY: -1, ctrlKey: true });
+        await new Promise((resolve) => setTimeout(resolve, 4));
+      }
+      running = false;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+
+      // Drop the first frame: it spans whatever happened before the loop began.
+      const measured = frames.slice(1);
+      measured.sort((a, b) => a - b);
+      return {
+        frames: measured.length,
+        medianMs: measured[Math.floor(measured.length / 2)] ?? 0,
+        worstMs: measured[measured.length - 1] ?? 0,
+      };
+    });
+
+    const after = await readout.textContent();
+    if (after === before) throw new Error(`the zoom readout never moved (stayed at ${before})`);
+    if (result.frames < 10) throw new Error(`only ${result.frames} frames measured — too few to judge`);
+    // 16.7 ms is 60 fps (spec §11.5). The median is the honest statistic here: a single
+    // stalled frame in a headless run says more about the machine than about the code.
+    if (!(result.medianMs < 16.7)) {
+      throw new Error(
+        `median frame time ${result.medianMs.toFixed(2)} ms across 120 wheel events — over the 60 fps budget`,
+      );
+    }
+    console.log(
+      `       grid gesture: ${result.frames} frames, median ${result.medianMs.toFixed(2)} ms, worst ${result.worstMs.toFixed(2)} ms`,
+    );
+    await page.getByTestId('mode-tab-main').click();
+  });
+
   // Phase 6 proofs run once (dev section, last) — they exercise heavy WASM paths and mutate
   // project state (import re-hydrates a fresh project), so they run after the other assertions
   // and need not repeat under the offline reload.
@@ -495,6 +591,24 @@ async function assertShellAndSelfTest(page, label) {
         throw new Error(
           `time-stretch ratio ${result.stretchedRatio} (imported ${result.importedFrames}f → stretched ${result.stretchedFrames}f; expected ~2×)`,
         );
+      }
+    });
+
+    // Every §9.5 bounce produces a file the user can get back (issue #104). Three of the four
+    // wrote a correct WAV into OPFS and stopped, which no part of the UI can browse.
+    await step(`${label}: every §9.5 bounce writes a file that can be read back (issue #104)`, async () => {
+      const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.bounceReachProof());
+      for (const [variant, bytes] of [
+        ['sequence', r.sequenceBytes],
+        ['song', r.songBytes],
+        ['stem', r.stemBytes],
+        ['resample', r.resampledBytes],
+      ]) {
+        // A WAV header alone is 44 bytes, so anything at or below that carries no audio.
+        if (!(bytes > 44)) throw new Error(`the ${variant} bounce read back ${bytes} bytes`);
+      }
+      if (!r.resampledIsBrowsable) {
+        throw new Error('the resampled sample is not listed by the library query the Browser runs');
       }
     });
 

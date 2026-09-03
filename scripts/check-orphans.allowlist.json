@@ -2,16 +2,6 @@
   "comment": "check:orphans allowlist — runtime exports in src that the live application tree does not import, and which are nonetheless justified (spec §3.4). Each entry names the declaring module and the exported symbol, and must state why the export earns its place. Two cases are defensible. The first is a pure helper whose own module uses it internally and which is exported so a unit test can reach the arithmetic directly rather than through the rendered component or the audio graph; the reason names the internal caller, so a reader can check the claim. The second is a complete implementation that no UI reaches yet, where the gap is already tracked by an open issue; the reason cites that issue, and the entry is expected to disappear when it closes. Speculative exports do not belong here; delete them or wire them up.",
   "exports": [
     {
-      "file": "src/core/audio/bounceService.ts",
-      "export": "bounceTrack",
-      "reason": "Issue #104 — stem bounce renders a WAV the user cannot reach; no UI invokes it yet. Deleting it would discard the implementation that issue is about."
-    },
-    {
-      "file": "src/core/audio/bounceService.ts",
-      "export": "resampleSequenceToSample",
-      "reason": "Issue #104 — resample-to-pad (§9.5) is implemented but unreachable from any surface."
-    },
-    {
       "file": "src/core/audio/detuneSchedule.ts",
       "export": "baseDetuneAt",
       "reason": "Internal caller: detuneAt, plus the swing and cursor-rate paths. Exported so the tuning arithmetic is testable without an AudioContext."

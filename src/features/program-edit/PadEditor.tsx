@@ -13,7 +13,8 @@
 import { useState } from 'react';
 import { CHOKE_GROUP_RANGE, createDefaultPad, type DrumProgram, type Pad } from '@/core/project/schemas';
 import { useProgramStore, useUIStore } from '@/store';
-import { announce, Button, FieldLabel, SegmentControl } from '@/ui/primitives';
+import { announce, Button, ConfirmDialog, FieldLabel, SegmentControl } from '@/ui/primitives';
+import { describePadContents } from './destructive';
 import { NumberField, SelectField, ToggleField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
 import { LayersEditor } from './LayersEditor';
@@ -36,6 +37,8 @@ const BANK_OPTIONS = Array.from({ length: 8 }, (_, index) => ({
 
 export function PadEditor({ program }: { program: DrumProgram }) {
   const [bank, setBank] = useState(0);
+  /** True while the clear-pad confirmation is open (spec §8.1, issue #54). */
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const activePadId = useProgramStore((state) => state.activePadId);
   const setActivePad = useProgramStore((state) => state.setActivePad);
   const upsertPad = useProgramStore((state) => state.upsertPad);
@@ -171,6 +174,30 @@ export function PadEditor({ program }: { program: DrumProgram }) {
 
       {activePad ? (
         <div className="flex flex-col gap-3">
+          {/*
+           * Clearing a pad is the second of the two Program Edit actions that earns a gate
+           * (issue #54): the button names the pad and removes every layer, envelope, LFO and
+           * mod route on it, none of which is visible from the header it sits in.
+           */}
+          <ConfirmDialog
+            open={confirmingClear}
+            title={`Clear pad ${activePad.padIndex + 1}?`}
+            confirmLabel="Clear pad"
+            undoable
+            data-testid="pad-clear-confirm"
+            onCancel={() => setConfirmingClear(false)}
+            onConfirm={() => {
+              const padNumber = activePad.padIndex + 1;
+              removePad(program.id, activePad.padIndex);
+              setActivePad(null);
+              setConfirmingClear(false);
+              const message = `Cleared pad ${padNumber}. Undo with Ctrl+Z.`;
+              useUIStore.getState().pushToast(message, 'success');
+              announce(message);
+            }}
+          >
+            <p>This removes {describePadContents(activePad)}. The samples themselves stay in the library.</p>
+          </ConfirmDialog>
           <section
             aria-label="Pad settings"
             className="rounded-bb-sm border border-bb-line bg-bb-surface p-3"
@@ -178,13 +205,13 @@ export function PadEditor({ program }: { program: DrumProgram }) {
             <div className="mb-2 flex items-center justify-between">
               <h4 className="text-xs font-semibold text-bb-text">Pad {activePad.padIndex + 1}</h4>
               <Button
-                label="Clear pad"
+                // The ellipsis promises the review step, matching Safe Mode's "Hard reset…"
+                // (spec §8.1) — this button no longer empties the pad on its own.
+                label="Clear pad…"
                 variant="danger"
                 size="sm"
-                onClick={() => {
-                  removePad(program.id, activePad.padIndex);
-                  setActivePad(null);
-                }}
+                data-testid="pad-clear"
+                onClick={() => setConfirmingClear(true)}
               />
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

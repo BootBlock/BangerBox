@@ -10,9 +10,20 @@
  * the behaviour the primitives already implement.
  */
 import { useMemo, useState } from 'react';
-import { useMixerStore, useProgramStore, useSequenceStore, useTransportStore } from '@/store';
+import {
+  useMixerStore,
+  useProgramStore,
+  useProjectStore,
+  useSequenceStore,
+  useTransportStore,
+  useUIStore,
+} from '@/store';
 import { channelLevelPath, channelPanPath, channelSendPath } from '@/core/audio/params/registry';
 import { faderLevelToDb } from '@/core/audio/params/faderLaw';
+import { bounceTrack } from '@/core/audio/bounceService';
+import { downloadBlob, downloadFileStem } from '@/core/platform/download';
+import { readFile } from '@/core/storage/opfs';
+import { sampleEditContext } from '../sample-edit/sampleContext';
 import {
   formatValueText,
   Button,
@@ -56,6 +67,15 @@ export function MixerMode() {
   const [tab, setTab] = useState<StripTab>('tracks');
   /** Channel whose insert chain is open in the parameter panel (spec §8.5.6). */
   const [openInserts, setOpenInserts] = useState<string | null>(null);
+  /**
+   * The channel whose stem is rendering, or null (spec §9.5). One at a time: a bounce builds
+   * a whole offline graph over the project's samples, and two at once would double the peak
+   * memory for no gain the user asked for.
+   */
+  const [bouncingTrackId, setBouncingTrackId] = useState<string | null>(null);
+  const projectId = useProjectStore((s) => s.projectId);
+  const projectName = useProjectStore((s) => s.projectName);
+  const pushToast = useUIStore((s) => s.pushToast);
 
   const activeProgram = activeProgramId ? programs[activeProgramId] : undefined;
 
@@ -93,6 +113,27 @@ export function MixerMode() {
   const sampleRate = getAudioEngine()?.context.sampleRate ?? 48_000;
 
   const mixer = () => useMixerStore.getState();
+
+  /**
+   * Render one track of the active sequence and hand the WAV to the user (spec §9.5).
+   *
+   * The read-back matters as much as the render: `/bounces/` is an OPFS path no part of the
+   * UI can browse and no file manager can open, so writing a stem and stopping there would
+   * produce nothing retrievable (issue #104).
+   */
+  const bounceStem = async (trackId: string, trackName: string) => {
+    setBouncingTrackId(`track:${trackId}`);
+    try {
+      const path = await bounceTrack(trackId, `stem-${trackId}`, sampleEditContext());
+      const stem = downloadFileStem(trackName, 'track');
+      downloadBlob(await readFile(path), `${downloadFileStem(projectName)}-${stem}.wav`);
+      pushToast(`Bounced ${trackName}.`, 'success');
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Stem bounce failed.', 'error');
+    } finally {
+      setBouncingTrackId(null);
+    }
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -160,6 +201,9 @@ export function MixerMode() {
                       range={LEVEL_RANGE}
                       defaultValue={1}
                       formatValue={faderValueText}
+                      // spec §10.3 "UI reacts concurrently": a Q-Link turn moves this fader
+                      // as it turns, painted by ref rather than by a re-render (issue #27).
+                      livePath={channelLevelPath(strip.id)}
                       onTransient={(value) => mixer().setTransient(channelLevelPath(strip.id), value)}
                       onCommit={(value) => mixer().commit(channelLevelPath(strip.id), value)}
                       data-testid={`mixer-fader-${strip.id}`}
@@ -174,6 +218,7 @@ export function MixerMode() {
                     step={0.01}
                     size="sm"
                     defaultValue={0}
+                    livePath={channelPanPath(strip.id)}
                     onTransient={(value) => mixer().setTransient(channelPanPath(strip.id), value)}
                     onCommit={(value) => mixer().commit(channelPanPath(strip.id), value)}
                     data-testid={`mixer-pan-${strip.id}`}
@@ -209,6 +254,7 @@ export function MixerMode() {
                           step={0.01}
                           size="sm"
                           showValue={false}
+                          livePath={channelSendPath(strip.id, index)}
                           onTransient={(value) =>
                             mixer().setTransient(channelSendPath(strip.id, index), value)
                           }
@@ -228,6 +274,27 @@ export function MixerMode() {
                     onClick={() => setOpenInserts(openInserts === strip.id ? null : strip.id)}
                     data-testid={`mixer-inserts-${strip.id}`}
                   />
+
+                  {/*
+                   * Stem bounce (spec §9.5 "bounce selected track", issue #104). It belongs on
+                   * the track strip because a stem is exactly what this strip is: post-insert,
+                   * pre-master. The other three §9.5 paths already had a surface; this one had
+                   * no caller anywhere in the repository, so the implementation was written,
+                   * tested and unreachable.
+                   */}
+                  {strip.id.startsWith('track:') && (
+                    <Button
+                      label={bouncingTrackId === strip.id ? 'Bouncing…' : 'Bounce stem'}
+                      accessibleName={`Bounce stem for ${strip.name}`}
+                      variant="quiet"
+                      size="sm"
+                      block
+                      disabled={bouncingTrackId !== null || !projectId}
+                      title="Render this track alone, post-insert and pre-master, and download it"
+                      onClick={() => void bounceStem(strip.id.slice('track:'.length), strip.name)}
+                      data-testid={`mixer-bounce-${strip.id}`}
+                    />
+                  )}
                 </section>
               );
             })}

@@ -31,6 +31,8 @@ export interface KnobProps {
   /** Hide the textual readout when the caller renders its own (spec §3.6 no re-styling). */
   showValue?: boolean;
   size?: 'sm' | 'md';
+  /** The §7.8 address this knob drives, so a §10.3 Q-Link turn moves it live (issue #27). */
+  livePath?: string;
   onTransient?: (value: number) => void;
   onCommit: (value: number) => void;
   'data-testid'?: string;
@@ -53,6 +55,7 @@ export function Knob({
   disabled = false,
   showValue = true,
   size = 'md',
+  livePath,
   onTransient,
   onCommit,
   'data-testid': testId,
@@ -81,6 +84,7 @@ export function Knob({
     fineStep,
     defaultValue,
     disabled,
+    livePath,
     onTransient,
     onCommit,
     render: paint,
