@@ -1,14 +1,14 @@
-# BangerBox — Phase Handover (after the §7.8 automation-authoring seam)
+# BangerBox — Phase Handover (after the §5/§7 playback-wiring closure)
 
-Generated at the close of the automation-authoring work per Protocol Alpha (spec §13.1). A new
-session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
-MUST reuse the patterns recorded here rather than inventing parallel ones.
+Generated at the close of the playback-wiring work per Protocol Alpha (spec §13.1). A new session
+MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and MUST
+reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the automation-authoring seam merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §7.8/§8.5.2/§8.5.10/§3.4, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1376 unit tests**, `test:e2e` real-browser
-smoke (dev + offline, **40/40 steps**), plus `lint`, `type-check`, `format:check` and `verify`
-(**no open stubs**).
+**State:** the playback-wiring work merged to `main` (`--no-ff`, 2368c97). All eight §12 phases were
+already complete; this was a defect closure against §5.4/§5.7/§5.7.9/§6/§7.5/§7.9/§3.4, not a new
+phase, so `package.json` `config.phase` remains **"8"**. Suite: **1461 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **50/50 steps**), plus `lint`, `type-check`, `format:check` and
+`verify` (**no open stubs**).
 
 **The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
 human developer. Nothing in this work touched it.
@@ -21,40 +21,47 @@ Regenerate this document whenever a §14 entry lands, not only at a phase bounda
 
 ## 1. Locked Decisions (§1.3) — restated verbatim in effect
 
-All nineteen stand unchanged. Two that bear on recent work:
+All nineteen stand unchanged. Three that bear on recent work:
 
 - **#2 (Node ≥ 24)** is load-bearing beyond tooling: `build:factory` imports the app's own
   TypeScript through Node's native type stripping, so it MUST run as
   `node --import ./scripts/factory/register.mjs …`.
-- **#10 (no component library)** governs the automation controls added here: the scope and curve
-  pickers are the bespoke `SegmentControl`, and the point list's value fields are plain inputs.
+- **#5 (AssemblyScript for WASM DSP)** governs the new §5.7.9 warp source: the streaming granular
+  path is an addition to the existing `granularStretch` kernel, behind the same §5.6.1 seam, not a
+  second kernel and not TypeScript DSP inside a worklet.
+- **#11 (Zod for runtime validation)** is what the §7.1.3 protocol relies on, and the reason a
+  redundant `as` cast there was a real defect rather than a style point — see §2 (ai).
 
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
 
-- **(ah) — automation authoring (§7.8, §8.5.2, §8.5.10).** The ⚑ items below are settled policy a
-  new session should treat as binding, not as spec text — §7.8 fixes the data model and the
-  thinning inputs and leaves each of these open:
-  - **The Grid's automation lane scales to the REGISTRY range**, not to the points it holds.
-    A lane whose address the registry does not recognise falls back to the data's own span and is
-    **read-only** — hydration bypasses the §7.8 gate deliberately, so such a project still loads.
-  - **Scope is an explicit control.** Track scope overrides sequence scope for the same target, and
-    any track's lane wins, so the Grid states the precedence rather than letting the user find out
-    by ear.
-  - **The recording tap is at the transient/commit channel**, not in any mode. Adding a new
-    gesture surface needs no capture code of its own.
-  - **Captured points are sequence-scoped**, owned by the sequence being recorded into, so they
-    loop with the pattern like the notes captured beside them.
-  - **Thinning takes both gates**, and the value epsilon is a fraction of the target's registered
-    range. A pass overwrites the span it sweeps; a loop wrap opens a fresh sweep.
-  - **A point drag stalls on an occupied tick** rather than deleting the point there. Drawing does
-    replace, because it is a deliberate placement.
-  - **Marquee select is interpreted per region** and takes notes on intersection, not containment.
-  - **A gesture with no move phase still records** — a keyboard step of a knob or fader goes
-    straight to `onCommit`, and §7.8 counts that as a movement.
-  - **The epsilon's range is passed IN by the store that owns the parameter**, because an insert
-    parameter's bounds belong to the effect in its slot and the recorder cannot see it.
+- **(ai) — the §5/§7 playback wiring (§5.4, §5.7, §5.7.9, §6, §7.5, §7.9).** The ⚑ items below are
+  settled policy a new session should treat as binding, not as spec text:
+  - **`warp` means pitch decoupled from duration, not tempo-following.** §6 has no base-tempo
+    field and inventing one is a §13.6 halt, so warp keeps `rate` at 1 and routes the pad's own
+    detune through the granular engine. An octave-up warp pad sounds an octave up and lasts as
+    long as the sample; the same pad without warp lasts half as long.
+  - **The streaming granular path runs no WSOLA correlation search.** It is ~3 M multiply-adds per
+    grain at 48 kHz, far outside a render quantum (§5.5). The offline `render` keeps it.
+  - **A warp voice's declick does not move on a retune**, because detune is not its playback rate.
+    `VoiceSource.pitchCoupled` is how the pool tells the two cases apart.
+  - **A synced LFO's rate is resolved at note-on**; a live voice keeps the rate it started with.
+    The **delay** answers the same question the other way and retunes immediately, because a
+    `DelayNode` has no repeat boundary to wait for.
+  - **`retrigger: false` is a property of the PAD**, not the voice — one oscillator per
+    `(padKey, lfoIndex)`, kept for the pool's lifetime. A replaced one is **retired, not stopped**:
+    voices still sounding through it keep it until the last of them ends.
+  - **A groove template is keyed by its source sample's name**, so re-extracting replaces it.
+  - **Song mode's schedule cursor is in absolute song SECONDS**, because a looping song has no
+    monotonic tick. **The end is reached by the playhead, not by the lookahead**, and it is the end
+    of the pass in progress.
+  - **A zero-length song map stops whatever `songLoopEnabled` says.**
+- **(ah) — automation authoring (§7.8, §8.5.2, §8.5.10).** The Grid lane scales to the registry
+  range; scope is an explicit control; the recording tap is at the transient/commit channel;
+  captured points are sequence-scoped; thinning takes both gates; a point drag stalls on an
+  occupied tick; marquee select is per region; a keyboard step still records; the epsilon's range
+  is passed in by the store that owns the parameter.
 - **(ag) — sample assignment (issue #37).** Velocity bands are maintained rather than validated;
   zones follow a different rule because §6 lets them overlap; `dragDropPayload` is an armed
   selection, not a live drag.
@@ -62,116 +69,136 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 - **(ae)** §11.2 no longer claims a `src/test/fixtures/` directory (issue #10).
 - **(ad)** the three real-browser smokes run in CI (issue #15).
 - **(ac)** the Looper gained its §8.5.8 controls (issue #3).
-- **(ab)** the Prettier backlog was cleared and `format:check` joined CI (issue #11).
-- **(aa)** `Button` and `FieldLabel` became primitives (issue #49).
-- **(z)** `Toast` became a real §2.5 primitive (issue #9).
-- **(y)** the worker-computed peak pyramid and the Browser waveform micro-preview (issue #8).
-- **(x), (w), (v), (u), (t)** the declick and pitch-summing work (issues #85, #87).
-- **(u)** factory samples de-duplicate into `/global_library/` (issue #81).
 - **(q), (p)** §9.8 factory content. **Three ⚑ decisions there remain unratified** (issue #78).
 
 ## 3. Toolchain facts
 
 - Installed majors unchanged. **No new dependencies** since Phase 0's closed §2.2 matrix.
-- `npm run build:factory` writes the gitignored `public/factory/`; it runs ahead of `build`,
-  after `build:wasm`. The browser smoke self-heals both artefacts.
+- `npm run build:wasm` now emits a `granularStretch.wasm` carrying both the offline render and the
+  streaming source; a worktree that does not run it gets a warp pad that falls back to coupled
+  repitch rather than silence.
 - **Lint trap (has cost two sessions):** `react-hooks/set-state-in-effect` fires when an effect
-  reaches _any_ function that calls `setState`, not only a synchronous call in the effect body,
-  and extracting the work into a `useCallback` does NOT satisfy it. The established shape is an
-  **inline async IIFE with a `cancelled` flag** — see `BrowserPanel`, `FactorySection` and
-  `SamplePicker`. Where state only needs resetting when a dialog closes, prefer an **override
-  held alongside a derived default** (see `AssignTargetDialog`) to an effect that syncs the two.
-- **Run `lint` AFTER `format:check --write`, not before.** Prettier joins short `if` bodies onto
-  one line, which trips `curly`; a lint run from before the formatting pass proves nothing.
+  reaches _any_ function that calls `setState`, not only a synchronous call in the effect body.
+  The established shape is an **inline async IIFE with a `cancelled` flag** — see `BrowserPanel`,
+  `FactorySection` and `SamplePicker`.
+- **Run `lint` AFTER `format --write`, not before.** Prettier joins short `if` bodies onto one line,
+  which trips `curly`; a lint run from before the formatting pass proves nothing.
 - `format:check` is currently green across the repo. Nothing else runs Prettier — no pre-commit
   hook, and a local `git merge` never checks formatting — so re-run it after every merge.
-- **Verifying in a browser from a worktree:** the dev server cannot serve `sqlite3.wasm`; build and
-  `vite preview` instead, and override `BANGERBOX_SMOKE_PORT` / `BANGERBOX_SMOKE_PREVIEW_PORT`
-  (issue #105). A throwaway Playwright driver must live **inside the worktree** — Node resolves
-  `playwright` from the file's own directory, not the working directory.
+- **Verifying in a browser from a worktree:** the dev server cannot serve `sqlite3.wasm`; run
+  `npx vite build` then `npx vite preview`, and override `BANGERBOX_SMOKE_PORT` /
+  `BANGERBOX_SMOKE_PREVIEW_PORT` (issue #105). A throwaway Playwright driver must live **inside the
+  worktree** — Node resolves `playwright` from the file's own directory, not the working directory.
+- **Heredocs through the Bash tool are unreliable for long multi-line content.** Write a patch
+  script (or the file itself) with the Write tool and run it; a `<<'EOF'` block of a few hundred
+  lines fails with an unmatched-quote parse error.
 
 ## 4. Established patterns (reuse, do not reinvent)
 
-Everything from Phases 0–8, the §9.8 factory chain and the §14 (ag) assignment seam still stands.
-New this work:
+Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam and the (ah)
+automation seam still stands. New this work:
 
-**The automation-authoring seam (spec §7.8, §8.5.2, §8.5.10):**
+**The voice source seam (spec §5.2 stage 1, §5.7.9):**
 
-- **`useSequenceStore.setAutomationLane` owns every §7.8 gate.** It is the only route by which a
-  point enters the model. It checks the target against the registry, Zod-validates every point,
-  stamps each point with the lane it is being written into, deletes an emptied lane rather than
-  storing it empty, accepts a `coalesceKey` for a gesture, and returns `AutomationEditResult` —
-  `{ ok: true }` or `{ ok: false, reason }`, where `reason` is a **finished sentence** the UI shows
-  verbatim. Add new automation rules here, never at a call site. Hydration bypasses it on purpose.
-- **`src/core/audio/params/catalogue.ts`** answers "what can this thing automate", built from the
-  registry's own path builders and gated through `isAutomatable`. Both the Grid's lane picker and
-  the XYFX axis pickers read it. Any new picker MUST read it too rather than assembling addresses
-  by hand — that is how the two used to drift.
-- **`src/store/automationRecord.ts`** is the capture service. The engine publishes its playhead
-  reader to it with `setAutomationClock` on start and `null` on dispose, exactly as it publishes the
-  meter registry to `meterScope` — the recorder must never import the engine, which imports the
-  stores that import the recorder. `recordParamGesture(path, value, 'move' | 'end', range)` is
-  called from `useMixerStore.setTransient`/`commit` and
-  `useProgramStore.setPadParamTransient`/`commitPadParam`. A new gesture surface that goes through
-  those actions is captured with no work of its own. **Two ordering rules bite:** the `'end'` call
-  goes BEFORE the parameter's own `commit()` (an unkeyed commit closes the pass's coalesce run),
-  and `range` is the caller's, never looked up here.
-- **`resolveTargetRange(target, channels)`** in the catalogue is the ONE place that turns a §7.8
-  address into its bounds against the live mixer. `targetRange` alone answers null for every insert
-  parameter but `mix`, because those bounds belong to the effect in the slot (spec §5.7) — a caller
-  that falls back to 0..1 there clamps a 1–2000 ms delay time into a range it can never leave.
-- **The thinning maths is pure**, in `src/core/sequencer/automation.ts` beside the curve maths:
-  `shouldRecordSample` and `mergeRecordedPoint`. Keep new capture rules there, not in the service.
-- **`PlayheadReading.isCapturing`** is recording AND past the count-in. Use it, not `isRecording`,
-  for anything that writes against the playhead position.
-- **Canvas gestures hold their state in refs, never React state.** The marquee rectangle is a
-  `useRef` the existing rAF loop paints; `GridCanvas` already does the same for touch points and
-  the in-flight drag. Routing a drag through React state is a review failure (issues #27, #28).
-- **A freshly drawn point's id is resolved once and held** for the rest of the drag. The store
-  action commits through Zustand, so the id only reaches the canvas on the next render, and the
-  first drag sample moves the point off the tick it was found by.
+- **`src/core/audio/voiceSource.ts` is the only place that knows what a voice's source IS.** The
+  pool builds its whole chain against `VoiceSource`: `node`, a `detune` AudioParam in cents,
+  `pitchCoupled`, `sourceSeconds`, `start`/`stop`/`setOnEnded`/`automatedParams`/`destroy`. Both
+  implementations expose `detune` in the same units, so the §6 pitch envelope, keygroup glide,
+  pitch-routed LFOs and the §10.2 bend node all write to one address whichever is underneath.
+  **Adding a third source kind means implementing this interface, not branching in the pool.**
+- **`pitchCoupled` is the whole of the §5.4 declick's branch.** True ⇒ detune is the playback rate
+  and the end is integrated from the contour (issue #87); false ⇒ the end is the source's own
+  length and a retune does not move it.
+- **`granular-source` follows the `dsp-effect` precedent exactly**: the module is compiled on the
+  main thread and handed over via `processorOptions` (§5.6.2), one kernel per channel, freed on a
+  `dispose` port message (§5.6.3). It differs in two ways a new source would share: it has **no
+  `ended` event**, so the end of the region is a port message standing in for
+  `AudioBufferSourceNode.onended`; and **start and stop are frame-accurate against `currentFrame`**,
+  because a scheduled note arrives up to `LOOKAHEAD_MS` early (§7.1.4).
+- **`src/core/audio/voiceBuffer.ts` owns reversal.** `ReversedBufferCache` is a `WeakMap` keyed by
+  the source buffer, so a dropped sample takes its reversed copy with it. `mirroredTrim` is the
+  non-obvious half: a reversed layer plays a reversed copy **and** its trim mirrored into that
+  copy's frame numbering. The live engine and the §9.5 bounce both use it.
+
+**The scheduler protocol (spec §7.1.3):**
+
+- **`src/core/sequencer/schedulerDispatch.ts` decides what a validated message DOES**, leaving
+  `scheduler.worker.ts` the thin shell §11.3 describes. Its `switch` is exhaustive, so the request
+  type, the Zod union and the dispatch are forced into agreement.
+- **Never cast a Zod union to its TypeScript counterpart.** The annotation on the `const` is the
+  only thing that checks exhaustiveness, and an `as` suppressed exactly that — which is how
+  `groove` reached production as a typed sender with no schema member (issue #71).
+- **`schedulerWire.test.ts` drives every `SchedulerClient` sender through `parseSchedulerRequest`.**
+  A new sender without a schema member fails there. Add the sender to that test.
+- **A test stub for a wide interface should grow its own spies.** `sequencerSync.test.ts` uses a
+  Proxy for exactly this reason; a hand-listed set of mocks is the same drift trap one layer up.
+- **`ScheduledEvent.bpm`** carries the tempo the scheduler placed a note against — the segment's own
+  in song mode (§7.9), not the transport's. Anything resolving a tempo-relative value per note reads
+  it, falling back to the transport only for a live audition.
+
+**Tempo reaching the graph (spec §4.3, §5.7):**
+
+- **`audioBridge.setBpm` → `MixerGraph.setTempo` → every strip's inserts.** The fan-out is on the
+  graph because the bridge holds no list of strips and a channel created later would be missed.
+  A new tempo-synced effect implements `EffectCore.setTempo` and needs no plumbing of its own.
+- **`EFFECT_PARAM_CHOICES`** names the labels behind an index-encoded §5.7 parameter (the filter's
+  type, the saturator's curve, the delay's sync division). The insert editor renders a select for
+  anything named there and a knob for everything else. A new enumerated parameter goes in that map.
+- **`noteDivisionSeconds`** in `core/sequencer/ppqn.ts` is the one conversion from a §6 note division
+  to seconds. Both the synced delay and the synced LFO use it; do not add a second.
 
 ## 5. Repository catalogue — unchanged. No repository or DDL change.
 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1**. **No migration added.**
 
+The §9.3 `projects.payload` gained three optional fields — `grooveTemplates`, `trackGrooveIds` and
+`songLoopEnabled`. All three are `.optional()`, so a project written before them loads with §7.9's
+own defaults and needs no migration.
+
 ## 7. Worker / worklet / message protocol versions
 
-`SCHEDULER_PROTOCOL_VERSION` is still 1 and still inert (issue #96). The `automationDiff` message
-and the `automationRamp` scheduled-event kind are unchanged.
+`SCHEDULER_PROTOCOL_VERSION` is still 1 and still inert (issue #96). Additive this work, per the
+extend-by-adding precedent: the **`songLoop` request**, the **`songEnded` response**, and
+**`ScheduledEvent.bpm`**. The `groove` request kind is unchanged — it simply reaches the worker now.
 
-**The playhead SAB gained a third flag bit**, `isCapturing` (§14 (ah) item 7). `PlayheadWriter.write`
-takes it as an optional fourth argument, so a three-argument call still compiles and reads as "not
-capturing". `SchedulerCore.isCapturing(now)` is its source.
+Worklet processors registered at the start gate are now four: `meter-tap`, `dsp-effect`, `recorder`
+and **`granular-source`**. `prepareVoiceWorklets(context)` registers the last of them on an offline
+context, which the §9.5 bounce calls so a warp pad bounces the way it plays.
+
+`WorkletKernelName` gained `granularStretch`; `DspEffectKernelName` is the subset the DSP-effect
+worklet hosts, which is what keeps that processor's kernel switch exhaustive rather than defensive.
 
 ## 8. Stores — all eight implemented (§4.2)
 
-Changes this work, all additive and all recorded in §14 (ah):
+Changes this work, all additive and all recorded in §14 (ai):
 
-- **`useSequenceStore.setAutomationLane`** gains a `coalesceKey` parameter and an
-  `AutomationEditResult` return, plus the two §7.8 gates described above.
-- **`useMixerStore`** and **`useProgramStore`** call `recordParamGesture` from their transient and
-  commit actions. Nothing else about those actions changed.
+- **`useTransportStore.songLoopEnabled`** (§4.2's own field) with `setSongLoopEnabled`. It is the
+  only setting in that store that persists, because it is arrangement state rather than a
+  performance gesture, so its setter marks the project dirty.
+- **`useSequenceStore.setGrooveTemplate`** is now an undoable commit that marks the project dirty;
+  `assignTrackGroove` marks the project rather than the track, since both persist in the §9.3
+  payload.
+- **`DEFAULT_BPM`** joins `schemas/ranges.ts`, single-sourcing the 120 that the transport store and
+  the §9.3 `bpm_default` column both carried.
 
 ## 9. Component tree topography (as implemented)
 
 Unchanged except:
 
-- **Grid → controls row:** an **Automation scope** `SegmentControl` (Track / Sequence) before the
-  lane picker, a **Curve** `SegmentControl` (Step / Linear / Exp) after it, a precedence warning
-  when a track lane overrides the sequence lane on screen, and a read-only warning for a lane the
-  registry does not recognise. The lane picker now lists registered parameters, not only lanes that
-  already hold points.
-- **Grid → `GridCanvas`:** the automation lane is 96 px (it was 48) because it is now a drag target;
-  breakpoints are drawn as grab handles and selected ones are larger and outlined; a marquee
-  rectangle is painted while a select drag is live.
-- **Grid → right column:** the "Notes" panel is joined by an **"Automation"** panel when a lane is
-  selected — Add point, Delete selected points, and one row per point carrying a selection button, a
-  value field and a delete button. This is the §8.2 keyboard path for the lane.
-- **XYFX:** the axis pickers read the shared catalogue, so they now offer all four sends and the
-  parameters of whatever effects occupy a channel's insert slots.
+- **Song → header:** a **Loop song** `Toggle` beside the duration readout, with a line naming which
+  of §7.9's two ends it selects. It is here and not in the §8.1 transport bar, per §8.5.12.
+- **Mixer → `InsertPanel`:** an index-encoded parameter renders as a labelled select rather than a
+  knob, so the delay's `sync`, the filter's `type` and the saturator's `curve` are all readable.
+- **Sample Edit → tools row:** **Groove → save template** beside **Groove → bake to track**.
+- **Program Edit → `LfoEditor`:** the "saved but not yet applied" notes for sync, phase offset and
+  free-running are gone; the Hz field is disabled while a note division is chosen. Only the two
+  shape approximations (`sampleHold`, `drift`) still carry a note.
 
-## 10. Kernel inventory — unchanged (the §5.6.4 set is complete).
+## 10. Kernel inventory
+
+The §5.6.4 set is complete and unchanged in membership. `granularStretch` now carries two entry
+points: the offline `render` (WSOLA, for the §8.5.4 stretch tool) and the streaming
+`createStream`/`prepareStream`/`streamBlock` (fixed-grid OLA, for the §5.7.9 warp source).
 
 ## 11. Outstanding / deliberate technical debt
 
@@ -183,55 +210,53 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**Nearest neighbours to this work, in rough order of how much they block a musician:**
+**Nearest neighbours to this work, in rough order of how much they cost a musician:**
 
-- **#84** Reverse and Warp are persisted but never applied at playback, and **#107** the same for
-  `LfoConfig.sync`/`phaseOffset`/`retrigger`. Both are reachable to set and still inert.
-- **#71** the non-destructive groove path is dead end to end: the `groove` request kind has no
-  member in `schedulerRequestSchema`, so the worker's Zod guard rejects every groove message.
-- **#101** song mode never ends — `songEnded` and `songLoopEnabled` appear nowhere in `src`.
-- **#70** the delay has no tempo-synced division.
-- **#104** song and stem bounces write a WAV no user can reach.
+- **#103** a project switch proceeds after a failed autosave flush and discards what it could not
+  write; **#98** the storage layer turns recoverable failures into silent or fatal ones; **#99** a
+  damaged `.mpcweb` imports as a silently soundless project; **#93** tempo and swing edits are never
+  persisted; **#26** zip import has no decompression limits. These five are the data-integrity
+  cluster and are the natural next piece of work.
 - **#94** song mode omits automation, note repeat, arp, live erase and the per-pass recording flush.
-  Automation authoring makes this more visible, not less: a lane recorded in sequence mode is
-  ignored while song mode plays.
-- **#93** tempo and swing edits are never persisted.
+  This work rewrote `scheduleSong`'s cursor and its end, not its content selection, so #94 is
+  untouched and the two do not conflict.
+- **#74** a mid-playback tempo change retroactively re-times elapsed playback. It is adjacent to the
+  synced-LFO and synced-delay decisions recorded in §14 (ai), which both assume tempo changes are
+  rare and deliberate.
+- **#104** song and stem bounces write a WAV no user can reach.
+- **#76** mod-matrix sums reach detune and amp gain unclamped.
 - **#27, #28** the transient store channel re-renders every consumer per gesture frame, and Grid
-  scroll and zoom still route through React state. This work added no new instance — the marquee
-  and the automation drags are ref-driven — but it did not fix the existing ones, and the recorder
-  now writes to the sequence store on every accepted sample, which #27 makes more expensive than it
-  should be.
-- **#34** several live regions compete with the single §8.2 announcer.
-- **#54** destructive edits have no confirmation. Automation point deletion inherits that: undo is
-  the only safety net.
+  scroll and zoom still route through React state.
+- **#54** destructive edits have no confirmation.
 
 **Honest scope notes for this work:**
 
-- **The ⚑ policies in §14 (ah) are judgement calls**, not spec text. §7.8 fixes the data model
-  and the thinning inputs and leaves the rest open. Each rule lives in exactly one place if a human
-  prefers a different one.
-- **Automation is not undoable as one pass.** A recorded gesture on ONE parameter leaves two undo
-  entries: the pass, and the parameter's own commit. A gesture driving TWO parameters at once — an
-  XYFX drag — leaves about six, because the §4.5 command stack holds a single open coalesce key and
-  the two lanes' writes interleave, splitting each lane's run. The count still does not scale with
-  the number of points captured, which is what §3.3 is protecting, but per-lane coalescing would
-  need the shared command stack to hold a key per lane. §7.7's "one undo entry per recording pass"
-  is about notes and is unaffected.
-- **The point list has no tick field.** A point's value is editable from the keyboard; its tick is
-  not, so moving a point in time is a pointer-only gesture. That matches the note list beside it,
-  which also offers select and delete but no pitch or tick editing — the same gap, not a new one.
-- **`AUTOMATION_LANE_HEIGHT` is a constant, not a user setting.** A lane taller than 96 px would
-  give a value drag more travel; nothing exposes that choice.
-- **Capture has no per-parameter arm.** Every registered parameter a gesture touches while recording
-  is captured. §7.8 asks for exactly that and names no arming control, but a user who nudges a fader
-  mid-take will find a lane they did not intend to write.
-- **Verified in a real browser** from the worktree at ports 5320/5321, fourteen checks: a drawn
-  lane at level 0 silenced the master (peak 0.00000) and the same lane at 1.2 did not (peak 0.2760);
-  a thin sweep along the lane selected rather than clearing; a recorded XYFX gesture wrote 9 points,
-  cleared in 6 undos and redone, and the same 9 survived a save and a page reload.
+- **The ⚑ policies in §14 (ai) are judgement calls**, not spec text. Each lives in exactly one place
+  if a human prefers a different one.
+- **A warp voice costs one copy of its region per note**, on the main thread, because
+  `processorOptions` are structured-cloned and a `subarray` view would clone the whole sample behind
+  it. A warp pad on a long sample is the case to watch; nothing caps it.
+- **The streaming granular path is plain overlap-add**, so at a large pitch shift it is phasier than
+  the offline `render`. Both are the same kernel and the difference is the correlation search.
+- **A synced LFO on a note held across a manual BPM edit keeps its old rate.** §10.5 keeps tempo
+  automation out of v1, so that is the only way to reach the case, and it lasts one note.
+- **Switching playback mode mid-transport resumes at the elapsed position** rather than restarting.
+  §7.9 and §8.5.12 do not say which is wanted; this is the least surprising reading and is the
+  behaviour a test now pins.
+- **`grooveTemplates` still has no name field**, so the Grid's picker shows the key — which is why a
+  template is keyed by its source sample's name. A template list with real names would need a schema
+  field.
+- **Verified in a real browser** from the worktree at ports 5320/5321 and by the full smoke at
+  5330/5331. Seven driver checks and 50/50 smoke steps, no console errors: reverse moved the burst
+  from one half of the render to the other (0.0000/0.1517 forward, 0.4056/0.0000 reversed); warp
+  held 600 Hz across 0.387 s where the plain voice held 600 Hz across 0.200 s; a 1/4-synced LFO
+  measured 1 Hz at 60 bpm and 3.5 Hz at 240 against 2 Hz free-running; a quarter-turn sine started
+  at +1.0000; the delay echoed at 0.350 / 0.500 / 1.000 / 0.375 s free, 1/4@120, 1/4@60 and 1/8.@120,
+  and at 1.000 s after a retune to 60 bpm; and a groove saved in Sample Edit reached the Grid's
+  picker.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1376**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **40/40 steps**, ports overridden per #105) · `build` ·
-`build:factory`.
+`npm run type-check` · `lint` · `test` (**1461**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **50/50 steps**, ports overridden per #105) · `build` ·
+`build:wasm` · `build:factory`.
