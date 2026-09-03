@@ -1,14 +1,14 @@
-# BangerBox — Phase Handover (after the correctness-hardening closure)
+# BangerBox — Phase Handover (after the reachability & performance closure)
 
-Generated at the close of the correctness-hardening work per Protocol Alpha (spec §13.1). A new
-session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
-MUST reuse the patterns recorded here rather than inventing parallel ones.
+Generated at the close of the reachability and performance work per Protocol Alpha (spec §13.1). A
+new session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code,
+and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the correctness-hardening work merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §6/§4.3/§5.6/§9.4/§7.1/§7.2, not a new phase,
-so `package.json` `config.phase` remains **"8"**. Suite: **1632 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **50/50 steps**), plus `lint`, `type-check`, `format:check` and
-`verify` (**no open stubs**).
+**State:** the reachability work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §9.5/§9.6/§3.3/§4.1/§8.1, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1712 unit tests**, `test:e2e` real-browser
+smoke (dev + offline, **55/55 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+(**no open stubs**).
 
 **The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
 human developer. Nothing in this work touched it.
@@ -21,7 +21,10 @@ Regenerate this document whenever a §14 entry lands, not only at a phase bounda
 
 ## 1. Locked Decisions (§1.3) — restated verbatim in effect
 
-All nineteen stand unchanged. Three that bear on recent work:
+All nineteen stand unchanged. Four that bear on recent work:
+
+- **#12 (fflate for `.mpcweb`)** now has one packer and one unpacker, both streaming. There is no
+  `zipSync` path left in `src`; the §9.8 factory generator drives the same streaming packer.
 
 - **#2 (Node ≥ 24)** is load-bearing beyond tooling: `build:factory` imports the app's own
   TypeScript through Node's native type stripping, so it MUST run as
@@ -39,6 +42,38 @@ All nineteen stand unchanged. Three that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(al) — the reachability & performance closure (§9.5, §9.6, §3.3, §4.1, §8.1).** The ⚑ items
+  below are settled policy a new session should treat as binding, not as spec text:
+  - **A bounce the user cannot reach has NOT been produced.** `/projects/{id}/bounces/` is OPFS:
+    nothing browses it, no file manager opens it, and a `.mpcweb` export packs the project rather
+    than its bounces. A control that reports success and produces nothing retrievable is worse
+    than the dead control §3.4 forbids, because a dead one does not lie.
+  - **There is exactly ONE `.mpcweb` packer, and it streams.** A second synchronous one beside it
+    would be two pieces of code writing one format. The §9.8 factory generator drives the same
+    packer with a pinned `exportedAt`, which pins both the manifest timestamp and every entry
+    mtime.
+  - **`project.json` and `manifest.json` are written LAST.** A caller reading samples one at a
+    time only learns which it could not read as it goes, and the §9.6 completeness check compares
+    the rows against the audio. Zip entry order is not part of the §9.6 layout.
+  - **Each sample's buffer is TRANSFERRED and each output chunk becomes a `Blob` at once.**
+    Without the transfer the clone copies the audio; without the per-chunk `Blob` the finished
+    archive is back on the JS heap. Only ONE zip entry is open at a time.
+  - **The transient overlay is the live value; the store is the committed one.** A relative §10.3
+    encoder steps from where the parameter is NOW, which is why the channel has memory.
+  - **A commit SETTLES first and PUBLISHES explicitly.** It settles before anything that can
+    fail, because an address that stops resolving would otherwise leave the overlay answering
+    forever; it publishes because the committed value need not be where the gesture left off
+    (XYFX's release-return commits where the axes RESTED) and the store never moved, so a §4.3
+    diff sees nothing.
+  - **A voice built mid-gesture reads the LIVE program.** `applyParam` can only move a voice that
+    exists, and `programParamChange` maps neither `amp.attack` nor `amp.release` at all.
+  - **§10.3's "UI reacts concurrently" is kept by REF, not by re-render** — the `livePath` prop.
+  - **The Grid zoom readout is painted by ref; only the buttons' `disabled` flags use React**,
+    and there is deliberately no re-sync effect after each render.
+  - **Confirm what destroys a container whose contents are not on screen; do not confirm what
+    destroys the row the button sits on.** A §8.5.4 sample edit is not destructive in the §8.1
+    sense at all, because it renders a new file and swaps a pointer.
 
 - **(ak) — the correctness-hardening closure (§6, §4.3, §5.6, §9.4, §7.1, §7.2).** The ⚑ items
   below are settled policy a new session should treat as binding, not as spec text:
@@ -157,11 +192,62 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 - **Heredocs through the Bash tool are unreliable for long multi-line content.** Write a patch
   script (or the file itself) with the Write tool and run it; a `<<'EOF'` block of a few hundred
   lines fails with an unmatched-quote parse error.
+- **Pipe the smoke to a FILE, never through `tail`.** `npm run test:e2e | tail -80` buffers the
+  whole run, so a five-minute smoke shows nothing at all until it ends and looks hung throughout.
+- **`react-hooks/refs` forbids reading `ref.current` during render.** For an object that must be
+  created once and READ during render — the Grid's viewport store — use `useState(factory)` and
+  never call the setter; a `useRef` with a lazy `??=` trips the rule.
+- **`react-hooks/set-state-in-effect` also fires on a synchronous `setState` in an effect BODY.**
+  Initialise from a lazy `useState` initialiser instead and let the subscription callback be the
+  only setter.
 
 ## 4. Established patterns (reuse, do not reinvent)
 
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
-automation seam and the (ai) voice-source/scheduler/tempo seams still stand. New this work:
+automation seam, the (ai) voice-source/scheduler/tempo seams and the (ak) guard layer still
+stand. New this work:
+
+**The transient channel (spec §4.1, §3.3):**
+
+- **`src/store/transientChannel.ts` is the ONLY route a continuous gesture takes.** Neither
+  `setTransient` nor `setPadParamTransient` calls `set()` any more, because that replaces the
+  containing map's identity and re-renders every component selecting it. A new continuous
+  control publishes here; it does not write a store.
+- **It is a channel WITH MEMORY.** `readTransientValue` answers "where is this parameter now",
+  which the store cannot while a gesture is in flight. `anyTransientInFlight()` is the cheap
+  guard for a per-note lookup.
+- **`commit` settles FIRST and publishes EXPLICITLY.** Both orders matter and both are recorded
+  above. A new store action with a transient/commit pair copies that shape.
+- **Addresses are canonical §7.8 registry paths.** `useMixerStore.canonicalPathOf` rewrites the
+  two legacy forms without needing the strip, which is what lets a commit settle an insert
+  address whose slot effect has changed underneath it.
+- **`programWithLiveGestures` is what a VOICE BUILDER reads.** The graph bridge moves nodes that
+  exist; a voice not yet built has to be given the live value. The §9.5 bounce deliberately does
+  not call it — a render is of committed state.
+- **`livePath` is how a control shows a gesture it is not driving** (spec §10.3). It paints by
+  ref inside `useContinuousControl`; a `Knob` or `Fader` bound to a §7.8 address should pass it.
+
+**Reaching the user (spec §9.5, §9.6, §8.1):**
+
+- **`core/platform/download.ts` is the only way anything BangerBox writes leaves the browser.**
+  Every other store the app has is origin-private. A new export path calls `downloadBlob`, and
+  `downloadFileStem` is the one reduction of a free-text project name to a filename.
+- **`createMpcwebPacker` is the only packer.** Streaming, one entry open at a time, snapshot
+  written last, and reconciling the snapshot's sample rows down to what was actually added.
+- **`ConfirmDialog` carries the rule for what needs a confirmation**, in prose, in one place.
+  Read it before adding a destructive action.
+- **`FilePickerButton` separates `busy` from `disabled`**: the first is what THIS control is
+  doing, and so its label; the second is every other reason it cannot start. A shared flag in
+  both slots is what made a bounce relabel the import pickers "Importing…".
+
+**The Grid viewport (spec §3.3, §8.4):**
+
+- **`src/features/grid/gridViewport.ts` holds scroll and zoom outside React.** The canvas's rAF
+  loop and its pointer handlers read `viewport.get()`; nothing re-renders when it moves. The
+  clamps are pure functions there, testable without a canvas.
+- **The store compares fields before notifying**, because a wheel held against an edge produces
+  a stream of updates that change nothing.
+- **`GridZoomControls` is the only React-visible consumer**, and it paints the readout by ref.
 
 **The guard layer (spec §4.3, §5.6, §6):**
 
@@ -309,12 +395,17 @@ automation seam and the (ai) voice-source/scheduler/tempo seams still stand. New
 
 ## 5. Repository catalogue — unchanged. No repository or DDL change.
 
-`dumpSnapshot` now reads `samples.listGlobal` as well as `listByProject`, so a §9.6 export carries
+**No repository method was added or changed this work.** `exportMpcweb` reads the same rows; it
+simply reads each sample's bytes one at a time and hands them over rather than gathering them.
+
+From the data-integrity work: `dumpSnapshot` reads `samples.listGlobal` as well as `listByProject`, so a §9.6 export carries
 the §9.8 global-library audio its programs reference. No repository method was added.
 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1**. **No migration added.**
 
-`projects.bpm_default` is now WRITTEN as well as read (issue #93). The column has always existed
+**No DDL column, §9.3 payload field or §6 payload shape changed this work.**
+
+From the data-integrity work: `projects.bpm_default` is WRITTEN as well as read (issue #93). The column has always existed
 with a default of 120, so a project saved before this loads unchanged and needs no migration.
 
 The §9.3 `projects.payload` gained three optional fields — `grooveTemplates`, `trackGrooveIds` and
@@ -324,7 +415,13 @@ own defaults and needs no migration.
 ## 7. Worker / worklet / message protocol versions
 
 `SCHEDULER_PROTOCOL_VERSION` is still 1 and still inert (issue #96). **Nothing was added to the
-§7.1.3 protocol this work** — no request kind, no response kind, no `ScheduledEvent` field. Two
+§7.1.3 SCHEDULER protocol this work.** The **pack worker's** protocol did change, and completely:
+the single `pack` request is replaced by a session — `packBegin` / `packSample` / `packEnd` /
+`packAbort`, each carrying a `session` id beside the `id` that correlates its reply, plus a
+`packChunk` response that belongs to a session rather than to any request (issue #99). `unpack`
+is unchanged. `packMpcwebInWorker` is gone; `beginMpcwebPack` replaces it and returns a `Blob`.
+
+From the previous work, and unchanged: nothing was added to the §7.1.3 protocol — no request kind, no response kind, no `ScheduledEvent` field. Two
 INTERNAL shapes inside `src/core/sequencer/` did change, and neither crosses the wire:
 `segmentWindow` now returns `WindowSegments` rather than an array, and `PlayheadReading` carries a
 `stale` flag.
@@ -341,7 +438,22 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store changed this work.** `store/tempo.ts` is still the one place a tempo edit enters the
+**No store SLICE changed this work, but two store actions changed what they do** (issue #27):
+`useMixerStore.setTransient` and `useProgramStore.setPadParamTransient` no longer call `set()`.
+They publish on the §4.1 transient channel, and the store holds the pre-gesture value until the
+commit. Anything that read a store mid-gesture reads `readTransientValue` first — the §10.3
+relative-encoder step and `programWithLiveGestures` are the two that had to.
+
+New modules beside the slices:
+
+- **`src/store/transientChannel.ts`** — `publishTransient`, `settleTransient`, `readTransientValue`,
+  `anyTransientInFlight`, `subscribeTransientChannel`, `subscribeTransientPath` and
+  `resetTransientChannel` (called by `stopProjectSession`).
+- **`src/store/syncLayer/transientSync.ts`** — the one subscriber, registered by
+  `registerSyncSubscribers`. It applies every value through `bridge.applyParam`.
+- **`useProgramStore.programWithLiveGestures`** — the live program a voice builder reads.
+
+From the correctness-hardening work: `store/tempo.ts` is still the one place a tempo edit enters the
 model; what changed is what the scheduler does with the message it already sent (§14 (ak)).
 
 Changes from the data-integrity work, all additive and all recorded in §14 (aj):
@@ -369,7 +481,24 @@ Changes from the previous work, recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-**No component changed this work.** One primitive helper did: `formatValueText` reads a NaN as an
+**Two primitives are new** (spec §2.5): `FilePickerButton` (a file picker on the shared button
+chassis, which a `<label>` could not have) and `ConfirmDialog` (which also carries the §8.1 rule
+for what earns a confirmation). `Button` exports `buttonChassis` so the picker shares it rather
+than copying it; `ValueReadout` takes an optional `valueRef`; `Knob` and `Fader` take an optional
+`livePath`.
+
+Mode changes:
+
+- **Mixer → track strip:** a **Bounce stem** action (spec §9.5). Only track strips carry it.
+- **Browser → toolbar:** **Resample to pad…** beside Bounce sequence, and the two `<label>` file
+  inputs are `FilePickerButton`s. Every control names the operation actually running.
+- **Program Edit:** **Delete program…** and **Clear pad…** open a `ConfirmDialog` that counts what
+  goes; removing a layer or a route raises a toast naming Undo instead.
+- **Grid → header:** `GridZoomControls`, a leaf that subscribes to the ref-held viewport.
+- **Looper:** every transport control is held from the moment a take stops until it is written.
+- **Main → Master fader:** takes `livePath`, so a §10.3 turn moves it as it happens.
+
+From the correctness-hardening work: One primitive helper did: `formatValueText` reads a NaN as an
 em dash rather than the literal "NaN", which a screen reader announces verbatim, and its kHz
 abbreviation now tests the ROUNDED magnitude so 999.6 Hz reads "1.0 kHz" and not "1000 Hz".
 
@@ -387,7 +516,7 @@ transport mirror directly. Otherwise unchanged except (from earlier work):
 
 ## 10. Kernel inventory
 
-The §5.6.4 set is complete and unchanged in membership. Every wrapper now guards its parameters
+**No kernel changed this work.** The §5.6.4 set is complete and unchanged in membership. Every wrapper now guards its parameters
 per §14 (ak) — clamp in range, refuse a non-finite one, throw on a bad structural argument — and
 `LIMITER_RANGES`, `FDN_REVERB_RANGES` and `MULTIBAND_RANGES` mirror the §5.7 table under the
 `kernelRanges.test.ts` gate. `granularStretch` carries two entry points: the offline `render` (WSOLA, for the §8.5.4 stretch tool) and the streaming
@@ -403,26 +532,43 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#76, #97, #66, #95 and #74 are CLOSED by this work.** The correctness-hardening cluster is done.
+**#104, #99, #27, #28 and #54 are CLOSED by this work.** The reachability cluster is done, and
+the two `bounceService` entries have left the `check:orphans` allowlist.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **#104** song and stem bounces write a WAV no user can reach — `bounceTrack` and
-  `resampleSequenceToSample` are implemented, tested and allowlisted in `check:orphans` precisely
-  because nothing invokes them. Reachability, not DSP.
-- **#99 remains OPEN for one point only**: export still holds every sample in memory at once.
-  `zipSync` materialises the whole archive, so streaming it needs fflate's `Zip` and per-sample
-  transfers through `packClient`, which is a redesign of `pack.worker.ts` rather than a fix.
-  Everything else in that issue is closed.
-- **#27, #28** the transient store channel re-renders every consumer per gesture frame, and Grid
-  scroll and zoom still route through React state. §3.3 forbids exactly this.
-- **#54** destructive edits have no confirmation.
-- **#94** song mode omits automation, note repeat, arp, live erase and the per-pass recording flush.
-  Untouched by this work, and now the largest remaining behavioural gap in §7.9.
+- **#94** song mode omits automation, note repeat, arp, live erase and the per-pass recording
+  flush. Untouched, and the largest remaining behavioural gap in §7.9.
+- **#16** live erase deletes across a loop boundary in one pass rather than the notes it swept.
 - **#96** `SCHEDULER_PROTOCOL_VERSION` is still inert, and `automationRampForWindow` is still the
-  dead duplicate of `schedulerCore`'s hand-rolled automation scheduling.
+  dead duplicate of `schedulerCore`'s hand-rolled automation scheduling. Both are still in the
+  `check:orphans` allowlist for exactly that reason.
+- **#51** the §2.1 soft capabilities are unhandled and the eviction warning is only a tooltip in
+  one mode. `SOFT_CAPABILITY_LABELS` is allowlisted awaiting it.
+- **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
 
 **Honest scope notes for this work:**
+
+- **A §10.3 turn moves an on-screen control only where the call site passes `livePath`.** The five
+  Mixer controls and Main's master fader do; Program Edit's plain number fields do not, and update
+  at the commit as they always did.
+- **`audioBridge.resyncAll` reads COMMITTED state**, so an engine restart mid-gesture would land
+  the graph on the pre-gesture value. Nothing in the app restarts the engine mid-gesture.
+- **The import side still materialises each `.mpcweb` entry before validating it.** It is bounded
+  by the §2.6 budget (issue #26) but not streamed into the database, so a large import still peaks
+  at roughly the archive's uncompressed size. Only the export side was made streaming.
+- **A Grid mode unmount resets the viewport**, exactly as the `useState` viewport did before it.
+  The store is created per mount.
+- **Measured in a real browser**, not inferred: 15 driver checks and 55/55 smoke steps at ports
+  5342/5343/5344, no console errors. Sixty transient samples woke 0 store subscribers and the
+  commit woke exactly 1, while the master peak followed the fader 0.4018 → 0.0024 → 0.4018; a
+  60-sample pointer drag on a real Mixer fader held a 4.17 ms median frame; 120 wheel events over
+  the Grid canvas zoomed 1.00× → 2.31× at a 4.16 ms median (16.7 ms is the §11.5 60 fps budget);
+  all four §9.5 bounces read back over real OPFS and three of them downloaded by name
+  (`First-Project-bounce.wav`, `-song.wav`, `-Track-1.wav`); and both confirmations counted their
+  contents and refused to act on the first tap.
+
+**Honest scope notes from the correctness-hardening work:**
 
 - **The clamps bound COMBINATIONS, not the schema.** §6 still validates 32 routes onto one target;
   the clamp is at the parameter. A tighter schema — a per-target sum cap — would refuse such a
@@ -489,6 +635,7 @@ comments.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1632**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **50/50 steps**, ports overridden per #105) · `build` ·
-`build:wasm` · `build:factory`.
+`npm run type-check` · `lint` · `test` (**1712**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **55/55 steps**, ports overridden per #105) · `build` ·
+`build:wasm` · `build:factory` (byte-identical across rebuilds, re-checked after the packer
+change).
