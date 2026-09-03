@@ -14,9 +14,22 @@
  * hands large buffers to the worker sync-access-handle path (spec §9.1), which is
  * markedly faster for the multi-megabyte buffers the sampler produces. Callers that have
  * just produced a large buffer and are finished with it should prefer the streamed form.
+ *
+ * Atomicity rests on `FileSystemFileHandle.move()`, which every browser meeting the §1.3 #15
+ * baseline has. Where it is absent the write falls back to copying the completed temp file
+ * onto the destination, and that copy is NOT atomic — an interruption part-way through it
+ * leaves a truncated file under the real name. There is no atomic replacement to reach for
+ * without a rename, so the honest position is that §9.7's "never corrupt a half-written
+ * file" holds wherever `move()` does, and is best-effort where it does not (issue #98).
+ *
+ * Failures are classified, never swallowed (spec §9.2, issue #98). `NotFoundError` is an
+ * answer — "already absent" — and everything else propagates, so a caller can tell "not
+ * there" from "could not tell". Transient contention is retried once or twice through
+ * {@link withStorageRetry} before it reaches the caller.
  */
 
 import { workerWritesAvailable, writeFileInWorker } from './opfsWriteClient';
+import { isNotFoundError, withStorageRetry } from './retry';
 
 /** The global library directory — samples outside any project (spec §9.1, §9.3). */
 export const GLOBAL_LIBRARY_ROOT = '/global_library';
@@ -105,13 +118,20 @@ async function resolveFile(path: string, create: boolean): Promise<FileSystemFil
   return directory.getFileHandle(fileName, { create });
 }
 
-/** True when a file exists at the canonical path. */
+/**
+ * True when a file exists at the canonical path.
+ *
+ * Only `NotFoundError` answers "no". A permissions or I/O failure is not an absence, and
+ * reporting it as one made a caller act on a file it had merely failed to look at — which
+ * is how orphaned samples went unnoticed (issue #98).
+ */
 export async function fileExists(path: string): Promise<boolean> {
   try {
     await resolveFile(path, false);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
   }
 }
 
@@ -128,6 +148,15 @@ interface MovableFileHandle extends FileSystemFileHandle {
 export async function writeFileAtomic(
   path: string,
   // Uint8Array<ArrayBuffer>: the stream API rejects SharedArrayBuffer-backed views.
+  data: Blob | ArrayBuffer | Uint8Array<ArrayBuffer>,
+): Promise<void> {
+  // Safe to retry: the temp file is removed before this rejects, so a second attempt starts
+  // from the same state as the first (spec §9.2, issue #98).
+  await withStorageRetry(() => writeFileAtomicOnce(path, data));
+}
+
+async function writeFileAtomicOnce(
+  path: string,
   data: Blob | ArrayBuffer | Uint8Array<ArrayBuffer>,
 ): Promise<void> {
   const segments = splitOpfsPath(path);
@@ -149,8 +178,10 @@ export async function writeFileAtomic(
       // Same-directory rename: atomic replacement of the destination (Chromium OPFS).
       await tempHandle.move(fileName);
     } else {
-      // Extremely defensive fallback (baseline Chromium ≥ 120 always has move()):
-      // copy the completed temp file onto the destination, then drop the temp.
+      // No rename available, so no atomic replacement either: copy the completed temp file
+      // onto the destination and drop the temp. An interruption during THIS copy truncates
+      // the destination, which is the one place §9.7's guarantee is best-effort rather than
+      // absolute (issue #98). Unreachable on the §1.3 #15 baseline, which always has move().
       const file = await tempHandle.getFile();
       const finalHandle = await directory.getFileHandle(fileName, { create: true });
       const finalWritable = await finalHandle.createWritable();
@@ -216,24 +247,31 @@ export async function deleteFile(path: string): Promise<void> {
     throw new Error(`Refusing to delete outside the app's content roots: "${path}"`);
   }
   const fileName = segments[segments.length - 1]!;
-  try {
-    const directory = await resolveDirectory(segments.slice(0, -1), false);
-    await directory.removeEntry(fileName);
-  } catch {
-    // Absent directory or file — deletion is already true.
-  }
+  await withStorageRetry(async () => {
+    try {
+      const directory = await resolveDirectory(segments.slice(0, -1), false);
+      await directory.removeEntry(fileName);
+    } catch (error) {
+      // Absent directory or file — deletion is already true. Anything else propagates:
+      // reporting a delete that did not happen leaves a file nothing will ever reclaim.
+      if (!isNotFoundError(error)) throw error;
+    }
+  });
 }
 
 /** Recursively delete a directory subtree; missing directories resolve silently. */
 export async function deleteDirectory(path: string): Promise<void> {
   const segments = splitOpfsPath(path);
   const name = segments[segments.length - 1]!;
-  try {
-    const parent = await resolveDirectory(segments.slice(0, -1), false);
-    await parent.removeEntry(name, { recursive: true });
-  } catch {
-    // Absent — deletion is already true.
-  }
+  await withStorageRetry(async () => {
+    try {
+      const parent = await resolveDirectory(segments.slice(0, -1), false);
+      await parent.removeEntry(name, { recursive: true });
+    } catch (error) {
+      // Absent — deletion is already true. Everything else propagates (issue #98).
+      if (!isNotFoundError(error)) throw error;
+    }
+  });
 }
 
 /**

@@ -8,13 +8,14 @@ import { getDatabaseDriver } from '@/core/storage/client';
 import { createRepositories, type Repositories } from '@/core/storage/repositories';
 import { deleteFile, readFile, samplePath, writeFileAtomic } from '@/core/storage/opfs';
 import { assertWriteHeadroom } from '@/core/storage/safeguards';
+import { MPCWEB_MAX_ENTRY_BYTES, MPCWEB_MAX_TOTAL_BYTES } from '@/core/constants';
 import { useProjectStore, useUIStore } from '@/store';
 import { AutosaveQueue, type SaveOutcome } from './autosave';
-import { registerAutosave, unregisterAutosave } from './dirty';
+import { describeDirtyKeys, registerAutosave, unregisterAutosave } from './dirty';
 import { hydrateStores } from './hydrate';
 import { remapSnapshot, type ProjectSnapshot } from './mpcweb';
 import { packMpcwebInWorker, unpackMpcwebInWorker } from './packClient';
-import type { UnpackedProject } from './mpcwebZip';
+import type { PackedSample, UnpackedProject } from './mpcwebZip';
 import { flushDirtyKeys } from './persist';
 import { planSharedSamples } from './sampleSharing';
 import { registerProjectService, type ProjectService } from './service';
@@ -39,6 +40,24 @@ function teardownAutosave(): void {
 }
 
 /**
+ * Thrown when a project switch is refused because the outgoing project's autosave could not
+ * be written (spec §4.4, issue #103). Carries the finished sentence the UI shows, because
+ * only this layer knows both that the switch was refused and what it was refused over.
+ */
+class UnsavedWorkError extends Error {
+  constructor(
+    readonly unsavedKeys: readonly string[],
+    cause?: unknown,
+  ) {
+    super(
+      `Your work could not be saved (${describeDirtyKeys(unsavedKeys)}), so BangerBox has stayed on this project rather than leaving it behind. Export the project to keep the changes, then try again.`,
+      cause !== undefined ? { cause } : undefined,
+    );
+    this.name = 'UnsavedWorkError';
+  }
+}
+
+/**
  * Flush the outgoing project's queue, then tear it down (spec §4.4: flush "before project
  * switch/export"). Ordered before {@link hydrateStores} because the flush writes from the
  * store state, which still holds the outgoing project until hydration replaces it.
@@ -46,13 +65,49 @@ function teardownAutosave(): void {
  * `dispose()` alone drops the dirty set without writing it, so anything edited inside the
  * debounce window is lost — and silently, because a dropped set never reaches `onIdle` while
  * hydration goes on to call `setModified(false)`, clearing the one dot that represents it.
+ *
+ * **A failed flush REFUSES the transition** (spec §4.4, issue #103). `flushNow()` never
+ * rejects, by design, so the failure is reported only through its return value — and
+ * discarding that value converted the silent loss #19 fixed into a narrated one: the toast
+ * named the cause while hydration removed the project the user would have exported from. The
+ * queue is left standing when it refuses, so the work is still queued, the unsaved dot stays
+ * up, and a later save (or a retry of the switch) can still write it.
+ *
+ * `force` is for teardown paths only — Safe Mode and shutdown (see {@link closeActiveProject}).
+ * §8.1's Safe Mode exists to get the user OUT of a failing shell, so refusing there would
+ * trap them in the very state they are escaping.
  */
-async function flushAndTeardownAutosave(): Promise<void> {
-  await queue?.flushNow();
+async function flushAndTeardownAutosave(options: { force?: boolean } = {}): Promise<void> {
+  if (!options.force) await assertOutgoingWorkIsSaved();
   teardownAutosave();
 }
 
+/**
+ * Flush the open project's queue and REFUSE if it could not be written — without tearing the
+ * queue down (spec §4.4, issue #103).
+ *
+ * The split matters. `newProject` and {@link installUnpackedAsNewProject} have to refuse
+ * before they write anything, so a refusal leaves neither an empty project nor a half-installed
+ * archive behind. But tearing the queue down at that point would mean any later failure — a
+ * rejected `create`, a §9.7 headroom refusal, a rolled-back restore — left the STILL-OPEN
+ * project with `markDirty` a no-op: the unsaved dot would never light again and every
+ * subsequent edit would be lost on reload. That is a worse loss than the one being prevented,
+ * so the teardown stays where the project actually changes, in {@link loadProject}.
+ *
+ * Calling it twice is free: the second flush finds an empty queue and reports `'idle'`.
+ */
+async function assertOutgoingWorkIsSaved(): Promise<void> {
+  const active = queue;
+  if (active && (await active.flushNow()) === 'failed') {
+    throw new UnsavedWorkError(active.unsavedKeys);
+  }
+}
+
 async function newProject(name = 'New Project'): Promise<string> {
+  // Refuse before creating anything (spec §4.4, issue #103): `loadProject` at the end would
+  // refuse anyway, and doing it here means a refused switch leaves no empty project behind.
+  // The queue is deliberately left standing — see `assertOutgoingWorkIsSaved`.
+  await assertOutgoingWorkIsSaved();
   const repos = getRepositories();
   const project = await repos.projects.create({ name });
 
@@ -125,8 +180,55 @@ async function saveNow(): Promise<SaveOutcome> {
 }
 
 /**
+ * Warn when an export exceeds what the §9.6 import will accept (issue #26, issue #99).
+ *
+ * Import enforces the §2.6 decompression budget and export enforces nothing, so BangerBox can
+ * write an archive it will later refuse to open — and one of those refusals tells the user to
+ * ask for a fresh export, which is the thing that produced the file.
+ *
+ * It warns rather than refusing, for the reason export is per-sample recoverable at all: this
+ * file may be the only copy of the user's work, so producing it and saying what is wrong beats
+ * producing nothing. The message names the sample, because a project over the total is fixed by
+ * removing audio and the user has to know which.
+ */
+function warnIfImportWouldRefuse(samples: readonly PackedSample[], names: ReadonlyMap<string, string>): void {
+  const oversized = samples.filter((sample) => sample.bytes.byteLength > MPCWEB_MAX_ENTRY_BYTES);
+  const total = samples.reduce((sum, sample) => sum + sample.bytes.byteLength, 0);
+  if (oversized.length === 0 && total <= MPCWEB_MAX_TOTAL_BYTES) return;
+
+  // Named from the snapshot rows being packed, not from the Browser's cached list: this is a
+  // statement about THIS archive, and the two can disagree.
+  const nameOf = (sampleId: string) => names.get(sampleId) ?? sampleId;
+  const detail =
+    oversized.length > 0
+      ? `${oversized.length} sample${oversized.length === 1 ? ' is' : 's are'} too large (${oversized
+          .slice(0, 3)
+          .map((sample) => nameOf(sample.sampleId))
+          .join(', ')})`
+      : 'the project is too large in total';
+  useUIStore
+    .getState()
+    .pushToast(
+      `This export was written, but BangerBox cannot open it again: ${detail}. Split the project or shorten the audio before relying on this file.`,
+      'warning',
+    );
+}
+
+/**
  * Export the active project as a `.mpcweb` archive (spec §9.6): flush autosave, dump the row
  * snapshot, read every referenced sample's WAV bytes from OPFS, then zip in the pack worker.
+ *
+ * **Export is per-sample recoverable, not all-or-nothing** (issue #99). A single `Promise.all`
+ * over the reads meant one missing OPFS file made the project impossible to export at all —
+ * and export is precisely what a user reaches for when a project is already misbehaving, so
+ * that is the worst possible moment to be strict.
+ *
+ * A sample that cannot be read is dropped from the archive **and from the snapshot's sample
+ * rows**, so the archive stays internally consistent and re-imports cleanly rather than
+ * tripping the §9.6 completeness check the import now applies. The user is told how much was
+ * left out, because the alternative — a quietly smaller export — is the silent loss this
+ * whole issue is about. The pads that played those samples import with a dangling reference
+ * and no sound, which is the honest outcome: the audio genuinely is not there any more.
  */
 async function exportMpcweb(): Promise<Blob> {
   await saveNow();
@@ -135,14 +237,37 @@ async function exportMpcweb(): Promise<Blob> {
   const repos = getRepositories();
   const snapshot = await dumpSnapshot(repos, projectId);
 
-  const samples = await Promise.all(
-    snapshot.samples.map(async (sample) => ({
-      sampleId: sample.id,
-      bytes: new Uint8Array(await (await readFile(sample.opfs_path)).arrayBuffer()),
-    })),
-  );
+  const samples: PackedSample[] = [];
+  const unreadable: string[] = [];
+  for (const sample of snapshot.samples) {
+    try {
+      samples.push({
+        sampleId: sample.id,
+        bytes: new Uint8Array(await (await readFile(sample.opfs_path)).arrayBuffer()),
+      });
+    } catch {
+      unreadable.push(sample.name);
+    }
+  }
 
-  const bytes = await packMpcwebInWorker({ snapshot, appVersion: __APP_VERSION__, samples });
+  warnIfImportWouldRefuse(samples, new Map(snapshot.samples.map((row) => [row.id, row.name])));
+
+  const exported = new Set(samples.map((sample) => sample.sampleId));
+  const packed =
+    unreadable.length === 0
+      ? snapshot
+      : { ...snapshot, samples: snapshot.samples.filter((row) => exported.has(row.id)) };
+
+  if (unreadable.length > 0) {
+    useUIStore
+      .getState()
+      .pushToast(
+        `Exported without ${unreadable.length} sample${unreadable.length === 1 ? '' : 's'} whose audio could not be read (${unreadable.slice(0, 3).join(', ')}). Everything else is in the file.`,
+        'warning',
+      );
+  }
+
+  const bytes = await packMpcwebInWorker({ snapshot: packed, appVersion: __APP_VERSION__, samples });
   return new Blob([bytes as BlobPart], { type: 'application/zip' });
 }
 
@@ -244,6 +369,12 @@ export async function installUnpackedAsNewProject(
   unpacked: UnpackedProject,
   options: InstallOptions = {},
 ): Promise<string> {
+  // Refuse before a byte is written (spec §4.4, issue #103): `loadProject` at the end would
+  // refuse anyway, and doing it first means a refused install leaves no rows and no audio.
+  // The queue is left standing, so an install that fails after this point does not cost the
+  // still-open project its autosave — see `assertOutgoingWorkIsSaved`.
+  await assertOutgoingWorkIsSaved();
+
   const remapped = remapSnapshot(unpacked.snapshot);
   const { projectId, sampleIdMap } = remapped;
   const snapshot = withDerivedSamplePaths(remapped.snapshot, projectId);
@@ -345,7 +476,14 @@ export async function loadOrCreateActiveProject(): Promise<string> {
   return newProject('First Project');
 }
 
-/** Flush and tear down the active project's autosave (Safe Mode / shutdown). */
+/**
+ * Flush and tear down the active project's autosave (Safe Mode / shutdown).
+ *
+ * Forced, unlike a project switch (issue #103): §8.1's Safe Mode is the escape hatch from a
+ * shell that is already failing, and its own offer is to export the project — so refusing to
+ * close would trap the user in the state they are trying to leave. A switch has somewhere
+ * safe to stay; a shutdown does not.
+ */
 export async function closeActiveProject(): Promise<void> {
-  await flushAndTeardownAutosave();
+  await flushAndTeardownAutosave({ force: true });
 }

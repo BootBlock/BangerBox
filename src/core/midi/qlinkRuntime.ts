@@ -14,6 +14,7 @@
 import { parseParamTarget, targetRange, type ParamTarget } from '@/core/audio/params/registry';
 import type { QLinkBinding } from '@/core/project/schemas';
 import { useHardwareStore, useMixerStore, useProgramStore, useTransportStore, useUIStore } from '@/store';
+import { commitSwing, commitTempo, setSwingTransient, setTempoTransient } from '@/store/tempo';
 import { bindingForCc, defaultBindingsForMode, DEFAULT_QLINK_CC_BASE, nextValueForCc } from './qlink';
 
 /**
@@ -94,11 +95,17 @@ function dispatch(target: ParamTarget, path: string, value: number, commit: bool
       return;
     }
     case 'transportParam': {
-      // Transport values are not undoable (spec §4.5 "not undoable: transport actions"),
-      // so both phases of the gesture are the same single setter.
-      const transport = useTransportStore.getState();
-      if (target.param === 'swing') transport.setSwing(value);
-      else transport.setBpm(value);
+      // Tempo and swing are arrangement state on the §9.3 sequence row, not the performance
+      // gestures §4.5 exempts from undo — so the turn moves the §4.2 mirror and the idle
+      // commit writes the row, exactly as the mixer and program paths above do (issue #93).
+      if (target.param === 'swing') {
+        if (commit) commitSwing(value);
+        else setSwingTransient(value);
+      } else if (commit) {
+        commitTempo(value);
+      } else {
+        setTempoTransient(value);
+      }
       return;
     }
   }

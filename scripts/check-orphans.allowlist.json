@@ -292,6 +292,11 @@
       "reason": "Internal caller: toDbError. Exported so SQLite result-code mapping is testable without a database."
     },
     {
+      "file": "src/core/storage/retry.ts",
+      "export": "isRecoverableStorageError",
+      "reason": "Internal caller: withStorageRetry's default `isRetryable`. Exported so the §9.2 classification — which storage failures are transient contention and which are permanent — is assertable directly, rather than inferred from how many times a retried operation happened to run."
+    },
+    {
       "file": "src/core/storage/migrations/engine.ts",
       "export": "getUserVersion",
       "reason": "Internal caller: runMigrations."

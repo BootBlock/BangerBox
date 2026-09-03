@@ -6,9 +6,9 @@
  * always feeds a UUID-remapped snapshot ({@link remapSnapshot}) so copies never collide (§9.6).
  */
 import type { Repositories } from '@/core/storage/repositories';
-import type { AutomationPointRow, Page } from '@/core/storage/repositories';
+import type { AutomationPointRow, Page, SampleRow } from '@/core/storage/repositories';
 import type { SqlStatement } from '@/core/storage/driver';
-import type { ProjectSnapshot } from './mpcweb';
+import { PROJECT_SNAPSHOT_VERSION, type ProjectSnapshot } from './mpcweb';
 
 /** Drain every page of a paginated repository read into one array (spec §9.2). */
 async function drain<T>(read: (offset: number) => Promise<Page<T>>): Promise<T[]> {
@@ -22,6 +22,29 @@ async function drain<T>(read: (offset: number) => Promise<Page<T>>): Promise<T[]
   }
 }
 
+/**
+ * The global-library samples this project's programs actually play (spec §9.6, §9.1).
+ *
+ * §9.6 requires an export to carry "every sample referenced by the project ... global-library
+ * refs are copied in", and `samples WHERE project_id = ?` finds none of them: §9.8 factory
+ * audio de-duplicates into `/global_library/` with `project_id = NULL` (§9.3), so a project
+ * built from factory content exported with no audio at all and imported silent.
+ *
+ * Membership is decided by a substring hit on the raw program payload, exactly as
+ * `findUnusedSamples` decides the §8.5.7 purge: a sample id is a 36-character UUID, so a hit
+ * anywhere in the payload is a genuine reference, and matching the serialised form means a
+ * new reference site cannot quietly fall outside the check. Erring towards INCLUDING a sample
+ * costs a copy in the archive; erring the other way ships a soundless project.
+ */
+async function referencedGlobalSamples(
+  repos: Repositories,
+  programs: readonly { payload: string }[],
+): Promise<SampleRow[]> {
+  if (programs.length === 0) return [];
+  const globals = await drain((offset) => repos.samples.listGlobal({ offset }));
+  return globals.filter((sample) => programs.some((program) => program.payload.includes(sample.id)));
+}
+
 /** Dump a project's full row set into an interchange snapshot (spec §9.6). */
 export async function dumpSnapshot(repos: Repositories, projectId: string): Promise<ProjectSnapshot> {
   const project = await repos.projects.getById(projectId);
@@ -29,7 +52,10 @@ export async function dumpSnapshot(repos: Repositories, projectId: string): Prom
 
   const sequences = await drain((offset) => repos.sequences.listByProject(projectId, { offset }));
   const programs = await drain((offset) => repos.programs.listByProject(projectId, { offset }));
-  const samples = await drain((offset) => repos.samples.listByProject(projectId, { offset }));
+  const samples = [
+    ...(await drain((offset) => repos.samples.listByProject(projectId, { offset }))),
+    ...(await referencedGlobalSamples(repos, programs)),
+  ];
   const songEntries = await repos.songs.listByProject(projectId);
 
   const tracks = [];
@@ -54,7 +80,17 @@ export async function dumpSnapshot(repos: Repositories, projectId: string): Prom
     );
   }
 
-  return { version: 1, project, sequences, tracks, midiEvents, automation, programs, samples, songEntries };
+  return {
+    version: PROJECT_SNAPSHOT_VERSION,
+    project,
+    sequences,
+    tracks,
+    midiEvents,
+    automation,
+    programs,
+    samples,
+    songEntries,
+  };
 }
 
 /**

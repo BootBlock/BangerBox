@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { strToU8, zipSync } from 'fflate';
 import {
   buildManifest,
   parseManifest,
@@ -9,11 +10,17 @@ import {
 } from './mpcweb';
 import { packMpcweb, unpackMpcweb } from './mpcwebZip';
 
-const projectId = 'proj-0000';
-const seqId = 'seq-1111';
-const trackId = 'trk-2222';
-const programId = 'prog-3333';
-const sampleId = 'smp-4444';
+// UUID-shaped, because `remapSnapshot` rewrites ids by substring and now asserts that
+// shape before it does (issue #99). Section 1.3.1 makes every id a `crypto.randomUUID()`
+// in any case, so nothing real is excluded.
+const projectId = '00000000-0000-4000-8000-000000000001';
+const seqId = '00000000-0000-4000-8000-000000000002';
+const trackId = '00000000-0000-4000-8000-000000000003';
+const programId = '00000000-0000-4000-8000-000000000004';
+const sampleId = '00000000-0000-4000-8000-000000000005';
+const eventId = '00000000-0000-4000-8000-000000000006';
+const automationId = '00000000-0000-4000-8000-000000000007';
+const songEntryId = '00000000-0000-4000-8000-000000000008';
 
 /** A small but referentially-complete snapshot exercising every cross-reference (spec §9.6). */
 function fixtureSnapshot(): ProjectSnapshot {
@@ -57,7 +64,7 @@ function fixtureSnapshot(): ProjectSnapshot {
     ],
     midiEvents: [
       {
-        id: 'evt-1',
+        id: eventId,
         track_id: trackId,
         tick_start: 0,
         duration_ticks: 240,
@@ -68,7 +75,7 @@ function fixtureSnapshot(): ProjectSnapshot {
     ],
     automation: [
       {
-        id: 'aut-1',
+        id: automationId,
         scope: 'track',
         owner_id: trackId,
         target_path: `mixer.track:${trackId}.level`,
@@ -99,7 +106,7 @@ function fixtureSnapshot(): ProjectSnapshot {
         created_at: 3,
       },
     ],
-    songEntries: [{ id: 'song-1', project_id: projectId, position: 0, sequence_id: seqId, repeats: 1 }],
+    songEntries: [{ id: songEntryId, project_id: projectId, position: 0, sequence_id: seqId, repeats: 1 }],
   };
 }
 
@@ -167,5 +174,115 @@ describe('mpcweb zip — pack/unpack round-trip (spec §9.6, §11.1)', () => {
     expect(unpacked.manifest.projectId).toBe(projectId);
     expect(unpacked.snapshot).toEqual(snapshot);
     expect(Array.from(unpacked.samples.get(sampleId)!)).toEqual(Array.from(bytes));
+  });
+
+  it('round-trips a sample of zero length', () => {
+    const snapshot = fixtureSnapshot();
+    const packed = packMpcweb({
+      snapshot,
+      appVersion: '1.2.3',
+      samples: [{ sampleId, bytes: new Uint8Array(0) }],
+    });
+    expect(unpackMpcweb(packed).samples.get(sampleId)).toEqual(new Uint8Array(0));
+  });
+});
+
+// Issue #99: three layers each assumed a different one was checking, so an archive missing
+// half its audio imported with no error and the user found out by pressing play.
+describe('mpcweb import — a damaged archive fails loudly (spec §9.6)', () => {
+  it('refuses an archive whose snapshot declares a sample the archive does not carry', () => {
+    const snapshot = fixtureSnapshot();
+    const packed = packMpcweb({ snapshot, appVersion: '1.2.3', samples: [] });
+    expect(() => unpackMpcweb(packed)).toThrow(/damaged/i);
+  });
+
+  it('names the missing audio, so the message is actionable', () => {
+    const snapshot = fixtureSnapshot();
+    const packed = packMpcweb({ snapshot, appVersion: '1.2.3', samples: [] });
+    expect(() => unpackMpcweb(packed)).toThrow(/kick/);
+  });
+
+  it('accepts an archive carrying audio no row references, which harms nothing', () => {
+    const snapshot = fixtureSnapshot();
+    const spare = '00000000-0000-4000-8000-0000000000ff';
+    const packed = packMpcweb({
+      snapshot,
+      appVersion: '1.2.3',
+      samples: [
+        { sampleId, bytes: new Uint8Array([1]) },
+        { sampleId: spare, bytes: new Uint8Array([2]) },
+      ],
+    });
+    expect(() => unpackMpcweb(packed)).not.toThrow();
+  });
+
+  it('rejects a project.json from an unknown snapshot version', () => {
+    // Only the manifest was version-gated; the snapshot's own `version` was parsed and then
+    // ignored, so one claiming v999 was accepted (issue #99).
+    const snapshot = { ...fixtureSnapshot(), version: 999 };
+    expect(() => parseSnapshot(JSON.stringify(snapshot))).toThrow(/version/i);
+  });
+
+  it('rejects an id that is not the UUID the substring rewrite relies on', () => {
+    const snapshot = fixtureSnapshot();
+    snapshot.project = { ...snapshot.project, id: 'a' };
+    expect(() => remapSnapshot(snapshot)).toThrow(/corrupt|identifier/i);
+  });
+});
+
+// Issue #26: `unzipSync` inflated with no cap on entry count, per-entry size or running
+// total, so a ~1 MB archive of compressible data could reach gigabytes inside the pack
+// worker before the section 9.7 headroom check ever ran.
+describe('mpcweb import — bounded decompression (spec §9.6, §9.7)', () => {
+  /** A well-formed archive whose one sample entry inflates to `size` compressible bytes. */
+  function bombArchive(size: number): Uint8Array {
+    const snapshot = fixtureSnapshot();
+    return zipSync(
+      {
+        'manifest.json': strToU8(JSON.stringify(buildManifest({ id: projectId, name: 'Demo' }, '1.0.0'))),
+        'project.json': strToU8(serialiseSnapshot(snapshot)),
+        ['samples/' + sampleId + '.wav']: new Uint8Array(size),
+      },
+      { level: 9 },
+    );
+  }
+
+  const budget = { maxEntries: 16, maxEntryBytes: 1 << 20, maxTotalBytes: 1 << 20 };
+
+  it('refuses an entry that inflates past the per-entry ceiling', () => {
+    expect(() => unpackMpcweb(bombArchive(64 * 1024), { ...budget, maxEntryBytes: 1024 })).toThrow(
+      /too large/i,
+    );
+  });
+
+  it('refuses an archive that inflates past the running total', () => {
+    expect(() => unpackMpcweb(bombArchive(64 * 1024), { ...budget, maxTotalBytes: 1024 })).toThrow(
+      /too large/i,
+    );
+  });
+
+  it('refuses an archive with more entries than the cap allows', () => {
+    const entries: Record<string, Uint8Array> = {};
+    for (let index = 0; index < 12; index++) entries['samples/pad-' + index + '.wav'] = new Uint8Array([1]);
+    expect(() => unpackMpcweb(zipSync(entries), { ...budget, maxEntries: 4 })).toThrow(/too many/i);
+  });
+
+  it('stops before holding the bytes, not after', () => {
+    // 4 MiB under a 1 KiB ceiling: the refusal must arrive without the 4 MiB ever being
+    // assembled, which is the whole point of checking while unpacking.
+    expect(() => unpackMpcweb(bombArchive(4 * 1024 * 1024), { ...budget, maxEntryBytes: 1024 })).toThrow(
+      /too large/i,
+    );
+  });
+
+  it('lets a legitimate archive through the default budget untouched', () => {
+    const snapshot = fixtureSnapshot();
+    const bytes = new Uint8Array(256).fill(7);
+    const packed = packMpcweb({ snapshot, appVersion: '1.2.3', samples: [{ sampleId, bytes }] });
+    expect(unpackMpcweb(packed).samples.get(sampleId)).toEqual(bytes);
+  });
+
+  it('reports a malformed archive as unreadable rather than leaking a zip internal', () => {
+    expect(() => unpackMpcweb(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))).toThrow(/could not be read/i);
   });
 });

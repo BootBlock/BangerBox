@@ -9,6 +9,7 @@
  */
 import { z } from 'zod';
 import { DbError, isSerialisedDbError, type SerialisedDbError } from './errors';
+import { withStorageRetry } from './retry';
 import type { IDatabaseDriver, SqlExecuteResult, SqlParams, SqlRow, SqlStatement } from './driver';
 
 /** Snapshot of the live database/VFS state, returned by `init` and `diagnostics`. */
@@ -167,20 +168,20 @@ export class WorkerDatabaseDriver implements IDatabaseDriver {
   }
 
   query<TRow = SqlRow>(sql: string, params?: SqlParams): Promise<TRow[]> {
-    return this.#send<TRow[]>({ kind: 'query', sql, params });
+    return this.#sendRetrying<TRow[]>({ kind: 'query', sql, params });
   }
 
   async queryOne<TRow = SqlRow>(sql: string, params?: SqlParams): Promise<TRow | undefined> {
-    const rows = await this.#send<TRow[]>({ kind: 'query', sql, params });
+    const rows = await this.#sendRetrying<TRow[]>({ kind: 'query', sql, params });
     return rows[0];
   }
 
   execute(sql: string, params?: SqlParams): Promise<SqlExecuteResult> {
-    return this.#send<SqlExecuteResult>({ kind: 'execute', sql, params });
+    return this.#sendRetrying<SqlExecuteResult>({ kind: 'execute', sql, params });
   }
 
   async transaction(statements: readonly SqlStatement[]): Promise<void> {
-    await this.#send<null>({ kind: 'transaction', statements });
+    await this.#sendRetrying<null>({ kind: 'transaction', statements });
   }
 
   async close(): Promise<void> {
@@ -206,6 +207,21 @@ export class WorkerDatabaseDriver implements IDatabaseDriver {
     this.#worker.removeEventListener('messageerror', this.#handleWorkerFailure);
     this.#worker.terminate();
     this.#rejectAll(new DbError('UNKNOWN', 'The database driver was disposed.'));
+  }
+
+  /**
+   * Send a data request under the storage retry policy (spec §9.2, issue #98).
+   *
+   * Only the three data operations go through here. `init`, `diagnostics`, `exportBinary`
+   * and `close` do not: a boot that reports contention has a different remedy (Safe Mode),
+   * and retrying `close` would hold the exclusive OPFS lock longer than the caller asked.
+   *
+   * Retrying is safe for all three because a statement that reported BUSY never ran and a
+   * transaction that failed rolled back (`db.worker.ts` `runTransaction`) — so the second
+   * attempt starts from the state the first one did.
+   */
+  #sendRetrying<T>(request: DbRequest): Promise<T> {
+    return withStorageRetry(() => this.#send<T>(request));
   }
 
   #send<T>(request: DbRequest): Promise<T> {

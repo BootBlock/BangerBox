@@ -96,6 +96,42 @@ export interface AudioProbe {
   }>;
   /** Factory catalogue fetch → kit merge → demo install over the real path (spec §9.8). */
   factoryInstallProof: () => Promise<FactoryInstallResult>;
+  /** A project switch over work autosave could not write refuses (spec §4.4, issue #103). */
+  refusedSwitchProof: () => Promise<RefusedSwitchResult>;
+  /** OPFS tells "absent" from "could not tell" over real handles (spec §9.2, issue #98). */
+  storagePolicyProof: () => Promise<StoragePolicyResult>;
+}
+
+/** Outcome of the §4.4 refused-switch proof (see {@link refusedSwitchProof}). */
+export interface RefusedSwitchResult {
+  /** The project that was open before the switch was attempted. */
+  readonly projectBefore: string;
+  /** The project open after it — the SAME one, because the switch was refused. */
+  readonly projectAfter: string;
+  /** Whether `loadProject` rejected rather than proceeding. */
+  readonly refused: boolean;
+  /** The refusal the user is shown; it must name what could not be saved. */
+  readonly message: string;
+  /** The §4.4 unsaved dot, which must still be up behind the refusal. */
+  readonly stillModified: boolean;
+  /** The switch succeeds once the unwritable work is gone. */
+  readonly switchedAfterClearing: boolean;
+}
+
+/** Outcome of the §9.2 storage-policy proof (see {@link storagePolicyProof}). */
+export interface StoragePolicyResult {
+  /** A write then read of the same bytes through the retrying atomic write (spec §9.7). */
+  readonly roundTripped: boolean;
+  /** No `.tmp-` artefact is left in the directory afterwards (spec §9.7). */
+  readonly noTempLeftBehind: boolean;
+  /** `fileExists` answers false for a path that is genuinely absent. */
+  readonly absentReportsFalse: boolean;
+  /** Deleting an absent file is idempotent, not an error. */
+  readonly deleteAbsentSucceeds: boolean;
+  /** Deleting outside the two §9.1 content roots is still refused. */
+  readonly deleteOutsideRootsRefused: boolean;
+  /** A non-`NotFoundError` failure propagates instead of reading as "absent" (issue #98). */
+  readonly ioFailurePropagates: boolean;
 }
 
 /** Outcome of the §9.8 factory install proof (see {@link factoryInstallProof}). */
@@ -513,6 +549,121 @@ async function lfoPhaseStart(): Promise<{ unshifted: number; quarterTurn: number
   return { unshifted: unshifted.firstSample, quarterTurn: quarterTurn.firstSample };
 }
 
+/**
+ * The §4.4 refused switch (issue #103), over the real autosave queue and a real project switch.
+ *
+ * The failure is injected as a dirty key no flush path can write — `flushDirtyKeys` rejects it
+ * with `UnflushableKeyError`, exactly as it does for a project that is no longer the active one.
+ * That is the honest shape of the defect: the flush ran, it did not write, and the switch used
+ * to proceed over it anyway while hydration cleared the dot that represented the loss.
+ */
+async function refusedSwitchProof(): Promise<RefusedSwitchResult> {
+  const { markDirty } = await import('@/core/project/dirty');
+  const projectBefore = useProjectStore.getState().projectId;
+
+  // A second project to switch TO, created before the unwritable work exists.
+  const target = await projectService.newProject('Switch Target');
+  await projectService.loadProject(projectBefore);
+
+  markDirty('settings:no-flush-path-exists');
+
+  let refused = false;
+  let message = '';
+  try {
+    await projectService.loadProject(target);
+  } catch (error) {
+    refused = true;
+    message = error instanceof Error ? error.message : String(error);
+  }
+
+  const projectAfter = useProjectStore.getState().projectId;
+  const stillModified = useProjectStore.getState().modifiedSinceLastSave;
+
+  // The queue drops a permanently unflushable key (§14 issue #72), so a second attempt has
+  // nothing outstanding and proceeds — the user is warned once, never trapped.
+  let switchedAfterClearing = false;
+  try {
+    await projectService.loadProject(target);
+    switchedAfterClearing = useProjectStore.getState().projectId === target;
+  } catch {
+    switchedAfterClearing = false;
+  }
+
+  return { projectBefore, projectAfter, refused, message, stillModified, switchedAfterClearing };
+}
+
+/**
+ * The §9.2 storage policy over REAL OPFS handles (issue #98). The unit suite drives an
+ * in-memory fake, so this is the only place §13.5's "real OPFS path" is exercised for it.
+ */
+async function storagePolicyProof(): Promise<StoragePolicyResult> {
+  const { deleteFile, fileExists, projectSamplesRoot, readFile, writeFileAtomic } =
+    await import('@/core/storage/opfs');
+  const projectId = useProjectStore.getState().projectId;
+  const path = `${projectSamplesRoot(projectId)}/probe-storage-policy.wav`;
+  const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+
+  const absentReportsFalse = (await fileExists(path)) === false;
+
+  await writeFileAtomic(path, bytes);
+  const read = new Uint8Array(await (await readFile(path)).arrayBuffer());
+  const roundTripped = read.length === bytes.length && read.every((v, i) => v === bytes[i]);
+
+  // A temp artefact left behind would sit in the user's quota permanently and invisibly.
+  const root = await navigator.storage.getDirectory();
+  const names: string[] = [];
+  const segments = projectSamplesRoot(projectId).replace(/^\//, '').split('/');
+  let directory = root;
+  for (const segment of segments) directory = await directory.getDirectoryHandle(segment);
+  for await (const name of (directory as unknown as { keys(): AsyncIterableIterator<string> }).keys()) {
+    names.push(name);
+  }
+  const noTempLeftBehind = !names.some((name) => name.includes('.tmp-'));
+
+  await deleteFile(path);
+  let deleteAbsentSucceeds = true;
+  try {
+    await deleteFile(path); // already gone: idempotent, not an error
+  } catch {
+    deleteAbsentSucceeds = false;
+  }
+
+  let deleteOutsideRootsRefused = false;
+  try {
+    await deleteFile('/bangerbox.sqlite3');
+  } catch {
+    deleteOutsideRootsRefused = true;
+  }
+
+  // A failure that is NOT "absent" must reach the caller. Real OPFS will not produce one on
+  // demand, so the one seam that can is the directory lookup itself.
+  let ioFailurePropagates = false;
+  const storage = navigator.storage;
+  const original = storage.getDirectory.bind(storage);
+  Object.defineProperty(storage, 'getDirectory', {
+    configurable: true,
+    value: async () => {
+      throw new DOMException('device is on fire', 'NotReadableError');
+    },
+  });
+  try {
+    await fileExists(path);
+  } catch (error) {
+    ioFailurePropagates = error instanceof DOMException && error.name === 'NotReadableError';
+  } finally {
+    Object.defineProperty(storage, 'getDirectory', { configurable: true, value: original });
+  }
+
+  return {
+    roundTripped,
+    noTempLeftBehind,
+    absentReportsFalse,
+    deleteAbsentSucceeds,
+    deleteOutsideRootsRefused,
+    ioFailurePropagates,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -538,5 +689,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     packRoundTrip,
     samplePipelineProof: () => samplePipelineProof(engine),
     factoryInstallProof,
+    refusedSwitchProof,
+    storagePolicyProof,
   };
 }

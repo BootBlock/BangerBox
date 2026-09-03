@@ -6,11 +6,11 @@
  */
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { clampInt } from '@/core/math';
+import { clamp, clampInt } from '@/core/math';
 import { dirtyKey, markDirty } from '@/core/project/dirty';
 import { getProjectService } from '@/core/project/service';
 import type { SaveOutcome } from '@/core/project/autosave';
-import { GLOBAL_INSERT_LIMIT_RANGE, type BitDepth } from '@/core/project/schemas';
+import { BPM_RANGE, DEFAULT_BPM, GLOBAL_INSERT_LIMIT_RANGE, type BitDepth } from '@/core/project/schemas';
 
 /** Project sample-rate options (spec §1.3 #18). */
 export const SAMPLE_RATES = [44_100, 48_000, 96_000] as const;
@@ -23,6 +23,15 @@ export interface ProjectSettings {
   readonly sampleRate: number;
   readonly bitDepth: BitDepth;
   readonly globalInsertLimit: number;
+  /**
+   * The project's default tempo — the §9.3 `projects.bpm_default` column (issue #93).
+   *
+   * It is here rather than only being read at hydration because it is the OTHER half of the
+   * §4.2 effective tempo: `sequences.tempo` is nullable, and NULL means this. Something has
+   * to hold it for the mirror to be re-derivable at all, and a project with no sequence yet
+   * has nowhere else to record a tempo the user set.
+   */
+  readonly bpmDefault: number;
 }
 
 interface ProjectState extends ProjectSettings {
@@ -37,6 +46,8 @@ interface ProjectState extends ProjectSettings {
   setSampleRate: (sampleRate: SampleRate) => void;
   setBitDepth: (bitDepth: BitDepth) => void;
   setGlobalInsertLimit: (limit: number) => void;
+  /** Set the §9.3 project default tempo (spec §7.2; issue #93). */
+  setBpmDefault: (bpm: number) => void;
 
   // Lifecycle — delegated to the registered service (spec §4.2, §4.4).
   newProject: (name?: string) => Promise<string>;
@@ -52,6 +63,7 @@ const UNLOADED: ProjectSettings = {
   sampleRate: 48_000,
   bitDepth: '24',
   globalInsertLimit: 4,
+  bpmDefault: DEFAULT_BPM,
 };
 
 /** Mark the open project dirty (settings edits persist — spec §4.4). */
@@ -81,6 +93,10 @@ export const useProjectStore = create<ProjectState>()(
     },
     setGlobalInsertLimit: (limit) => {
       set({ globalInsertLimit: clampInt(limit, GLOBAL_INSERT_LIMIT_RANGE[0], GLOBAL_INSERT_LIMIT_RANGE[1]) });
+      markProjectDirty(get().projectId);
+    },
+    setBpmDefault: (bpm) => {
+      set({ bpmDefault: clamp(bpm, BPM_RANGE[0], BPM_RANGE[1]) });
       markProjectDirty(get().projectId);
     },
 

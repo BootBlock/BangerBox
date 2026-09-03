@@ -145,6 +145,9 @@ export async function hydrateStores(repositories: Repositories, projectId: strin
   const activeSeq = sequenceRows[0] ? rowToSequence(sequenceRows[0]) : null;
   const transport = useTransportStore.getState();
   transport.setActiveSequenceId(activeSeq?.id ?? null);
+  // The §4.2 mirror, set here as part of the §3.4 hydration order (DB -> store -> graph -> UI).
+  // `subscribeTransportMirror` keeps it true from here on, including across an undo and a
+  // change of active sequence (issue #93); this is the initial value it starts from.
   transport.setBpm(activeSeq?.tempo ?? projectRow.bpm_default);
   if (activeSeq) transport.setSwing(activeSeq.swingAmount, activeSeq.swingDivision);
   // spec §7.9: a project saved before this field existed loads as "stops at the end".
