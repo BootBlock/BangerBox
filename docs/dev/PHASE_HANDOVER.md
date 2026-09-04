@@ -1,14 +1,28 @@
-# BangerBox — Phase Handover (after the bounce-mixer closure)
+# BangerBox — Phase Handover (after the pad-strip closure)
 
-Generated at the close of the §9.5 bounce-mixer work per Protocol Alpha (spec §13.1). A new
+Generated at the close of the §4.2 pad-strip work per Protocol Alpha (spec §13.1). A new
 session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the bounce-mixer work merged to `main` (`--no-ff`). All eight §12 phases were already
-complete; this was a defect closure against §9.5/§5.2, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1874 unit tests**, `test:e2e` real-browser smoke
-(dev + offline, **70/70 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+**State:** the pad-strip work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §4.2/§6, not a new phase, so `package.json`
+`config.phase` remains **"8"**. Suite: **1904 unit tests**, `test:e2e` real-browser smoke
+(dev + offline, **72/72 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
+
+**A pad's §4.2 channel strip is a PROJECTION of its §6 pad, maintained in both directions by
+`src/store/derive/padStripMirror.ts`.** It publishes the active drum program's pads as strips —
+without which §8.5.6's Pads tab was inert on every freshly loaded project, because
+`useMixerStore.commit` returns before writing when no strip exists — and it writes an edited
+strip back into the §6 payload, without which `flushProgram` saved the pad unchanged. It is
+store → store and so deliberately outside `syncLayer/`, beside `transportMirror`; the publish
+half MOVED there out of `syncLayer/programSync`, and `padStrips.ts` moved with it to
+`src/store/padStrips.ts`. See §2 (as) and §4.
+
+**Only the fields a side actually CHANGED are written back.** `program:<id>.pad:<idx>.amp` and
+`mixer.pad:<id>:<idx>.level` are two registered §7.8 addresses for one value; copying whole
+strips would carry a stale one back over the other and turn a display disagreement into data
+loss. That remaining disagreement is issue #140.
 
 **Every §9.5 bounce renders the §5.2 mixer**, because the offline graph IS the live one:
 `MixerGraph`, `createAudioBridge` and `VoicePool` all take a `BaseAudioContext`, so a render
@@ -26,8 +40,11 @@ behaviour as well as offline, deliberately.
 insert chain used to be compacted and indexed 0-based, so an address reached the wrong effect or
 none. `ChannelHandle.setInserts` now takes one entry per slot, `null` where empty.
 
-**No §9.2 migration was added and `PRAGMA user_version` is unchanged.** Nothing this work touched
-is persisted: the render reads the stores, and the §7.1.3 wire is unchanged.
+**No §9.2 migration was added and `PRAGMA user_version` is unchanged.** A pad's mixer values
+have always lived in the §6 payload the §9.3 `programs.payload` column holds, and the strip
+existed only in memory — so nothing on disk is in a shape to correct. The payload is the SOURCE
+the strip is derived from, and §4.4 hydration, a §9.6 import and a §9.8 pack all already reach
+it. Before this, the §9.5 render's own values were not persisted at all.
 
 **`SCHEDULER_PROTOCOL_VERSION` is 2** (§7.1.3), unchanged by this work. It was bumped by the
 entry-index work because `songSequence` carries §7.9 entries rather than a repeat-expanded id
@@ -65,6 +82,56 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(as) — the pad-strip closure (§4.2, §4.3, §6, §9.3).** The ⚑ items below are settled
+  policy a new session should treat as binding, not as spec text:
+  - **A pad's §4.2 channel strip is a PROJECTION of its §6 pad, and one module maintains it
+    in both directions.** `src/store/derive/padStripMirror.ts` publishes the active drum
+    program's pads as strips and writes an edited strip back into the payload. Neither half
+    existed: a project just loaded had no pad strip at all, so every control on §8.5.6's Pads
+    tab was inert; and `flushProgram` serialised a `useProgramStore` the edit never reached.
+  - **The write-back is store → store, which is why it is NOT the §4.3 sync layer.** §4.3
+    exists so that ONE place touches audio nodes in response to state, and that sentence means
+    less every time a store → store subscriber is filed under it. `transportMirror` is the
+    precedent and says so in as many words.
+  - **The PUBLISH half moved there too, and `padStrips.ts` with it.** It was already a
+    store → store write (`upsertChannel`) living in `syncLayer/programSync` for want of
+    anywhere else. One module now owns both directions of one mapping, so neither can be
+    forgotten when §6 or §4.2 gains a field. `subscribeProgramSync` keeps only
+    `bridge.onActiveProgramChanged`, which is a genuine §4.3 hook.
+  - **Only the fields a side CHANGED are written back, and that is load-bearing.**
+    `program:<id>.pad:<idx>.amp` and `mixer.pad:<id>:<idx>.level` are two registered §7.8
+    addresses for one value — `programParamChange` maps `amp`/`pan` to `channelLevel`/
+    `channelPan` — and only the mixer side writes through. Copying whole strips would carry a
+    stale level back over a program-side edit: data loss, not a stale reading. Issue #140 is
+    the reading that remains.
+  - **Not in `useMixerStore.commit`.** A strip reaches the store through SEVEN actions plus
+    `upsertChannel` (§8.5.6's insert reorder calls it directly). Writing through from the
+    commit would have covered the fader and left the insert chain — the half #133 is named
+    after — and the eighth route added later is the one that gets forgotten. A subscriber on
+    `channels` sees all of them, which is `mixerSync`'s own argument one layer down.
+  - **Not in `flushProgram` either.** That makes the column right and leaves the two stores
+    disagreeing everywhere else — a §9.5 render, `ensureProgramChannel`'s seeding, a §9.6
+    export's `dumpSnapshot`. §1.3 #16 makes Zustand the runtime truth precisely so nothing
+    has to reconcile it at the storage boundary.
+  - **The publish is driven from the MIXER side as well as the program side, and both are
+    needed.** §4.4 hydration calls `setPrograms` before `setChannels`, so a program-side
+    publish alone writes into the outgoing map and `setChannels` wipes it; and `loadProject`
+    on the project ALREADY OPEN re-selects the same `activeProgramId`, which a
+    `subscribeWithSelector` selector does not report as a change at all.
+  - **`mute` and `solo` are NOT mirrored**, because §6's `Pad.mixer` defines no field for
+    them. A track's mute persists because a track strip IS the persisted object; a pad's is a
+    projection of a §6 record with nowhere to put one. Adding one is a §13.6 halt.
+  - **A keygroup's program-scope mixer is a DIFFERENT defect.** §6 gives it one `mixer` and
+    `inserts` rather than per-pad ones, and nothing publishes or renders a strip for it — so
+    its values sound and nothing can edit them. Unreachable, not unpersisted: issue #139.
+  - **No §9.2 migration, because the values already live in the payload.** The strip existed
+    only in memory, so nothing on disk is in a shape to correct — the §14 (ap) reasoning in
+    its own form.
+  - **A §9.5 render's two sources now agree.** (ar)'s "a pad channel is seeded from the §6
+    payload and then overwritten by the §4.2 store" is no longer moot and no longer able to
+    matter: both carry the same numbers, and a bounce after a reload renders the strip the
+    user set.
 
 - **(ar) — the bounce-mixer closure (§5.2, §9.5, §7.8, §4.3).** The ⚑ items below are settled
   policy a new session should treat as binding, not as spec text:
@@ -468,6 +535,17 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   never sees this because it reaches these probes late in its run. A probe that owns its own
   arrangement should `await projectService.loadProject(projectId)` first, as `insertDefaultsProof`
   and `bounceMixProof` do.
+- **A §11.4 probe that ends on `loadProject` must sit where the NEXT step does not read the
+  arrangement a previous probe left in the stores.** `sequenceFilterProof` hydrates its own
+  sequences and tracks and does not restore, and the Grid step after it reads
+  `activeSequenceId`'s tracks — so a probe reloading the §9.3 rows between them left the Grid
+  with no canvas. `padStripProof` sits beside the two §5.7 insert-defaults steps instead,
+  whose probe also ends on a fresh `loadProject`. The dev pass passed and the offline one did
+  not, which is the shape this failure takes.
+- **A §11.4 probe that is about a SAVE and a RELOAD must own its arrangement as real §9.3
+  ROWS**, not as a `useSequenceStore.hydrate`, and must create them rather than borrow the
+  project's: by the time the run reaches the late steps, earlier ones have opened imported and
+  factory projects and what a track points at is no longer predictable.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
@@ -477,6 +555,28 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
+
+**A pad's mixer strip (spec §4.2, §6, §8.5.6):**
+
+- **`src/store/padStrips.ts` is the ONE mapping between a §6 pad and its §4.2 strip, in both
+  directions.** `padStripsForProgram` forward, `padStripEdit` + `padWithStripEdit` back.
+  Pure, no store or audio access. It is no longer under `syncLayer/`, because nothing about it
+  is store → graph.
+- **`src/store/derive/padStripMirror.ts` is the subscriber that runs both**, registered by
+  `startProjectSession` beside `subscribeTransportMirror` and disposed by
+  `stopProjectSession`. A new way for a §6 value to reach a strip, or a strip value to reach
+  the payload, goes through it — not through a store action and not through `persist.ts`.
+- **`padStripEdit` reports only what the strip MOVED**, and returns null for a strip with no
+  predecessor. A strip that has just entered the store carries no edit; treating one as an edit
+  writes the projection straight back over its own source.
+- **`useProgramStore.applyPadStripEdit` is the write, and it records NO undo entry and marks
+  NOTHING dirty.** The `useMixerStore` commit that moved the strip already did both —
+  `mixerChannelDirtyKey` maps a `pad:` channel to `program:<id>`, and the commit's revert
+  closure restores the strip, which the mirror then follows out again. One fader move is one
+  Ctrl+Z; `padStripMirror.test.ts` pins the depth.
+- **The "never clobber an existing strip" guard is what bounds the re-entrancy.** The publish
+  runs from inside the `channels` subscription, so its `upsertChannel` re-enters — and finds
+  every strip present.
 
 **Building a §9.5 render (spec §5.2, §9.5):**
 
@@ -907,7 +1007,13 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store slice, field or action changed this work.** The §9.5 render READS `useMixerStore`,
+**No store slice or field changed this work; `useProgramStore` gained ONE action.**
+`applyPadStripEdit(programId, padIndex, edit)` writes a §4.2 pad-strip edit into the §6 pad,
+with no undo entry and no autosave mark — see §4. `src/store/syncLayer/padStrips.ts` moved to
+`src/store/padStrips.ts` and gained the reverse mapping; `src/store/derive/padStripMirror.ts`
+is new beside `transportMirror.ts`. `subscribeProgramSync` no longer writes `useMixerStore`.
+
+From the previous work, and unchanged: **no store slice, field or action changed.** The §9.5 render READS `useMixerStore`,
 `useProgramStore` and `useSequenceStore` and writes none of them; `AudioBridge.resyncAll` gained an
 optional predicate, which is a graph concern rather than a store one.
 
@@ -1066,12 +1172,40 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#134 is CLOSED by this work.** One new issue was filed while closing it — a §7.8 lane on a §6
+**#133 is CLOSED by this work.** Two new issues were filed while closing it — a keygroup's
+program-scope mixer sounds and nothing can edit it (#139), and a §7.8 `program:….amp` edit
+leaves the Mixer's own pad fader stale until a reload (#140). Nothing was added to the
+`check:orphans` allowlist.
+
+**Honest scope notes for the pad-strip work:**
+
+- **A §7.8 `program:<id>.pad:<idx>.amp` or `.pan` edit still leaves the Mixer's fader stale**
+  until a reload (#140), and that is the reason the write-back is field-diffed rather than
+  whole-strip. The values themselves are correct on both sides; only the reading is old.
+- **`mute` and `solo` on a pad strip are still session state**, because §6 defines no field.
+- **A keygroup's program-scope strip is still unreachable** (#139).
+- **The mirror writes on the COMMIT, never on a §4.1 transient**, because `setTransient` does
+  not write the store at all (issue #27). A gesture in flight reaches the graph, and reaches the
+  payload when it is let go.
+- **Undo does not re-mark dirty**, which is true of every commit in the project and unchanged
+  here. The mirror follows the strip back on an undo; whether that reaches disk depends on the
+  same rule it always did.
+- **`padStripProof` leaves its imported tone sample in the library**, as `bounceMixProof`
+  does. It deletes the three rows it created and reloads.
+- **Every regression test was proven against the code it was written to catch**, by five
+  mutations: no write-back at all — the defect as filed (8 failures); the pre-fix publish, on an
+  active-program change alone (16, and the 5 that pass are the guards); a `padStripEdit` that
+  copies the whole strip (7); a `padWithStripEdit` that never hands the same pad back (1); and
+  a write-back through the undoable `updateProgram` (1, after the undo assertion was
+  strengthened to read BOTH stores — it passed before, which is what said the assertion was too
+  weak).
+
+**#134 was CLOSED by the previous work.** One new issue was filed while closing it — a §7.8 lane on a §6
 sound-design parameter still renders as nothing (#138), listed below. Nothing was added to the
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-From the previous work: **#132 and #131 are CLOSED**, and #133, #135 and #137 remain open.
+From the previous work: **#134, #132 and #131 are CLOSED**, and #135, #137 and #138 remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
@@ -1082,10 +1216,13 @@ From the previous work: **#132 and #131 are CLOSED**, and #133, #135 and #137 re
   scheduling them. Confirmed against the sync layer while measuring #132 (the smoke's failure
   message counted four tracks where the probe had hydrated two), filed as issue #137, and
   deliberately not fixed there: it is a withdrawal defect, not a selection one.
-- **#133** a pad's mixer-strip edits never reach the §6 program payload, so level, pan, sends and
-  the whole insert chain on the Mixer's Pads tab are lost on reload. `mixerChannelDirtyKey` marks
-  the right entity dirty and `flushProgram` serialises `useProgramStore`, which nothing writes the
-  strip back into — so the save reports success and writes the program unchanged.
+- **#140** a §7.8 `program:<id>.pad:<idx>.amp` or `.pan` edit changes the pad and the graph and
+  leaves the Mixer's own fader showing the old position until a reload. Two registered §7.8
+  addresses reach one value and only the mixer side writes through; the publish deliberately
+  never clobbers an existing strip, which is what leaves the reading stale. No data is lost.
+- **#139** a keygroup program's §6 program-scope `mixer` and `inserts` sound — `ensureProgramChannel`
+  seeds the channel from the payload — and no surface can edit them: §8.5.6 renders no strip for a
+  keygroup, `padStripsForProgram` publishes none, and the §7.8 address resolves to nothing.
 - **#135** `addInsert` ignores the §1.3.1 slot limit. Past slot 8 the §7.8 address grammar stops
   parsing, so the panel's own knobs, every automation lane and every Q-Link binding on that slot
   go dead while the effect still sounds. Hit while writing the #131 browser proof, whose gesture
@@ -1113,7 +1250,8 @@ From the previous work: **#132 and #131 are CLOSED**, and #133, #135 and #137 re
 - **A §7.8 lane on a per-voice §6 parameter still renders as nothing** — issue #138 above.
 - **A pad channel is seeded from the §6 payload and then overwritten by the §4.2 store where a
   strip exists.** For a pad of a program that is not the active one, `programSync` has published
-  no strip and the payload is the only value there is. Moot until #133 makes a pad strip persist.
+  no strip and the payload is the only value there is. Since #133 the two carry the same numbers,
+  so the order can no longer matter.
 - **Nothing bounds the number of automation events a long song schedules.** The
   `OfflineAudioContext` buffer dominates long before the event count matters — a §7.9 playlist at
   `MAX_SONG_SEGMENTS` is over 55 hours, ~76 GB of float samples — so the browser's own allocation
@@ -1178,7 +1316,7 @@ From the previous work: **#132 and #131 are CLOSED**, and #133, #135 and #137 re
 - **A pad's insert chain is completed in the MIXER store, not in the program payload.** §6
   `Pad.inserts` reach the graph through `programSync` → `upsertChannel`, which completes them, and
   the payload itself keeps whatever it holds. That is consistent and self-healing on every load —
-  and it is moot until #133 makes a pad strip persist at all.
+  and since #133 the mirror carries the completed record into the payload with the slot.
 - **`createInsert`'s merge is now dead weight for the application** and load-bearing only for the
   §11.2 offline render helpers, which legitimately pass a partial record. Removing it would break
   those; keeping it costs one object spread per insert built.
@@ -1374,6 +1512,6 @@ From the previous work: **#132 and #131 are CLOSED**, and #133, #135 and #137 re
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1874**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **70/70 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1904**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **72/72 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
