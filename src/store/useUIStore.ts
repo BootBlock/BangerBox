@@ -73,6 +73,14 @@ interface UIState {
   theme: Theme;
   /** Frozen at boot (spec §2.1); null until the capability gate has run. */
   capabilities: CapabilityReport | null;
+  /**
+   * Whether the browser granted persistent storage (spec §9.7), or null before the
+   * first-run request has answered. It lives here rather than in the one component that
+   * asks because §9.7's eviction warning has to be visible in all 12 modes, and the
+   * always-mounted surface that shows it is not the surface that makes the request
+   * (issue #51).
+   */
+  storagePersisted: boolean | null;
   toasts: Toast[];
   /** Parameters the currently focused panel offers Screen-mode Q-Links (spec §10.3). */
   focusedControlParams: QLinkFocusParam[];
@@ -83,6 +91,7 @@ interface UIState {
   setDragDropPayload: (payload: DragDropPayload | null) => void;
   setTheme: (theme: Theme) => void;
   setCapabilities: (report: CapabilityReport) => void;
+  setStoragePersisted: (persisted: boolean) => void;
   pushToast: (message: string, tone?: ToastTone) => string;
   dismissToast: (id: string) => void;
   setFocusedControlParams: (params: QLinkFocusParam[]) => void;
@@ -138,6 +147,7 @@ export const useUIStore = create<UIState>()(
     dragDropPayload: null,
     theme: 'dark', // spec §3.6 dark is the default aesthetic
     capabilities: null,
+    storagePersisted: null,
     toasts: [],
     focusedControlParams: [],
 
@@ -147,6 +157,7 @@ export const useUIStore = create<UIState>()(
     setDragDropPayload: (dragDropPayload) => set({ dragDropPayload }),
     setTheme: (theme) => set({ theme }),
     setCapabilities: (capabilities) => set({ capabilities }),
+    setStoragePersisted: (storagePersisted) => set({ storagePersisted }),
 
     pushToast: (message, tone = 'info') => {
       // A retrying failure says the same thing every tick. Refreshing the notice already on

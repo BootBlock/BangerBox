@@ -17,7 +17,7 @@ export { FieldLabel, type FieldLabelProps } from './FieldLabel';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { Pad, type PadProps } from './Pad';
 export { Knob, type KnobProps } from './Knob';
-export { Fader, type FaderProps } from './Fader';
+export { Fader, type FaderProps, type FaderOrientation } from './Fader';
 export { XYSurface, type XYSurfaceProps, type XYAxis } from './XYSurface';
 export { MeterCanvas } from './MeterCanvas';
 export { WaveformCanvas } from './WaveformCanvas';
@@ -28,7 +28,7 @@ export { ValueReadout, type ValueReadoutProps } from './ValueReadout';
 export { TextField, type TextFieldProps } from './TextField';
 export { Modal, type ModalProps } from './Modal';
 export { Toast, type ToastProps } from './Toast';
-export { LiveRegion, announce } from './LiveRegion';
+export { LiveRegion, announce, useAnnounce, type AnnounceUrgency } from './LiveRegion';
 export {
   formatValueText,
   normalisedToValue,

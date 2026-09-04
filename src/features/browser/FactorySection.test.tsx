@@ -91,8 +91,10 @@ describe('FactorySection failure handling (spec §8.5 item 7)', () => {
     );
     render(<FactorySection />);
 
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('HTTP 503');
+    // Reported as text, announced through the one §8.2 announcer — not as a `role="alert"`
+    // live region of its own (issue #34).
+    expect(await screen.findByText(/HTTP 503/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     // An empty list would read as "no factory content exists" — a different, wrong message.
     expect(screen.queryByRole('list', { name: 'Factory packs' })).not.toBeInTheDocument();
     expect(screen.queryByText(/no factory packs are available/i)).not.toBeInTheDocument();

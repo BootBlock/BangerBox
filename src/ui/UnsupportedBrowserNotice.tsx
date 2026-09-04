@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { BrowserInfo } from '@/core/platform/capabilities';
 import { LINKS } from '@/core/platform/links';
-import { Button } from './primitives';
+import { Button, useAnnounce } from './primitives';
 
 const DISMISS_KEY = 'bangerbox-browser-notice-dismissed';
 
@@ -31,11 +31,17 @@ function rememberDismissed(): void {
  * "passes the feature probes" is not the same as "tested", and untested engines will
  * have rough edges nobody has looked for. This says so once, plainly, and then gets out
  * of the way: dismissible, remembered, and never blocking.
+ *
+ * Announced through the single §8.2 announcer rather than through a `role="status"` of its
+ * own (issue #34), and politely: the app runs, so nothing has to be interrupted.
  */
 export function UnsupportedBrowserNotice({ browser }: { browser: BrowserInfo }) {
   const [dismissed, setDismissed] = useState(wasDismissed);
+  const hidden = browser.supported || dismissed;
 
-  if (browser.supported || dismissed) return null;
+  useAnnounce(hidden ? null : `${browser.name} isn’t supported yet`);
+
+  if (hidden) return null;
 
   function dismiss() {
     rememberDismissed();
@@ -44,7 +50,6 @@ export function UnsupportedBrowserNotice({ browser }: { browser: BrowserInfo }) 
 
   return (
     <div
-      role="status"
       data-testid="unsupported-browser-notice"
       className="fixed inset-x-0 bottom-0 z-50 flex justify-center p-3"
     >

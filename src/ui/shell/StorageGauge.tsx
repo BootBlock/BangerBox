@@ -6,11 +6,15 @@
  * importing samples — a dashboard the user last looked at an hour ago cannot serve that.
  *
  * It also owns the §9.7 first-run persistence request. That has to happen somewhere
- * always-mounted; the transport bar is the only thing on screen in all 12 modes.
+ * always-mounted; the transport bar is the only thing on screen in all 12 modes. The
+ * ANSWER goes to `useUIStore.storagePersisted` rather than staying here, because the
+ * warning §9.7 asks for is a strip of readable, dismissible text — `PlatformNotices` —
+ * and not the `title` attribute this gauge used to hide it in (issue #51).
  */
 import { useEffect, useState } from 'react';
 import { QUOTA_HARD_STOP_RATIO } from '@/core/constants';
 import { estimateStorage, requestPersistentStorage } from '@/core/storage/safeguards';
+import { useUIStore } from '@/store';
 
 /** Amber well before the hard stop, so there is time to free space (spec §9.7). */
 const WARN_RATIO = 0.75;
@@ -32,7 +36,7 @@ function formatBytes(bytes: number): string {
 
 export function StorageGauge() {
   const [estimate, setEstimate] = useState<{ usage: number; quota: number; ratio: number } | null>(null);
-  const [persisted, setPersisted] = useState<boolean | null>(null);
+  const persisted = useUIStore((s) => s.storagePersisted);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +51,7 @@ export function StorageGauge() {
       // First-run persistence request (spec §9.7), before the first estimate so the
       // gauge's eviction state is right from its first paint.
       const granted = await requestPersistentStorage();
-      if (!cancelled) setPersisted(granted);
+      if (!cancelled) useUIStore.getState().setStoragePersisted(granted);
       await refresh();
     })();
 
@@ -73,14 +77,16 @@ export function StorageGauge() {
     : warning
       ? ' — approaching the 90 % limit'
       : '';
-  const evictionText =
-    persisted === false ? ' Storage is not protected from eviction; install the app to protect it.' : '';
 
   return (
     <span
       data-testid="transport-storage"
       data-status={atHardStop ? 'full' : warning ? 'warn' : 'ok'}
-      title={`${usageText}${limitText}.${evictionText}`}
+      // The eviction sentence is deliberately NOT here any more: a `title` is unreachable
+      // by keyboard and, on a touch device, unreachable at all, which is not the persistent
+      // dismissible warning §9.7 asks for. `PlatformNotices` carries it; the ring below is
+      // the gauge's own echo of the same state (issue #51).
+      title={`${usageText}${limitText}.`}
       className="flex items-center gap-1.5"
     >
       <span

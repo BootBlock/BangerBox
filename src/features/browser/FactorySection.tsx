@@ -18,7 +18,7 @@ import {
   type FactoryPack,
 } from '@/core/project';
 import { useProjectStore, useUIStore } from '@/store';
-import { Button } from '@/ui/primitives';
+import { Button, useAnnounce } from '@/ui/primitives';
 import { refreshSamples } from '../sample-edit/sampleContext';
 
 /** en-GB size readout (spec §1.3.1 — `Intl`, no formatting library). */
@@ -31,6 +31,9 @@ function formatSize(bytes: number): string {
 export function FactorySection() {
   const [catalogue, setCatalogue] = useState<FactoryCatalogue | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Reported through the single §8.2 announcer rather than through a `role="alert"` of
+  // its own, which is a live region competing with it (issue #34).
+  useAnnounce(error, 'assertive');
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
   const [cached, setCached] = useState<Record<string, boolean>>({});
@@ -100,7 +103,7 @@ export function FactorySection() {
       {loading && <p className="text-xs text-bb-muted">Loading factory content…</p>}
 
       {error !== null && (
-        <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-bb-muted">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-bb-muted">
           <span>{error}</span>
           <Button label="Retry" size="sm" data-testid="factory-retry" onClick={retry} />
         </div>

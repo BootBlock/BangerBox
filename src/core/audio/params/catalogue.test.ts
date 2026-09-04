@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultChannelStrip, createEmptyInsertSlot } from '@/core/project/schemas';
 import type { ChannelStrip, DrumProgram } from '@/core/project/schemas';
 import { isAutomatable } from './registry';
-import { channelAutomatableParams, programAutomatableParams } from './catalogue';
+import { channelAutomatableParams, programAutomatableParams, resolveTargetUnit } from './catalogue';
 
 function stripWithInsert(id: string): ChannelStrip {
   const base = createDefaultChannelStrip(id);
@@ -70,5 +70,25 @@ describe('programAutomatableParams (spec §6, §7.8)', () => {
 
   it('offers nothing for a keygroup program, which has no pad index to address', () => {
     expect(programAutomatableParams({ ...program, type: 'keygroup' } as never)).toEqual([]);
+  });
+});
+
+describe('resolveTargetUnit (spec §8.2, issue #35)', () => {
+  const channels = { 'track:t1': stripWithInsert('track:t1') };
+
+  it('resolves an insert parameter unit against the effect actually in the slot', () => {
+    // The address alone cannot answer — the slot holds a delay, so `time` is milliseconds.
+    expect(
+      resolveTargetUnit({ kind: 'insertParam', channelId: 'track:t1', slot: 1, param: 'time' }, channels),
+    ).toBe('ms');
+    // Slot 2 is empty, so there is no effect to take a unit from.
+    expect(
+      resolveTargetUnit({ kind: 'insertParam', channelId: 'track:t1', slot: 2, param: 'time' }, channels),
+    ).toBe('');
+  });
+
+  it('answers the non-insert kinds without needing the mixer at all', () => {
+    expect(resolveTargetUnit({ kind: 'channelLevel', channelId: 'track:t1' }, {})).toBe('faderLevel');
+    expect(resolveTargetUnit({ kind: 'channelPan', channelId: 'track:t1' }, {})).toBe('pan');
   });
 });

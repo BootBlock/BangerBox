@@ -74,9 +74,18 @@ export function TransportBar() {
 
   return (
     <div
-      role="toolbar"
+      /*
+       * A labelled GROUP, not a toolbar (spec §8.2, issue #46). The WAI-ARIA toolbar
+       * pattern promises one tab stop with Left/Right moving between the controls — but
+       * this bar holds two `slider`s and two segmented controls, each of which owns the
+       * arrow keys for its own value. Announcing "toolbar" while an arrow silently changed
+       * the tempo was the defect; a roving tabindex would not have fixed it, because it
+       * would have taken the arrows away from the four controls that need them. `group`
+       * names the collection and promises no keyboard behaviour the bar does not have.
+       * The tab-stop count is answered by the shell's skip link instead.
+       */
+      role="group"
       aria-label="Transport"
-      aria-orientation="horizontal"
       className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-bb-line bg-bb-surface px-4 py-2"
     >
       <div className="flex items-center gap-2">
@@ -194,9 +203,12 @@ export function TransportBar() {
             modified ? 'bg-bb-warn' : 'bg-bb-line'
           }`}
         />
-        <span className="sr-only" aria-live="polite">
-          {modified ? 'Unsaved changes' : 'All changes saved'}
-        </span>
+        {/* Readable on demand, deliberately NOT a live region: the dot flips on every
+            burst of editing, so announcing each flip would talk over everything else the
+            §8.2 announcer has to say (issue #34). What the user needs said out loud —
+            a save that succeeded or failed — the Save button and the autosave toasts
+            already announce. */}
+        <span className="sr-only">{modified ? 'Unsaved changes' : 'All changes saved'}</span>
 
         <Button
           label="Save project now"

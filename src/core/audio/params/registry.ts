@@ -31,7 +31,7 @@ import {
   TUNE_SEMITONES_RANGE,
   type Range,
 } from '@/core/project/schemas';
-import { EFFECT_PARAM_RANGES, MIX_RANGE } from '@/core/audio/inserts/effectParams';
+import { EFFECT_PARAM_RANGES, MIX_RANGE, effectParamUnit } from '@/core/audio/inserts/effectParams';
 import type { EffectType } from '@/core/project/schemas';
 
 /** The registered automatable parameter kinds (spec §7.8). */
@@ -173,6 +173,55 @@ export function programParamPath(programId: string, padIndex: number, param: str
 }
 export function transportParamPath(param: TransportParam): string {
   return `transport.${param}`;
+}
+
+/**
+ * Units for the §7.8 program-scope leaves, beside the ranges they belong with. Spec §8.2
+ * requires human units in `aria-valuetext`; a registry that owns what a value may BE is
+ * where what it is MEASURED IN belongs too (issue #35). `filter.resonance` is absent
+ * because a Q is genuinely dimensionless, and a bare number is what such a control reads
+ * on hardware too.
+ */
+const PROGRAM_PARAM_UNITS: Readonly<Record<string, string>> = {
+  'filter.cutoff': 'Hz',
+  pitch: 'st',
+  amp: 'faderLevel',
+  pan: 'pan',
+  'amp.attack': 'ms',
+  'amp.release': 'ms',
+};
+
+/** Units for the §10.3 global transport macros. */
+const TRANSPORT_PARAM_UNITS: Readonly<Record<TransportParam, string>> = {
+  swing: '%',
+  bpm: 'bpm',
+};
+
+/**
+ * The unit or domain a target's value is read in (spec §8.2) — the sibling of
+ * {@link targetRange}, resolved the same way, so a control cannot draw a parameter against
+ * one table and announce it against another. Empty means genuinely dimensionless.
+ *
+ * Insert params need the same `effectType` {@link targetRange} needs, and for the same
+ * reason: the units belong to the EFFECT in the slot (spec §5.7).
+ */
+export function targetUnit(target: ParamTarget, effectType?: EffectType): string {
+  switch (target.kind) {
+    case 'channelLevel':
+      return 'faderLevel';
+    case 'channelPan':
+      return 'pan';
+    case 'channelSend':
+      return 'fraction';
+    case 'insertParam': {
+      if (!effectType) return target.param === 'mix' ? 'fraction' : '';
+      return effectParamUnit(effectType, target.param);
+    }
+    case 'programParam':
+      return PROGRAM_PARAM_UNITS[target.param] ?? '';
+    case 'transportParam':
+      return TRANSPORT_PARAM_UNITS[target.param];
+  }
 }
 
 /**

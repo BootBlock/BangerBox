@@ -46,8 +46,12 @@ describe('UnsupportedBrowserNotice (spec §1.3 #15)', () => {
     expect(screen.queryByTestId('unsupported-browser-notice')).not.toBeInTheDocument();
   });
 
-  it('never blocks the app — it is a status, not an alert', () => {
-    render(<UnsupportedBrowserNotice browser={firefox} />);
-    expect(screen.getByTestId('unsupported-browser-notice')).toHaveAttribute('role', 'status');
+  it('never blocks the app, and carries no live region of its own (issue #34)', () => {
+    const { container } = render(<UnsupportedBrowserNotice browser={firefox} />);
+    const notice = screen.getByTestId('unsupported-browser-notice');
+    expect(notice).not.toHaveAttribute('role');
+    // The §8.2 announcer says it once; a `role="status"` here would be a second region
+    // competing with it for the whole session, since the notice never auto-dismisses.
+    expect(container.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).toHaveLength(0);
   });
 });

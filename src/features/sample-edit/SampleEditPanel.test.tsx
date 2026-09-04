@@ -159,3 +159,30 @@ describe('SampleEditPanel library location (spec §8.5.7, §9.8)', () => {
     expect(screen.getByText(/No samples in the global library yet/)).toBeInTheDocument();
   });
 });
+
+describe('transient sensitivity is a §2.5 primitive (spec §1.3 #10, issue #35)', () => {
+  beforeEach(() => {
+    useBrowserStore.setState({ samples: [sample], samplesError: null });
+  });
+  afterEach(() => {
+    useBrowserStore.setState({ samples: [], samplesError: null });
+  });
+
+  it('announces a human amount and takes the shared keyboard contract', async () => {
+    const user = userEvent.setup();
+    render(<SampleEditPanel />);
+    await user.click(screen.getByRole('button', { name: /loop\.wav/ }));
+    await user.click(await screen.findByRole('radio', { name: 'Transients' }));
+
+    const sensitivity = screen.getByTestId('chop-sensitivity');
+    expect(sensitivity).toHaveAttribute('role', 'slider');
+    // The native range announced "0.50", which is a number rather than a human unit, and
+    // it had no `aria-label` of its own at all.
+    expect(sensitivity).toHaveAttribute('aria-valuetext', '50 %');
+    expect(sensitivity).toHaveAttribute('aria-label', 'Sensitivity, transient chop');
+
+    sensitivity.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByTestId('chop-sensitivity')).toHaveAttribute('aria-valuetext', '55 %');
+  });
+});

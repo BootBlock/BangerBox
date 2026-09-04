@@ -6,18 +6,31 @@
  * Replace is in-place rather than remove-then-add, so the slot holds its chain position and
  * the first-slot Q-Link binding below survives an effect swap.
  *
- * Parameter ranges come from the effect registry (spec §5.7 `EFFECT_PARAM_RANGES`) rather
- * than being restated here, so a knob can never offer a value the store would clamp away.
- * A parameter the registry gives named choices for (`EFFECT_PARAM_CHOICES` — the filter's
- * type, the saturator's curve, the delay's synced division) is rendered as a select instead:
- * those are index-encoded integers, and a knob reading "7" for a dotted eighth is a control
- * no one can use. Slot changes go through `useMixerStore`, making them undoable and
- * autosaved (spec §4.5).
+ * Parameter ranges, units and names all come from the effect registry (spec §5.7) rather
+ * than being restated here, so a knob can never offer a value the store would clamp away,
+ * announce a number in the wrong unit, or read out a frozen store key as though it were
+ * words (spec §8.2, issues #35 and #58). A parameter the registry gives named choices for
+ * (`EFFECT_PARAM_CHOICES` — the filter's type, the saturator's curve, the delay's synced
+ * division) is rendered as a select instead: those are index-encoded integers, and a knob
+ * reading "7" for a dotted eighth is a control no one can use. Slot changes go through
+ * `useMixerStore`, making them undoable and autosaved (spec §4.5).
+ *
+ * ## Naming inside a slot
+ *
+ * Every control in a slot names its slot AND its effect. Four inserts present four move
+ * buttons, four removes and four bypasses, and a screen reader lists them out of context —
+ * so "Bypass insert 2, Delay" is the whole of what distinguishes one from another. The
+ * `<li>` carries the same name, for browsing by list item.
  */
 import { useMemo } from 'react';
 import { useMixerStore } from '@/store';
 import { useQLinkFocus } from '@/ui/useQLinkFocus';
-import { EFFECT_PARAM_CHOICES, EFFECT_PARAM_RANGES } from '@/core/audio/inserts/effectParams';
+import {
+  EFFECT_PARAM_CHOICES,
+  EFFECT_PARAM_RANGES,
+  effectParamLabel,
+  effectParamUnit,
+} from '@/core/audio/inserts/effectParams';
 import { insertParamPath } from '@/core/audio/params/registry';
 import type { EffectType } from '@/core/project/schemas';
 import { Button, EmptyState, FieldLabel, Knob, Toggle } from '@/ui/primitives';
@@ -58,7 +71,7 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
     if (first < 0) return [];
     const effectType = inserts[first]!.effectType!;
     return Object.keys(EFFECT_PARAM_RANGES[effectType]).map((param) => ({
-      label: `${EFFECT_LABELS[effectType]} ${param}`,
+      label: `${EFFECT_LABELS[effectType]} ${effectParamLabel(effectType, param)}`,
       targetParameterPath: insertParamPath(channelId, first + 1, param),
     }));
   }, [channelId, inserts]);
@@ -118,9 +131,16 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
           {inserts.map((slot, index) => {
             const effectType = slot.effectType;
             const ranges = effectType ? EFFECT_PARAM_RANGES[effectType] : {};
+            // What every control in this slot is named after (spec §8.2).
+            const slotName = effectType
+              ? `insert ${index + 1}, ${EFFECT_LABELS[effectType]}`
+              : `insert ${index + 1}, empty`;
             return (
               <li
                 key={slot.id}
+                // A list item with no name left "Enabled, toggle button, pressed" as the
+                // only thing four identical rows said about themselves (issue #58).
+                aria-label={`Insert ${index + 1}${effectType ? ` — ${EFFECT_LABELS[effectType]}` : ' — empty'}`}
                 data-testid={`insert-slot-${index}`}
                 className="rounded-bb-sm border border-bb-line bg-bb-raised p-2"
               >
@@ -149,15 +169,27 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                       </option>
                     ))}
                   </select>
+                  {/*
+                   * Bypass, not "Enabled" (issue #58). §5.7 defines the slot's `enabled`
+                   * field as TRUE BYPASS via routing, so bypass is what the control does
+                   * and what every desk calls the button; "Enabled" named a state rather
+                   * than an action, and named it identically on all four slots. The
+                   * pressed state follows the name — lit means bypassed, as the light on
+                   * a bypass switch does — so the store field keeps its frozen §13.6 name
+                   * and inverts here, at the one place the two meet.
+                   */}
                   <Toggle
-                    label="Enabled"
-                    pressed={slot.enabled}
+                    label="Bypass"
+                    accessibleName={`Bypass ${slotName}`}
+                    tone="warn"
+                    pressed={!slot.enabled}
                     size="sm"
-                    onChange={(enabled) => mixer().setInsertEnabled(channelId, slot.id, enabled)}
+                    disabled={!effectType}
+                    onChange={(bypassed) => mixer().setInsertEnabled(channelId, slot.id, !bypassed)}
                     data-testid={`insert-enabled-${index}`}
                   />
                   <Button
-                    label={`Move insert ${index + 1} earlier`}
+                    label={`Move ${slotName} earlier`}
                     variant="quiet"
                     size="sm"
                     iconOnly
@@ -166,7 +198,7 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                     onClick={() => moveSlot(index, -1)}
                   />
                   <Button
-                    label={`Move insert ${index + 1} later`}
+                    label={`Move ${slotName} later`}
                     variant="quiet"
                     size="sm"
                     iconOnly
@@ -175,7 +207,7 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                     onClick={() => moveSlot(index, 1)}
                   />
                   <Button
-                    label={`Remove insert ${index + 1}`}
+                    label={`Remove ${slotName}`}
                     variant="danger"
                     size="sm"
                     iconOnly
@@ -191,9 +223,9 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                       if (choices) {
                         return (
                           <FieldLabel key={param}>
-                            {param}
+                            {effectParamLabel(effectType, param)}
                             <select
-                              aria-label={`${EFFECT_LABELS[effectType]} ${index + 1} ${param}`}
+                              aria-label={`${effectParamLabel(effectType, param)}, ${slotName}`}
                               value={String(Math.round(slot.params[param] ?? 0))}
                               onChange={(event) => setParam(index, param, Number(event.target.value), true)}
                               data-testid={`insert-param-${index}-${param}`}
@@ -208,17 +240,20 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                           </FieldLabel>
                         );
                       }
+                      const unit = effectParamUnit(effectType, param);
                       return (
                         <Knob
                           key={param}
-                          label={param}
+                          label={effectParamLabel(effectType, param)}
+                          accessibleName={`${effectParamLabel(effectType, param)}, ${slotName}`}
                           value={slot.params[param] ?? range[0]}
                           range={range}
+                          unit={unit}
                           size="sm"
                           // Frequency-domain params read naturally on a log taper (spec §5.7).
-                          curve={
-                            param.toLowerCase().includes('freq') || param === 'cutoff' ? 'log' : 'linear'
-                          }
+                          // The unit answers this where a substring match on the key used to:
+                          // the two were derived side by side, and only one of them was right.
+                          curve={unit === 'Hz' ? 'log' : 'linear'}
                           // spec §10.3 "UI reacts concurrently": a Q-Link turn moves this
                           // knob live, painted by ref rather than by a re-render (issue #27).
                           livePath={insertParamPath(channelId, index + 1, param)}

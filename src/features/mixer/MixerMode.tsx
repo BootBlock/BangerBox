@@ -19,21 +19,11 @@ import {
   useUIStore,
 } from '@/store';
 import { channelLevelPath, channelPanPath, channelSendPath } from '@/core/audio/params/registry';
-import { faderLevelToDb } from '@/core/audio/params/faderLaw';
 import { bounceTrack } from '@/core/audio/bounceService';
 import { downloadBlob, downloadFileStem } from '@/core/platform/download';
 import { readFile } from '@/core/storage/opfs';
 import { sampleEditContext } from '../sample-edit/sampleContext';
-import {
-  formatValueText,
-  Button,
-  EmptyState,
-  Fader,
-  Knob,
-  MeterCanvas,
-  SegmentControl,
-  Toggle,
-} from '@/ui/primitives';
+import { Button, EmptyState, Fader, Knob, MeterCanvas, SegmentControl, Toggle } from '@/ui/primitives';
 import { LEVEL_RANGE, PAN_RANGE, SEND_LEVEL_RANGE, type EffectType } from '@/core/project/schemas';
 import { EFFECT_TYPES } from '@/core/project/schemas';
 import { Panel } from '@/ui/shell/Panel';
@@ -51,11 +41,6 @@ const TAB_OPTIONS = [
 
 const RETURN_COUNT = 4;
 const PADS_PER_BANK = 16;
-
-/** Format a fader position as dB through the shared law — never a bespoke calculation. */
-function faderValueText(level: number): string {
-  return formatValueText(faderLevelToDb(level), 'dB');
-}
 
 export function MixerMode() {
   const channels = useMixerStore((s) => s.channels);
@@ -200,7 +185,10 @@ export function MixerMode() {
                       value={level}
                       range={LEVEL_RANGE}
                       defaultValue={1}
-                      formatValue={faderValueText}
+                      // The `faderLevel` domain reads a §8.5.6 position as dB through the
+                      // one fader law; a `formatValue` callback here would be a second
+                      // place §8.2's wording for a level lived (spec §3.6).
+                      unit="faderLevel"
                       // spec §10.3 "UI reacts concurrently": a Q-Link turn moves this fader
                       // as it turns, painted by ref rather than by a re-render (issue #27).
                       livePath={channelLevelPath(strip.id)}
@@ -213,8 +201,12 @@ export function MixerMode() {
 
                   <Knob
                     label="Pan"
+                    accessibleName={`Pan, ${strip.name}`}
                     value={pan}
                     range={PAN_RANGE}
+                    // "−0.3" says nothing about which side of the image the sound is on,
+                    // which is the only thing a pan control means (spec §8.2, issue #35).
+                    unit="pan"
                     step={0.01}
                     size="sm"
                     defaultValue={0}
@@ -249,8 +241,10 @@ export function MixerMode() {
                         <Knob
                           key={index}
                           label={`Send ${index + 1}`}
+                          accessibleName={`Send ${index + 1}, ${strip.name}`}
                           value={sendLevel}
                           range={SEND_LEVEL_RANGE}
+                          unit="fraction"
                           step={0.01}
                           size="sm"
                           showValue={false}

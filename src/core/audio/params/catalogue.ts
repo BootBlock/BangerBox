@@ -23,6 +23,7 @@ import {
   programParamPath,
   PROGRAM_PARAM_RANGES,
   targetRange,
+  targetUnit,
   type ParamTarget,
 } from './registry';
 
@@ -115,4 +116,19 @@ export function resolveTargetRange(
   // Slots are addressed 1-based in the §7.8 grammar (`slot2`).
   const effectType = channels[target.channelId]?.inserts[target.slot - 1]?.effectType;
   return targetRange(target, effectType ?? undefined);
+}
+
+/**
+ * The unit a target's value is read in, resolved against the live mixer (spec §8.2) — the
+ * sibling of {@link resolveTargetRange}, and it exists for the same reason: an insert
+ * parameter's unit belongs to the EFFECT in the slot, so a caller holding only the address
+ * cannot answer. A picker resolving the range here and the unit somewhere else would be one
+ * edit away from drawing a delay time in milliseconds and announcing it as a fraction
+ * (issue #35).
+ */
+export function resolveTargetUnit(target: ParamTarget, channels: Record<string, ChannelStrip>): string {
+  if (target.kind !== 'insertParam') return targetUnit(target);
+  // Slots are addressed 1-based in the §7.8 grammar (`slot2`).
+  const effectType = channels[target.channelId]?.inserts[target.slot - 1]?.effectType;
+  return targetUnit(target, effectType ?? undefined);
 }

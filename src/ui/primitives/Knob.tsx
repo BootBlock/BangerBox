@@ -21,8 +21,20 @@ export interface KnobProps {
   label: string;
   value: number;
   range: ControlRange;
-  /** Unit for `aria-valuetext` and the readout — 'dB', 'Hz', '%', 'ms', … (spec §8.2). */
+  /**
+   * Unit for `aria-valuetext` and the readout — 'dB', 'Hz', '%', 'ms', … (spec §8.2), or
+   * one of `formatValueText`'s domain tokens ('pan', 'fraction', 'faderLevel', 'ratio')
+   * where the stored number is not the number a person reads.
+   */
   unit?: string;
+  /**
+   * A fuller accessible name for a control whose visible caption is only meaningful beside
+   * its neighbours — an insert's "Cutoff" becomes "Cutoff, insert 2, Filter", so the name
+   * still distinguishes it when a screen reader lists the controls out of context. Must
+   * *begin with* the visible label: WCAG 2.5.3 (Label in Name) requires the accessible name
+   * to contain the visible text, so speech-input users can say what they see.
+   */
+  accessibleName?: string;
   curve?: ControlCurve;
   step?: number;
   fineStep?: number;
@@ -48,6 +60,7 @@ export function Knob({
   value,
   range,
   unit = '',
+  accessibleName,
   curve = 'linear',
   step,
   fineStep,
@@ -108,7 +121,7 @@ export function Knob({
         ref={rootRef}
         role="slider"
         tabIndex={disabled ? -1 : 0}
-        aria-label={label}
+        aria-label={accessibleName ?? label}
         aria-valuemin={range[0]}
         aria-valuemax={range[1]}
         aria-valuenow={value}

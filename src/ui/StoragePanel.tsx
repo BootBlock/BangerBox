@@ -8,14 +8,19 @@ import {
   requestPersistentStorage,
   type StorageEstimateResult,
 } from '@/core/storage/safeguards';
-import { Button } from './primitives';
+import { useUIStore } from '@/store';
+import { Button, useAnnounce } from './primitives';
 
 /**
  * Storage diagnostics — boots the database worker (OPFS VFS + migrations), requests
- * persistent storage and surfaces the §9.7 eviction warning when the browser refuses, and
- * offers a self-test that proves the full durable path: a repository write/read through
- * the worker AND an atomic OPFS file round-trip. The browser smoke drives this control
- * (spec §11.4, a Phase 1 exit criterion that stays green).
+ * persistent storage, and offers a self-test that proves the full durable path: a
+ * repository write/read through the worker AND an atomic OPFS file round-trip. The browser
+ * smoke drives this control (spec §11.4, a Phase 1 exit criterion that stays green).
+ *
+ * The §9.7 eviction warning is NOT here any more. This panel is mounted in Q-Link Edit,
+ * mode 11 of 12, so a user who never opens the hardware settings never saw it; the shell's
+ * `PlatformNotices` carries it in all 12 modes instead (issue #51). What this panel keeps
+ * is the diagnostic READING of the same state, which is what a diagnostics panel is for.
  *
  * It lives inside Main mode's Storage section (spec §8.5.1 "storage usage") rather than
  * floating as a standalone diagnostic panel.
@@ -85,8 +90,7 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
 
   const [status, setStatus] = useState<PanelStatus>('booting');
   const [bootDetail, setBootDetail] = useState('Opening the on-device database…');
-  const [persisted, setPersisted] = useState<boolean | null>(null);
-  const [evictionWarningDismissed, setEvictionWarningDismissed] = useState(false);
+  const persisted = useUIStore((s) => s.storagePersisted);
   const [estimate, setEstimate] = useState<StorageEstimateResult | null>(null);
   const [testStatus, setTestStatus] = useState<SelfTestStatus>('idle');
   const [testDetail, setTestDetail] = useState('Not yet run.');
@@ -104,7 +108,7 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
         setBootDetail(
           `SQLite ${result.diagnostics.sqliteVersion} on the ${result.diagnostics.vfs.toUpperCase()} VFS · schema v${result.diagnostics.userVersion}`,
         );
-        setPersisted(persistedNow);
+        useUIStore.getState().setStoragePersisted(persistedNow);
         setEstimate(usage);
       } catch (error) {
         if (cancelled) return;
@@ -116,6 +120,12 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
       cancelled = true;
     };
   }, [api]);
+
+  // Both reports go through the one §8.2 announcer rather than through live regions of
+  // their own (issue #34). A boot failure interrupts: nothing the user does afterwards
+  // will be saved, so it may not wait behind whatever is already being read out.
+  useAnnounce(status === 'failed' ? `Storage failed. ${bootDetail}` : null, 'assertive');
+  useAnnounce(testStatus === 'passed' || testStatus === 'failed' ? testDetail : null);
 
   const runSelfTest = async () => {
     setTestStatus('running');
@@ -137,7 +147,6 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
           take, above the raw exception rather than replaced by it (spec §5.1). */}
       {status === 'failed' && (
         <div
-          role="alert"
           data-testid="storage-boot-failure"
           className="mb-3 rounded-bb-sm border border-bb-danger/50 bg-bb-raised px-3 py-2 text-xs text-bb-danger"
         >
@@ -148,21 +157,6 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
             has storage permission.
           </p>
           <p className="mt-1 leading-relaxed text-bb-muted">{bootDetail}</p>
-        </div>
-      )}
-
-      {/* The §9.7 eviction warning sits outside the disclosure: it is a condition the user
-          has to act on, not a diagnostic to go looking for. */}
-      {status === 'ready' && persisted === false && !evictionWarningDismissed && (
-        <div
-          role="note"
-          className="mb-3 flex items-start justify-between gap-3 rounded-bb-sm border border-bb-warn/40 bg-bb-raised px-3 py-2 text-xs text-bb-warn"
-        >
-          <p className="leading-relaxed">
-            The browser declined persistent storage, so it may evict project data under storage pressure.
-            Installing BangerBox as an app usually grants protection.
-          </p>
-          <Button label="Dismiss" size="sm" onClick={() => setEvictionWarningDismissed(true)} />
         </div>
       )}
 
@@ -245,7 +239,7 @@ export function StoragePanel({ apiOverride }: { apiOverride?: StoragePanelApi })
             {testStatus === 'idle' ? 'Idle' : testStatus.charAt(0).toUpperCase() + testStatus.slice(1)}
           </span>
         </div>
-        <p aria-live="polite" data-testid="storage-self-test-detail" className="mt-2 text-xs text-bb-muted">
+        <p data-testid="storage-self-test-detail" className="mt-2 text-xs text-bb-muted">
           {testDetail}
         </p>
       </details>

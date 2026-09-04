@@ -119,7 +119,10 @@ describe('QLinkEditMode (spec §8.5.11)', () => {
     const user = userEvent.setup();
     render(<QLinkEditMode />);
     await user.click(screen.getByTestId('qlink-learn-0'));
-    expect(screen.getByRole('status')).toHaveTextContent(/Learning encoder Q1/i);
+    // On the page as text and announced through the one §8.2 announcer — the `role="status"`
+    // it used to carry was a live region competing with that announcer (issue #34).
+    expect(screen.getByText(/Learning encoder Q1/i)).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('offers the global transport macros in the picker (spec §10.3 project mode)', async () => {
