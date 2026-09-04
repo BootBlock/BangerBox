@@ -198,7 +198,9 @@ async function renderSegments(
   // the graph already holds, and a pad channel is only built once a voice needs it. The store
   // is the §1.3 #16 runtime source of truth, so where it carries a strip for a pad it wins
   // over the §6 payload seeded above; where it does not — a pad of a program that is not the
-  // active one (spec §4.3 `programSync`) — the payload is the only value there is.
+  // active one (spec §4.2, `store/derive/padStripMirror` publishes only the active program's)
+  // — the payload is the only value there is. Since issue #133 the two agree wherever both
+  // exist, because a strip edit is written back into that payload.
   bridge.resyncAll((channelId) => bounceIncludesChannel(channelId, scope));
 
   // spec §5.7/§7.2: a synced delay follows the tempo of the segment it is sounding under, so

@@ -9,7 +9,6 @@ import { noopBridge, type SyncBridge, type Unsubscribe } from './bridge';
 import { combineUnsubscribers } from './bridge';
 import { subscribeMixerSync } from './mixerSync';
 import { subscribeTransportSync } from './transportSync';
-import { subscribeProgramSync } from './programSync';
 import { subscribeProgramParamSync } from './programParams';
 import { subscribeHardwareSync } from './hardwareSync';
 import { subscribeTransientSync } from './transientSync';
@@ -22,7 +21,6 @@ export function registerSyncSubscribers(bridge: SyncBridge = noopBridge): Unsubs
   return combineUnsubscribers([
     subscribeMixerSync(bridge),
     subscribeTransportSync(bridge),
-    subscribeProgramSync(bridge),
     subscribeProgramParamSync(bridge),
     subscribeHardwareSync(bridge),
     // The §4.1 transient channel (issue #27) — a continuous gesture reaches the graph here

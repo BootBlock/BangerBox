@@ -111,7 +111,6 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
     // transport value the graph does own a copy of, because a `DelayNode`'s time is a graph
     // parameter, not a scheduler one.
     setBpm: (bpm) => graph.setTempo(bpm, context.currentTime),
-    onActiveProgramChanged: () => {}, // `syncLayer/padStrips` populates pad strips (spec §4.2)
     onQLinkModeChanged: () => {}, // `core/midi/qlinkRuntime` owns Q-Link mode (spec §10.3)
 
     // Automation dispatch (spec §7.8): resolve the registered target and ramp its param.

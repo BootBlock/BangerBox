@@ -18,12 +18,14 @@ import { useProjectStore } from '@/store';
 import { registerSyncSubscribers, type Unsubscribe } from '@/store/syncLayer';
 import { subscribeSequencerSync } from '@/store/syncLayer/sequencerSync';
 import { subscribeTransportMirror } from '@/store/derive/transportMirror';
+import { subscribePadStripMirror } from '@/store/derive/padStripMirror';
 import { resetTransientChannel } from '@/store/transientChannel';
 import { installProjectService, loadOrCreateActiveProject, projectService } from './projectService';
 import { installUnloadGuard } from './unloadGuard';
 
 let syncDispose: Unsubscribe | null = null;
 let transportMirrorDispose: Unsubscribe | null = null;
+let padStripMirrorDispose: Unsubscribe | null = null;
 let sequencerSyncDispose: Unsubscribe | null = null;
 let unloadGuardDispose: Unsubscribe | null = null;
 let visibilityHandler: (() => void) | null = null;
@@ -53,6 +55,9 @@ export async function startProjectSession(): Promise<void> {
     // Keep the §4.2 tempo/swing mirror derived from the active sequence (issue #93). Wired
     // after hydration, so it starts from the value hydration established.
     transportMirrorDispose = subscribeTransportMirror();
+    // Keep the §4.2 pad strips and the §6 payload derived from each other (issue #133).
+    // Wired after hydration, so its initial publish sees the loaded program.
+    padStripMirrorDispose = subscribePadStripMirror();
     visibilityHandler = () => {
       if (document.visibilityState === 'hidden') void projectService.saveNow();
     };
@@ -109,6 +114,8 @@ export function stopProjectSession(): void {
   resetTransientChannel();
   transportMirrorDispose?.();
   transportMirrorDispose = null;
+  padStripMirrorDispose?.();
+  padStripMirrorDispose = null;
   audioEngine?.dispose();
   audioEngine = null;
   unloadGuardDispose?.();

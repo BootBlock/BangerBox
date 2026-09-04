@@ -22,7 +22,7 @@ import {
   PROGRAM_PARAM_RANGES,
   targetRange,
 } from '@/core/audio/params/registry';
-import { dirtyKey } from '@/core/project/dirty';
+import { dirtyKey, markDirty } from '@/core/project/dirty';
 import {
   createDefaultKeygroupZone,
   createDefaultPad,
@@ -38,6 +38,7 @@ import {
   type Range,
   type VelocityLayer,
 } from '@/core/project/schemas';
+import { padWithStripEdit, type PadStripEdit } from './padStrips';
 import { recordParamGesture } from './automationRecord';
 import {
   anyTransientInFlight,
@@ -93,6 +94,24 @@ interface ProgramState {
   /** Assign or replace a drum pad (spec §4.5 pad assignment). */
   upsertPad: (programId: string, pad: Pad) => void;
   removePad: (programId: string, padIndex: number) => void;
+
+  /**
+   * Write a §4.2 pad-strip edit into the §6 pad that owns it, with NO undo entry (issue
+   * #133). `derive/padStripMirror` is the one caller.
+   *
+   * The entry was already recorded by the `useMixerStore` commit that moved the strip, whose
+   * revert closure puts the strip back — which the mirror then follows out again. A second
+   * one here would mean two Ctrl+Z presses for one fader move.
+   *
+   * It DOES mark the program dirty, as every other action in this store that changes a
+   * program does. Leaning on the mixer commit's own `mixerChannelDirtyKey` mark instead
+   * looked equivalent and is not: `commit` runs `apply()` — and so this write — BEFORE it
+   * marks anything, and §8.5.6's insert reorder reaches the store through `upsertChannel`,
+   * which is a bare `set` that marks nothing at all. Marking here is not a second rule for
+   * one fact, because the key is the same one and the queue coalesces by key; it is this
+   * store keeping its own §4.4 contract rather than borrowing another's.
+   */
+  applyPadStripEdit: (programId: string, padIndex: number, edit: PadStripEdit) => void;
 
   /**
    * Assign a sample to a drum pad as a new velocity layer, creating the pad if it does not
@@ -466,6 +485,27 @@ export const useProgramStore = create<ProgramState>()(
         'Clear pad',
       );
     },
+
+    applyPadStripEdit: (programId, padIndex, edit) =>
+      set((state) => {
+        const program = state.programs[programId];
+        // A strip can outlive its program — nothing removes a pad channel when a program is
+        // deleted — so an edit addressing one that has gone is dropped rather than reviving it.
+        if (program?.type !== 'drum') return {};
+        let moved = false;
+        const pads = program.pads.map((pad) => {
+          if (pad.padIndex !== padIndex) return pad;
+          const next = padWithStripEdit(pad, edit);
+          if (next !== pad) moved = true;
+          return next;
+        });
+        // Same identity when the payload already agreed, so a §4.4 hydrate or a republished
+        // strip does not make every `programs` subscriber re-run for nothing (spec §3.3) —
+        // and nothing is marked dirty for a write that changed nothing.
+        if (!moved) return {};
+        markDirty(dirtyKey.program(programId));
+        return { programs: { ...state.programs, [programId]: { ...program, pads } } };
+      }),
 
     addPadLayer: (programId, padIndex, sampleId, maxLayers = DEFAULT_MAX_VELOCITY_LAYERS) => {
       const program = get().programs[programId];
