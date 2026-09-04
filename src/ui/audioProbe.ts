@@ -496,6 +496,11 @@ export interface BounceMixResult {
   readonly sent: BounceMixSlice;
   /** A §7.8 sequence lane ramping the master fader across the bar — stage 9. */
   readonly automated: BounceMixSlice;
+  /**
+   * A §7.8 lane on the track insert's own cutoff — the `insert:<channel>:slotN.<param>`
+   * half of the §7.8 grammar, which addresses a slot 1-based over the §4.2 slot array.
+   */
+  readonly insertAutomated: BounceMixSlice;
   /** The §9.5 stem of the one track: sends open, master strip cut and filtered. */
   readonly stem: BounceMixSlice;
   /** The same project as a full mix, so the master strip's absence from the stem is visible. */
@@ -1359,7 +1364,7 @@ function rmsBetween(data: Float32Array, sampleRate: number, from: number, to: nu
 async function bounceMixProof(engine: AudioEngine): Promise<BounceMixResult> {
   const { bounceActiveSequence, bounceTrack } = await import('@/core/audio/bounceService');
   const { readFile } = await import('@/core/storage/opfs');
-  const { channelLevelPath } = await import('@/core/audio/params/registry');
+  const { channelLevelPath, insertParamPath } = await import('@/core/audio/params/registry');
 
   const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
   // Load it fresh before anything else: the app opens a project asynchronously at start-up,
@@ -1524,6 +1529,31 @@ async function bounceMixProof(engine: AudioEngine): Promise<BounceMixResult> {
   });
   hydrate({ [automationLaneKey('sequence', seqId, masterLevel)]: [lane(0, 0.3), lane(3_840, 1)] });
   const automated = await measure(bounce);
+
+  // Stage 6 under automation — a §7.8 `insert:<channel>:slot1.cutoff` lane opening the track
+  // filter from 20 Hz to 12 kHz across the bar. This is the half of the §7.8 grammar that
+  // addresses a SLOT rather than a strip, and it is the one an off-by-one silently drops.
+  neutral();
+  setStrip(channelId, {
+    inserts: withEffect(channelId, 'filter', { type: 0, cutoff: 60, resonance: 1, mix: 1 }),
+  });
+  const cutoff = insertParamPath(channelId, 1, 'cutoff');
+  // An `exp` curve, which is also the only §7.8 curve shape the rest of this proof does not
+  // reach: a filter sweep is geometric in Hz, and a linear one spends the first beat already
+  // past the tone it is supposed to be holding back.
+  const cutoffPoint = (tick: number, value: number): AutomationPoint => ({
+    id: crypto.randomUUID(),
+    scope: 'sequence',
+    ownerId: seqId,
+    targetPath: cutoff,
+    tick,
+    value,
+    curve: 'exp',
+  });
+  hydrate({
+    [automationLaneKey('sequence', seqId, cutoff)]: [cutoffPoint(0, 60), cutoffPoint(3_840, 12_000)],
+  });
+  const insertAutomated = await measure(bounce);
   hydrate();
 
   // §9.5's stem, and the same project as a full mix. The master strip is cut to −42 dB AND
@@ -1543,7 +1573,7 @@ async function bounceMixProof(engine: AudioEngine): Promise<BounceMixResult> {
   // program and strips with them.
   await projectService.loadProject(projectId);
 
-  return { baseline, levelled, panned, inserted, sent, automated, stem, masteredMix };
+  return { baseline, levelled, panned, inserted, sent, automated, insertAutomated, stem, masteredMix };
 }
 
 /**

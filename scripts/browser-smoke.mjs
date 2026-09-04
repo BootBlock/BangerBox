@@ -910,6 +910,14 @@ async function assertShellAndSelfTest(page, label) {
           `the automation lane went ${r.automated.firstBeatRms.toFixed(5)} → ${r.automated.lastBeatRms.toFixed(5)} RMS across the bar`,
         );
       }
+      // The other half of the §7.8 grammar: a lane on the track insert's own cutoff. It
+      // addresses a slot 1-based over the §4.2 slot array, which is what the graph's chain
+      // used to disagree with.
+      if (!(r.insertAutomated.lastBeatRms > r.insertAutomated.firstBeatRms * 5)) {
+        throw new Error(
+          `an insert cutoff lane went ${r.insertAutomated.firstBeatRms.toFixed(5)} → ${r.insertAutomated.lastBeatRms.toFixed(5)} RMS — the §7.8 slot address reached no effect`,
+        );
+      }
       // §9.5's stem is post-insert, pre-master: the master strip is cut to −42 dB AND
       // lowpassed, so a full mix collapses where the stem of the same project does not.
       if (!(r.masteredMix.rms < r.sent.rms * 0.1)) {
@@ -929,7 +937,8 @@ async function assertShellAndSelfTest(page, label) {
       }
       console.log(
         `       bounce mix: level ×${levelRatio.toFixed(3)}, insert ×${(r.inserted.rms / r.baseline.rms).toFixed(3)}, ` +
-          `send gap ${r.sent.gapRms.toFixed(4)}, automation ${r.automated.firstBeatRms.toFixed(4)} → ${r.automated.lastBeatRms.toFixed(4)}, ` +
+          `send gap ${r.sent.gapRms.toFixed(4)}, master lane ${r.automated.firstBeatRms.toFixed(4)} → ${r.automated.lastBeatRms.toFixed(4)}, ` +
+          `insert lane ${r.insertAutomated.firstBeatRms.toFixed(4)} → ${r.insertAutomated.lastBeatRms.toFixed(4)}, ` +
           `stem ×${stemRatio.toFixed(3)} vs mastered ×${(r.masteredMix.rms / r.sent.rms).toFixed(4)}`,
       );
     });

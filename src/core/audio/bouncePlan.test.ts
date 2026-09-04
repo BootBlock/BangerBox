@@ -77,8 +77,10 @@ describe('§7.8 automation across a §9.5 render', () => {
     // One bar at 120 bpm is 2 s; the live scheduler reaches the graph every 25 ms.
     expect(ramps.length).toBe(80);
     expect(ramps[0]!.targetPath).toBe(MASTER_LEVEL);
-    // Contiguous windows: each ramp ends where the next begins, so the param interpolates
-    // continuously instead of stepping back to a stale anchor between windows.
+    // Contiguous windows: no tick of the segment is left unwritten and none is written
+    // twice, which is what makes the staircase track the curve rather than skip parts of it.
+    // (Each write is still the §4.3 dezipper, not a glide across the window — see
+    // `applyAutomation`. The property asserted here is coverage, not ramp shape.)
     for (let i = 1; i < ramps.length; i += 1) {
       expect(ramps[i]!.when).toBeCloseTo(ramps[i - 1]!.rampEnd, 9);
     }

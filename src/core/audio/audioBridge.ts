@@ -56,13 +56,16 @@ function applyInserts(
   // A freshly built insert starts at the tempo the transport is already at, so a synced
   // delay (spec §5.7) is in time from its first repeat rather than from the next tempo edit.
   const bpm = useTransportStore.getState().bpm;
-  const handles = inserts
-    .filter((slot) => slot.effectType !== null)
-    .map((slot) => {
-      const handle = createInsert(context, slot.effectType!, slot.params, bpm);
-      handle.setEnabled(slot.enabled);
-      return handle;
-    });
+  // One handle per §4.2 slot, `null` for an empty one, so the graph's slot list is the
+  // store's slot list and a §7.8 `slotN` address means the same thing on both sides. The
+  // chain used to be compacted, which shifted every effect behind an empty slot out from
+  // under its own address (issue #134).
+  const handles = inserts.map((slot) => {
+    if (slot.effectType === null) return null;
+    const handle = createInsert(context, slot.effectType, slot.params, bpm);
+    handle.setEnabled(slot.enabled);
+    return handle;
+  });
   channel.setInserts(handles);
 }
 
@@ -119,6 +122,20 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
       bridge.applyAutomation(targetPath, value, now, now);
     },
 
+    /**
+     * The §7.1.3 `rampEnd` is deliberately NOT consumed, and the parameter stays in the
+     * signature because the protocol carries it (spec §7.1.3, §7.8).
+     *
+     * Every write below goes through the §4.3 dezipper, which settles over `PARAM_RAMP_MS`.
+     * Gliding across the whole window instead is not expressible for half the targets: pan
+     * and every §5.7 effect core ramp with `setTargetAtTime`, which has no arrival time at
+     * all — its shape is a settle, not a ramp. Making the automation window the one writer
+     * to these params with a different §4.3 shape, for half of them only, would be worse than
+     * arriving early: `PARAM_RAMP_MS` (10 ms) is shorter than `SCHEDULER_INTERVAL_MS` (25 ms),
+     * so the param holds the window's OWN value for the remainder rather than lagging it.
+     * The §9.5 bounce emits the same windows through the same helpers, so what it renders is
+     * what live playback sounds like (issue #134).
+     */
     applyAutomation: (targetPath, value, when) => {
       const target = parseParamTarget(targetPath);
       if (!target) return;
