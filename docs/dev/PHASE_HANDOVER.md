@@ -136,8 +136,9 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
     its TRACK's input (stage 5), so a solo judged across one group mutes every pad of the
     soloed track and silences it. Pre-existing and hard to reach — no pad strip existed on a
     fresh load — and permanent strips would have made it the state of every session. §8.5.3's
-    two lists and §8.5.6's two tabs are the same reading. Measured: 0.00973 RMS against
-    0.10244 unsoloed, on the one-group build.
+    two lists and §8.5.6's two tabs are the same reading. Measured: 0.00973 RMS on the
+    one-group build against 0.10244 unsoloed, and 0.10244 with the fix — identical to five
+    places, because a track's own pads are not its rivals.
   - **`applyPadStripEdit` marks the program dirty ITSELF.** `commit` runs `apply()` — and so
     the mirror's write — before it marks anything, and §8.5.6's insert reorder reaches the
     store through `upsertChannel`, a bare `set` that marks nothing. Not a second rule: the key
@@ -550,6 +551,11 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   never sees this because it reaches these probes late in its run. A probe that owns its own
   arrangement should `await projectService.loadProject(projectId)` first, as `insertDefaultsProof`
   and `bounceMixProof` do.
+- **`songEntryIndexProof` reads the §8.5.12 playlist on a 3 s wall-clock timer inside a 4 s
+  song entry, and that margin is not always enough on a loaded machine.** It failed once with
+  `row -1 ("")` — no row marked, because nothing had reported `songAdvanced` yet — and passed
+  on the next run and in the same run's dev pass. Re-run before believing it; do not chase it
+  into the §7.9 code without a second failure.
 - **A §11.4 probe that ends on `loadProject` must sit where the NEXT step does not read the
   arrangement a previous probe left in the stores.** `sequenceFilterProof` hydrates its own
   sequences and tracks and does not restore, and the Grid step after it reads
