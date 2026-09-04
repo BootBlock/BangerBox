@@ -182,7 +182,10 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                     label="Bypass"
                     accessibleName={`Bypass ${slotName}`}
                     tone="warn"
-                    pressed={!slot.enabled}
+                    // An EMPTY slot is not bypassed, it is empty — and a fresh slot carries
+                    // `enabled: false`, so reading the field straight through lit every one
+                    // of the four default slots as though the user had bypassed something.
+                    pressed={effectType !== null && !slot.enabled}
                     size="sm"
                     disabled={!effectType}
                     onChange={(bypassed) => mixer().setInsertEnabled(channelId, slot.id, !bypassed)}
