@@ -26,6 +26,7 @@ import {
   BPM_RANGE,
   midiEventSchema,
   ranged,
+  SONG_REPEATS_MIN,
   SWING_RANGE,
   type AutomationPoint,
   type MidiEvent,
@@ -44,6 +45,12 @@ import type { ArpMode } from './arpeggiator';
  * 2026-07-17 (f), (g), (i)) — so a newer main thread and an older worker still agree about
  * every kind they both know.
  *
+ * **2 (issue #130):** `songSequence` carries §7.9's position-sorted ENTRIES with their
+ * repeat counts instead of a repeat-expanded id list. That is the first change to an
+ * existing kind's shape rather than an addition, so it is the first thing the version has
+ * ever had to name — an older peer's `orderedSequenceIds` no longer parses, and without the
+ * bump the only symptom would be a silent guard rejection and a song that never starts.
+ *
  * A mismatch is REPORTED, not enforced. The two halves are emitted by one Vite build and
  * loaded from one page, so skew is not reachable today; and refusing to start would turn a
  * partial disagreement into a dead transport, where the §1.3 #11 Zod guards already drop
@@ -51,7 +58,7 @@ import type { ArpMode } from './arpeggiator';
  * that silence — the §11.4 smoke fails on any console error, so a skew would fail the gate
  * rather than present as a sequencer that quietly does nothing (issue #71's shape).
  */
-export const SCHEDULER_PROTOCOL_VERSION = 1;
+export const SCHEDULER_PROTOCOL_VERSION = 2;
 
 // --- Scheduled events (worker → main, spec §7.1.3) --------------------------------
 
@@ -81,6 +88,21 @@ export interface ScheduledEvent {
    * every segment whose sequence carries a tempo of its own.
    */
   readonly bpm?: number;
+}
+
+/**
+ * One §7.9 playlist entry as the worker receives it (issue #130).
+ *
+ * The list is POSITION-SORTED by the sender and its index is what `songAdvanced` reports,
+ * so an entry consumes exactly one index however many times it repeats and the worker
+ * expands `repeats` itself. Sending a repeat-expanded id list instead made a `repeats: 2`
+ * entry consume two indices, which §7.9 forbids. It carries neither `id` nor `position`:
+ * the map is built from the order, and a field the worker cannot use is one more thing
+ * that can disagree with the store.
+ */
+export interface SchedulerSongEntry {
+  readonly sequenceId: string;
+  readonly repeats: number;
 }
 
 /** Per-sequence metadata the worker needs for the song tempo map (spec §7.9, §14 ext). */
@@ -134,7 +156,7 @@ export type SchedulerRequest =
       readonly targetPath: string;
       readonly points: readonly AutomationPoint[];
     }
-  | { readonly kind: 'songSequence'; readonly orderedSequenceIds: readonly string[] }
+  | { readonly kind: 'songSequence'; readonly orderedEntries: readonly SchedulerSongEntry[] }
   | { readonly kind: 'songLoop'; readonly enabled: boolean }
   | {
       readonly kind: 'sequenceMeta';
@@ -273,7 +295,18 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
     targetPath: z.string(),
     points: z.array(automationPointSchema),
   }),
-  z.object({ kind: z.literal('songSequence'), orderedSequenceIds: z.array(schedulerIdSchema) }),
+  z.object({
+    kind: z.literal('songSequence'),
+    orderedEntries: z.array(
+      z.object({
+        sequenceId: schedulerIdSchema,
+        // The floor the §9.3 `song_entries.repeats` column and `songEntrySchema` already
+        // take. A guard may not be looser than the store it mirrors, and §7.9 states no
+        // ceiling, so the bound on the WORK a large count implies lives in `buildSongMap`.
+        repeats: z.number().int().min(SONG_REPEATS_MIN),
+      }),
+    ),
+  }),
   z.object({ kind: z.literal('songLoop'), enabled: z.boolean() }),
   z.object({
     kind: z.literal('sequenceMeta'),

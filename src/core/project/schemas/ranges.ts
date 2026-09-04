@@ -29,6 +29,15 @@ export const TIME_SIG_NUMERATOR_RANGE: Range = [1, 16];
 /** Denominator is one of 2/4/8/16 (spec §7.2). */
 export const TIME_SIG_DENOMINATORS = [2, 4, 8, 16] as const;
 
+/**
+ * Minimum `song_entries.repeats` (spec §7.9, §9.3). Declared here rather than inline so the
+ * §7.1.3 `songSequence` guard and {@link songEntrySchema} take the same floor: the worker
+ * expands repeats itself now, so the two are one contract seen from either side of the wire.
+ * §7.9 states no ceiling — an entry that repeats a thousand times is a legitimate
+ * arrangement — so the bound on WORK lives in `buildSongMap`, not in a value range here.
+ */
+export const SONG_REPEATS_MIN = 1;
+
 // --- MIDI event (spec §9.3 midi_events) ------------------------------------------
 export const NOTE_RANGE: Range = [0, 127];
 export const VELOCITY_RANGE: Range = [1, 127];

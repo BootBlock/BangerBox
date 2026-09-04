@@ -32,9 +32,23 @@ export function sequenceLengthTicks(sequence: Sequence): number {
 }
 
 /**
+ * A bound on the WORK a playlist implies, not on the arrangement §7.9 permits.
+ *
+ * `repeats` has a floor of 1 and no ceiling in §7.9, in the §9.3 column or in
+ * `songEntrySchema`, and since issue #130 the count reaches the scheduler worker rather
+ * than being expanded on the main thread — so a damaged `.mpcweb` (§9.6) declaring a
+ * billion repeats would otherwise allocate a billion segments inside the worker that owns
+ * the transport. 100 000 one-bar segments is over 55 hours of music, and matches the guard
+ * `segmentWindow` already uses for the same class of structural runaway (issue #95).
+ */
+const MAX_SONG_SEGMENTS = 100_000;
+
+/**
  * Flatten the ordered playlist into a tick + tempo map (spec §7.9). Entries are taken in
  * `position` order; each contributes `repeats` segments. Entries whose sequence is missing
- * are skipped rather than breaking the map.
+ * are skipped rather than breaking the map — and still consume an `entryIndex`, because
+ * §7.9 requires `songAdvanced` to index the position-sorted entry list rather than the
+ * segments it produced (issue #130).
  */
 export function buildSongMap(
   entries: readonly SongEntry[],
@@ -45,6 +59,7 @@ export function buildSongMap(
   const segments: SongSegment[] = [];
   let startTick = 0;
   let startSeconds = 0;
+  let truncated = false;
   ordered.forEach((entry, entryIndex) => {
     const sequence = sequences[entry.sequenceId];
     if (!sequence) return;
@@ -52,11 +67,20 @@ export function buildSongMap(
     const bpm = effectiveBpm(sequence, projectBpm);
     const secondsPerPass = lengthTicks * secondsPerTick(bpm);
     for (let repeat = 0; repeat < entry.repeats; repeat++) {
+      if (segments.length >= MAX_SONG_SEGMENTS) {
+        truncated = true;
+        return;
+      }
       segments.push({ entryIndex, sequenceId: entry.sequenceId, startTick, lengthTicks, bpm, startSeconds });
       startTick += lengthTicks;
       startSeconds += secondsPerPass;
     }
   });
+  // Say so rather than silently playing a shorter song: the same choice `segmentWindow`
+  // makes when its own guard trips (spec §7.1.4, issue #95).
+  if (truncated) {
+    console.warn(`[songMap] playlist exceeds ${MAX_SONG_SEGMENTS} segments; the rest is not played`);
+  }
   return segments;
 }
 

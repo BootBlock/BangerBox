@@ -30,7 +30,7 @@ import {
   sequenceTickAt,
   type LoopRegion,
 } from './lookahead';
-import type { ScheduledEvent } from './messages';
+import type { ScheduledEvent, SchedulerSongEntry } from './messages';
 import { noteRepeatHits, type HeldNote, type NoteRepeatDivision } from './noteRepeat';
 import { secondsToTicks, ticksPerBar, ticksPerBeat, ticksToSeconds } from './ppqn';
 import {
@@ -110,7 +110,15 @@ export class SchedulerCore {
     string,
     TimeSignature & { lengthBars: number; tempo: number | null }
   >();
-  private orderedSequenceIds: string[] = [];
+  /**
+   * §7.9's position-sorted playlist, repeats UNEXPANDED (issue #130).
+   *
+   * The expansion is `buildSongMap`'s, so a segment's `entryIndex` is the index into this
+   * list and `songAdvanced` reports what §7.9 says it reports. Holding the expanded id list
+   * instead made every repeat its own entry, so an entry with `repeats: 2` consumed two
+   * indices and every consumer downstream of the first repeated entry was off by one.
+   */
+  private orderedEntries: SchedulerSongEntry[] = [];
   private songMap: SongSegment[] = [];
 
   private noteRepeatEnabled = false;
@@ -273,8 +281,8 @@ export class SchedulerCore {
     this.songLoopEnabled = enabled;
   }
 
-  setSongSequence(orderedSequenceIds: readonly string[]): void {
-    this.orderedSequenceIds = [...orderedSequenceIds];
+  setSongSequence(orderedEntries: readonly SchedulerSongEntry[]): void {
+    this.orderedEntries = [...orderedEntries];
     this.rebuildSongMap();
   }
 
@@ -817,6 +825,16 @@ export class SchedulerCore {
   }
 
   // --- live erase (spec §7.7) ---
+  /**
+   * Remove the held pads' events the window `[from, to)` swept (spec §7.7, issue #16).
+   *
+   * §7.7 removes those events "as the loop passes", which answers a window narrower than
+   * the loop and says nothing about one that laps it. The rule, recorded because choosing
+   * it silently would be inventing one: what goes is the UNION of the sequence ticks the
+   * window passed over, and each event goes exactly ONCE however many passes swept it.
+   * Counting instead would make the number of `erased` reports depend on the scheduler's
+   * wake rate, which is a §7.1.4 implementation detail rather than anything musical.
+   */
   private collectErase(
     result: SchedulerTickResult,
     trackId: string,
@@ -827,6 +845,7 @@ export class SchedulerCore {
     if (this.eraseNotes.size === 0) return;
     // Same wrap-aware window as note scheduling: folding `from`/`to` and taking min/max
     // yields the *complement* of the window whenever it straddles the loop end (spec §7.1.4).
+    // The `Set` is what makes the union rule above hold across a lapping window.
     const ids = new Set<string>();
     for (const windowed of eventsInWindow(track.events, (e) => e.tickStart, from, to, this.loop)) {
       if (!this.eraseNotes.has(`${trackId}:${windowed.item.note}`)) continue;
@@ -945,6 +964,11 @@ export class SchedulerCore {
 
     for (const slice of songWindowSlices(this.songMap, from, to)) {
       const { segment } = slice;
+      // spec §7.9: the index into the POSITION-SORTED entry list, which is what
+      // `buildSongMap` stamps on each segment now that repeats reach the worker unexpanded
+      // (issue #130). An entry played twice keeps one index, so this fires once for it —
+      // deliberately not the same number as `flushOnSegmentChange`'s segment ordinal below,
+      // which counts plays because a play is what §7.7 merges a take at.
       if (segment.entryIndex !== this.lastEntryIndex) {
         result.songAdvanced.push(segment.entryIndex);
         this.lastEntryIndex = segment.entryIndex;
@@ -1120,16 +1144,17 @@ export class SchedulerCore {
   }
 
   private rebuildSongMap(): void {
-    if (this.orderedSequenceIds.length === 0 || this.sequenceMeta.size === 0) {
+    if (this.orderedEntries.length === 0 || this.sequenceMeta.size === 0) {
       this.songMap = [];
       return;
     }
-    // Rebuild a synthetic entry list (one entry per ordered id) + a Sequence-like lookup.
-    const entries = this.orderedSequenceIds.map((sequenceId, position) => ({
+    // The sender has already sorted by `position` (spec §7.9), so the array index IS the
+    // entry index `songAdvanced` reports and `buildSongMap` expands each entry's repeats.
+    const entries = this.orderedEntries.map((entry, position) => ({
       id: `e${position}`,
       position,
-      sequenceId,
-      repeats: 1,
+      sequenceId: entry.sequenceId,
+      repeats: entry.repeats,
     }));
     const sequences: Record<string, import('@/core/project/schemas').Sequence> = {};
     for (const [id, meta] of this.sequenceMeta) {

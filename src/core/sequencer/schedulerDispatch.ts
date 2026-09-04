@@ -71,7 +71,7 @@ export function applySchedulerRequest(sink: SchedulerRequestSink, request: Sched
       core.applyAutomationDiff(request.scope, request.ownerId, request.targetPath, request.points);
       return;
     case 'songSequence':
-      core.setSongSequence(request.orderedSequenceIds);
+      core.setSongSequence(request.orderedEntries);
       return;
     case 'songLoop':
       core.setSongLoop(request.enabled);

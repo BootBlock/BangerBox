@@ -7,7 +7,7 @@
  * Live notes and note-repeat are performance gestures driven straight to the client by the
  * input layer (spec §7.6), not through here.
  */
-import type { SchedulerClient, SchedulerSequenceMeta } from '@/core/sequencer';
+import type { SchedulerClient, SchedulerSequenceMeta, SchedulerSongEntry } from '@/core/sequencer';
 import { sequenceLengthTicks } from '@/core/sequencer/songMap';
 import { parseAutomationLaneKey, type AutomationPoint, type MidiEvent } from '@/core/project/schemas';
 import { useSequenceStore } from '../useSequenceStore';
@@ -41,20 +41,26 @@ function activeSequenceLengthTicks(): number {
   return sequence ? sequenceLengthTicks(sequence) : 0;
 }
 
-/** Flatten the song playlist into repeat-expanded sequence ids (spec §7.9). */
-function flattenSong(): string[] {
+/**
+ * The song playlist in `position` order, repeats UNEXPANDED (spec §7.9, issue #130).
+ *
+ * This used to expand `repeats` here, which made an entry with `repeats: 2` two entries by
+ * the time the worker saw it — so `songAdvanced { entryIndex }` indexed the flattened list
+ * where §7.9 requires the index into the position-sorted ENTRY list. Sorting still happens
+ * on this side, because `songEntries` is the store's own array and its `position` field is
+ * the ordering §7.9 names; the worker then takes the array index as the entry index.
+ */
+function orderedSongEntries(): SchedulerSongEntry[] {
   const { songEntries } = useSequenceStore.getState();
-  const ordered: string[] = [];
-  for (const entry of [...songEntries].sort((a, b) => a.position - b.position)) {
-    for (let repeat = 0; repeat < entry.repeats; repeat++) ordered.push(entry.sequenceId);
-  }
-  return ordered;
+  return [...songEntries]
+    .sort((a, b) => a.position - b.position)
+    .map((entry) => ({ sequenceId: entry.sequenceId, repeats: entry.repeats }));
 }
 
 function pushMeta(scheduler: SchedulerClient): void {
   const { activeSequenceId, playbackMode } = useTransportStore.getState();
   scheduler.setSequenceMeta(buildSequenceMeta(), projectBpm(), activeSequenceId, playbackMode);
-  scheduler.setSongSequence(flattenSong());
+  scheduler.setSongSequence(orderedSongEntries());
 }
 
 /** The scheduler's loop region: the user brace when enabled, else the sequence length. */
@@ -155,7 +161,7 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     ),
     useSequenceStore.subscribe(
       (s) => s.songEntries,
-      () => scheduler.setSongSequence(flattenSong()),
+      () => scheduler.setSongSequence(orderedSongEntries()),
     ),
     // Groove is non-destructive schedule-time shaping, so only the assignment travels —
     // the events themselves never change (spec §7.5).

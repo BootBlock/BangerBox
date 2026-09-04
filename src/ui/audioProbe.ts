@@ -144,6 +144,32 @@ export interface AudioProbe {
   announcementProof: () => Promise<AnnouncementResult>;
   /** The §9.7 eviction warning is readable, dismissible UI in every mode (issue #51). */
   platformNoticeProof: () => Promise<PlatformNoticeResult>;
+  /** A sweep across the loop end takes the notes it passed, not their complement (#16). */
+  liveEraseWrapProof: () => Promise<LiveEraseWrapResult>;
+  /** `songAdvanced` indexes §7.9's position-sorted entries, repeats and all (issue #130). */
+  songEntryIndexProof: () => Promise<SongEntryIndexResult>;
+}
+
+/** Outcome of the §7.7 loop-boundary erase proof (see {@link liveEraseWrapProof}). */
+export interface LiveEraseWrapResult {
+  /** Every written tick on the erase-armed track, before the sweep. */
+  readonly ticksBefore: number[];
+  /** What survived it. The two sets are complements of each other under issue #16. */
+  readonly ticksAfter: number[];
+  /** The loop length the sweep wrapped around, in ticks (spec §7.1.4). */
+  readonly loopLengthTicks: number;
+}
+
+/** Outcome of the §7.9 entry-index proof (see {@link songEntryIndexProof}). */
+export interface SongEntryIndexResult {
+  /** Entry indices the worker reported, in order, deduplicated as they arrived. */
+  readonly reportedIndices: number[];
+  /** How many entries the playlist holds, and how many sequence plays that is. */
+  readonly entryCount: number;
+  readonly segmentCount: number;
+  /** The playlist row §8.5.12 marked as playing while the repeated first entry ran. */
+  readonly markedRowText: string;
+  readonly markedRowIndex: number;
 }
 
 /** Outcome of the §8.2 announcer proof (see {@link announcementProof}). */
@@ -1439,6 +1465,172 @@ async function songParityProof(engine: AudioEngine): Promise<SongParityResult> {
 }
 
 /**
+ * A live-erase sweep across the loop end takes the ticks it PASSED (spec §7.7, issue #16).
+ *
+ * The fix landed in `collectErase` long before this proof did, and every check on it until
+ * now was a unit test against `SchedulerCore` with an injected clock. That cannot see the
+ * one thing the issue is about: the shape of the window a REAL 25 ms wake at a REAL 100 ms
+ * lookahead hands the sweep as the playhead crosses a bar line. Folding the two ends of that
+ * window and taking min/max yields its complement, so under the defect the survivors and the
+ * victims here swap places — which is why both lists are reported rather than a count.
+ */
+async function liveEraseWrapProof(engine: AudioEngine): Promise<LiveEraseWrapResult> {
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  const seqId = crypto.randomUUID();
+  const trackId = crypto.randomUUID();
+  const rows = await createSequenceRows(
+    projectId,
+    [{ id: seqId, name: 'Erase probe' }],
+    [{ id: trackId, sequenceId: seqId, name: 'Erase probe' }],
+  );
+  const erasedNote = 36;
+  // One bar of 4/4 at 960 PPQN is 3840 ticks and, at 120 bpm, two seconds. Four notes sit
+  // well inside the bar and one sits just before its end, so a sweep over the bar line takes
+  // the last of them and the first of the next pass and leaves the middle three alone.
+  const ticks = [0, 960, 1_920, 2_880, 3_600];
+  useSequenceStore.getState().hydrate({
+    sequences: rows.sequences,
+    tracks: rows.tracks,
+    events: {
+      [trackId]: ticks.map((tickStart) => ({
+        id: crypto.randomUUID(),
+        tickStart,
+        durationTicks: 120,
+        note: erasedNote,
+        velocity: 100,
+        extra: null,
+      })),
+    },
+    automation: {},
+    songEntries: [],
+  });
+
+  const transport = useTransportStore.getState();
+  transport.setActiveSequenceId(seqId);
+  transport.setPlaybackMode('sequence');
+  transport.setMetronomeEnabled(false);
+  transport.setCountInBars(0);
+  transport.setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  commitTempo(120);
+  await delay(150);
+
+  const ticksBefore = (useSequenceStore.getState().events[trackId] ?? [])
+    .map((e) => e.tickStart)
+    .sort((a, b) => a - b);
+
+  useTransportStore.getState().play();
+  // Arm just before the bar line at 2.0 s and release just after it. The lookahead runs
+  // ~100 ms ahead, so the swept window is roughly ticks 3550 → 4300 — the note at 3600 and,
+  // one pass later, the note at 0, with a third of a second of margin either side of the
+  // nearest survivor (2880 below, and 960 of the next pass above).
+  await delay(1_750);
+  engine.scheduler.setLiveErase(trackId, erasedNote, true);
+  await delay(400);
+  engine.scheduler.setLiveErase(trackId, erasedNote, false);
+  await delay(250);
+  useTransportStore.getState().stop();
+  await delay(200);
+
+  return {
+    ticksBefore,
+    ticksAfter: (useSequenceStore.getState().events[trackId] ?? [])
+      .map((e) => e.tickStart)
+      .sort((a, b) => a - b),
+    loopLengthTicks: 3_840,
+  };
+}
+
+/**
+ * `songAdvanced { entryIndex }` addresses §7.9's position-sorted ENTRY list (issue #130).
+ *
+ * The playlist is two entries and three plays: the first entry repeats twice. Before this,
+ * `sequencerSync` expanded `repeats` on the main thread, so the worker saw three entries and
+ * reported 0, 1, 2 — and §8.5.12's playlist, which has two rows, would have marked a row that
+ * does not exist. The proof reads BOTH halves: what the worker reported, and which row the
+ * running Song mode actually marked while the repeated entry was still playing.
+ */
+async function songEntryIndexProof(): Promise<SongEntryIndexResult> {
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  const seqA = crypto.randomUUID();
+  const seqB = crypto.randomUUID();
+  // A track per sequence, though this proof plays no notes: `hydrate` REPLACES the store, so
+  // a probe leaving none behind hands every later step a project with nothing to edit.
+  const rows = await createSequenceRows(
+    projectId,
+    [
+      { id: seqA, name: 'Entry probe A' },
+      { id: seqB, name: 'Entry probe B' },
+    ],
+    [
+      { id: crypto.randomUUID(), sequenceId: seqA, name: 'Entry probe A' },
+      { id: crypto.randomUUID(), sequenceId: seqB, name: 'Entry probe B' },
+    ],
+  );
+  useSequenceStore.getState().hydrate({
+    sequences: rows.sequences,
+    tracks: rows.tracks,
+    events: {},
+    automation: {},
+    // Written out of `position` order on purpose: §7.9 orders by the field, not the array.
+    songEntries: [
+      { id: crypto.randomUUID(), position: 1, sequenceId: seqB, repeats: 1 },
+      { id: crypto.randomUUID(), position: 0, sequenceId: seqA, repeats: 2 },
+    ],
+  });
+
+  const transport = useTransportStore.getState();
+  transport.setActiveSequenceId(seqA);
+  transport.setPlaybackMode('song');
+  transport.setSongLoopEnabled(false);
+  transport.setMetronomeEnabled(false);
+  transport.setCountInBars(0);
+  commitTempo(120);
+  await delay(150);
+
+  // Every distinct value the consumer settled on, in order — the §8.5.12 row is painted
+  // from this, so a repeat-expanded index shows up here as a third value.
+  const reportedIndices: number[] = [];
+  const record = (index: number | null) => {
+    if (index !== null && reportedIndices[reportedIndices.length - 1] !== index) {
+      reportedIndices.push(index);
+    }
+  };
+  record(useTransportStore.getState().songEntryIndex);
+  const unsubscribe = useTransportStore.subscribe((state) => state.songEntryIndex, record);
+
+  let markedRowText = '';
+  let markedRowIndex = -1;
+  try {
+    useTransportStore.getState().play();
+    // The first entry occupies 0–4 s (one bar twice at 120 bpm); read the marked row during
+    // its SECOND play, where a repeat-expanded index would already have stepped off it.
+    await delay(3_000);
+    const marked = document.querySelector<HTMLElement>('[data-playing="true"]');
+    markedRowText = marked?.textContent?.trim() ?? '';
+    markedRowIndex = marked
+      ? Number(marked.getAttribute('data-testid')?.replace('song-entry-', '') ?? -1)
+      : -1;
+    // …then on into the second entry (4–6 s) and past the end of the song.
+    await delay(2_500);
+  } finally {
+    unsubscribe();
+    useTransportStore.getState().stop();
+    // Back to sequence mode, so a later step meets the transport the rest of the smoke
+    // assumes rather than one that stops itself at the end of this probe's song (§7.9).
+    useTransportStore.getState().setPlaybackMode('sequence');
+  }
+  await delay(200);
+
+  return {
+    reportedIndices,
+    entryCount: useSequenceStore.getState().songEntries.length,
+    segmentCount: useSequenceStore.getState().songEntries.reduce((sum, entry) => sum + entry.repeats, 0),
+    markedRowText,
+    markedRowIndex,
+  };
+}
+
+/**
  * One pad held on two tracks (spec §7.3, issue #25), over the real worker, in both modes.
  *
  * §1.3.1 maps a pad index straight to a note number, so note 36 held on two tracks is two
@@ -1748,6 +1940,8 @@ export function installAudioProbe(engine: AudioEngine): void {
     bounceReachProof,
     gestureRenderProof: () => gestureRenderProof(engine),
     songParityProof: () => songParityProof(engine),
+    liveEraseWrapProof: () => liveEraseWrapProof(engine),
+    songEntryIndexProof: () => songEntryIndexProof(),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,

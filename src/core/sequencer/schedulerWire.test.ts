@@ -117,7 +117,15 @@ const CASES: Record<string, (wire: Wire) => void> = {
   sendEventsDiff: (wire) => expect(wire.calls('applyEventsDiff')).toEqual([['t1', 's1', [], ['gone']]]),
   sendAutomationDiff: (wire) =>
     expect(wire.calls('applyAutomationDiff')).toEqual([['track', 't1', 'insert:track:t1:slot2.mix', []]]),
-  setSongSequence: (wire) => expect(wire.calls('setSongSequence')).toEqual([[['a', 'b']]]),
+  setSongSequence: (wire) =>
+    expect(wire.calls('setSongSequence')).toEqual([
+      [
+        [
+          { sequenceId: 'a', repeats: 1 },
+          { sequenceId: 'b', repeats: 1 },
+        ],
+      ],
+    ]),
   setSongLoop: (wire) => expect(wire.calls('setSongLoop')).toEqual([[true]]),
   setSequenceMeta: (wire) =>
     expect(wire.calls('setSequenceMeta')).toEqual([
@@ -150,7 +158,11 @@ const SENDS: Record<string, (client: SchedulerClient) => void> = {
   sendEventsDiff: (c) => c.sendEventsDiff('t1', 's1', [], ['gone']),
   // A §7.8 address full of colons, which is the shape the lane-key split has to survive.
   sendAutomationDiff: (c) => c.sendAutomationDiff('track', 't1', 'insert:track:t1:slot2.mix', []),
-  setSongSequence: (c) => c.setSongSequence(['a', 'b']),
+  setSongSequence: (c) =>
+    c.setSongSequence([
+      { sequenceId: 'a', repeats: 1 },
+      { sequenceId: 'b', repeats: 1 },
+    ]),
   setSongLoop: (c) => c.setSongLoop(true),
   setSequenceMeta: (c) =>
     c.setSequenceMeta(

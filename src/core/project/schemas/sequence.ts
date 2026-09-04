@@ -10,6 +10,7 @@ import {
   DURATION_TICKS_MIN,
   LENGTH_BARS_RANGE,
   NOTE_RANGE,
+  SONG_REPEATS_MIN,
   SWING_RANGE,
   TICK_MIN,
   TIME_SIG_DENOMINATORS,
@@ -119,7 +120,7 @@ export const songEntrySchema = z.object({
   id: z.string(),
   position: z.number().int().min(0),
   sequenceId: z.string(),
-  repeats: z.number().int().min(1),
+  repeats: z.number().int().min(SONG_REPEATS_MIN),
 });
 export type SongEntry = z.infer<typeof songEntrySchema>;
 

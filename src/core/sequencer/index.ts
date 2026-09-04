@@ -16,6 +16,7 @@ export {
   type SchedulerRequest,
   type SchedulerResponse,
   type SchedulerSequenceMeta,
+  type SchedulerSongEntry,
 } from './messages';
 export { tickToBarBeatTick, type BarBeatTick } from './ppqn';
 export { quantiseEvents, type QuantiseGrid, type QuantiseOptions } from './quantise';

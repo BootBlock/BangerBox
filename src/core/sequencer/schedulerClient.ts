@@ -16,6 +16,7 @@ import {
   type ScheduledEvent,
   type SchedulerRequest,
   type SchedulerSequenceMeta,
+  type SchedulerSongEntry,
 } from './messages';
 import type { NoteRepeatDivision } from './noteRepeat';
 import type { ArpConfig } from './arpeggiator';
@@ -115,8 +116,9 @@ export class SchedulerClient {
   ): void {
     this.#send({ kind: 'automationDiff', scope, ownerId, targetPath, points });
   }
-  setSongSequence(orderedSequenceIds: readonly string[]): void {
-    this.#send({ kind: 'songSequence', orderedSequenceIds });
+  /** spec §7.9: the position-sorted playlist. `repeats` is expanded by the worker (#130). */
+  setSongSequence(orderedEntries: readonly SchedulerSongEntry[]): void {
+    this.#send({ kind: 'songSequence', orderedEntries });
   }
   /** Wrap at the end of the song instead of stopping there (spec §7.9 `songLoopEnabled`). */
   setSongLoop(enabled: boolean): void {

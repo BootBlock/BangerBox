@@ -98,6 +98,9 @@ export class AudioEngine {
           .getState()
           .commitRecordedTake(trackId, events, useTransportStore.getState().recordMode),
       onErased: (trackId, eventIds) => useSequenceStore.getState().removeEvents(trackId, eventIds),
+      // spec §7.9: the index into the POSITION-SORTED playlist, which §8.5.12's Song mode
+      // marks as playing. An entry holds it for every one of its repeats (issue #130).
+      onSongAdvanced: (entryIndex) => useTransportStore.getState().setSongEntryIndex(entryIndex),
       // spec §7.9: the song reached its end with looping off, so the main thread stops the
       // transport exactly as though the user had pressed stop. The worker has already closed
       // its open notes and flushed the take, so nothing is lost by stopping here.
