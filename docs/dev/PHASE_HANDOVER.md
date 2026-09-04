@@ -1,22 +1,33 @@
-# BangerBox — Phase Handover (after the sequence-filter closure)
+# BangerBox — Phase Handover (after the bounce-mixer closure)
 
-Generated at the close of the §7.9 sequence-filter work per Protocol Alpha (spec §13.1). A new
+Generated at the close of the §9.5 bounce-mixer work per Protocol Alpha (spec §13.1). A new
 session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the sequence-filter work merged to `main` (`--no-ff`). All eight §12 phases were already
-complete; this was a defect closure against §7.7/§7.9, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1852 unit tests**, `test:e2e` real-browser smoke
-(dev + offline, **69/69 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+**State:** the bounce-mixer work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §9.5/§5.2, not a new phase, so `package.json`
+`config.phase` remains **"8"**. Suite: **1874 unit tests**, `test:e2e` real-browser smoke
+(dev + offline, **70/70 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
-**Sequence mode plays ONE sequence** (§7.9), and a §7.7 live erase reaches only that one.
-`SchedulerCore.playsInSequenceMode` is the whole of it, and the reason it sits in the WORKER
-rather than in `sequencerSync` is recorded in §2 (aq) and §4 — it is the half of the decision a
-new session is most likely to get wrong.
+**Every §9.5 bounce renders the §5.2 mixer**, because the offline graph IS the live one:
+`MixerGraph`, `createAudioBridge` and `VoicePool` all take a `BaseAudioContext`, so a render
+constructs the same ten-stage hierarchy rather than describing it a second time. That is the half
+of the decision a new session is most likely to get wrong — see §2 (ar) and §4. `bouncePlan.ts`
+owns which stages each variant carries, and the static pass and the §7.8 automation pass read the
+one predicate.
+
+**`rampParamLinear` anchors on `cancelAndHoldAtTime`, not on `param.value`.** A ramp scheduled
+ahead of the playhead was anchored on a clock read up to `LOOKAHEAD_MS` old; offline, where nothing
+renders until `startRendering()`, every window would have read the same value. This changed LIVE
+behaviour as well as offline, deliberately.
+
+**A §7.8 `slotN` address is 1-based over the §4.2 slot array, on BOTH sides of the graph.** The
+insert chain used to be compacted and indexed 0-based, so an address reached the wrong effect or
+none. `ChannelHandle.setInserts` now takes one entry per slot, `null` where empty.
 
 **No §9.2 migration was added and `PRAGMA user_version` is unchanged.** Nothing this work touched
-is persisted: the filter is a scheduling decision, and the §7.1.3 wire is unchanged.
+is persisted: the render reads the stores, and the §7.1.3 wire is unchanged.
 
 **`SCHEDULER_PROTOCOL_VERSION` is 2** (§7.1.3), unchanged by this work. It was bumped by the
 entry-index work because `songSequence` carries §7.9 entries rather than a repeat-expanded id
@@ -54,6 +65,59 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(ar) — the bounce-mixer closure (§5.2, §9.5, §7.8, §4.3).** The ⚑ items below are settled
+  policy a new session should treat as binding, not as spec text:
+  - **The offline graph is the LIVE one, built by the live factories on the offline context.**
+    `MixerGraph`, `createChannelStrip`, `createInsert`, `createAudioBridge` and `VoicePool` all
+    take a `BaseAudioContext`, so §9.5's "reconstructs the full graph" is satisfied by
+    CONSTRUCTING it. Two builders that can disagree about §5.2 is how this defect would come
+    back — the §14 (ao) one-expansion rule, a layer down.
+  - **A render carries §5.2 stages 1 to 10.** `prepareWorkletEffects` is called beside
+    `prepareVoiceWorklets`: a §5.7 `reverb`, `limiter` or `multibandComp` is an
+    `AudioWorkletNode` and THROWS on a context that has never registered `dsp-effect`.
+  - **The §5.9 monitor bus and the §5.8 meter taps are out, and neither is a mix decision.**
+    §5.9 merges the click and the audition PAST the master inserts precisely so they are not
+    programme material; the taps write a SAB nothing offline reads and their sinks are at zero
+    gain, so omitting them changes no audio.
+  - **A stem is pre-master by NOT APPLYING the master strip, never by rewiring §5.2.** The bus
+    stays the unity pass-through `createChannelStrip` builds, so the topology is identical in
+    every variant.
+  - **The static pass and the §7.8 automation pass read ONE predicate**
+    (`bounceIncludesChannel`). A stem whose fader sat at unity while a master lane rode it
+    would be a stem in name only.
+  - **The RETURN channels stay in a stem**, and this is the one judgement rather than a reading.
+    A stem set has to sum back to what the master bus was fed; each stem carries only the return
+    signal its own sends drove. Exact only for a linear return chain — a compressor on a return
+    responds to the whole bus — which is true of stems in any host.
+  - **Resample-to-pad renders the SAME graph as a sequence bounce, master inserts included.**
+    §8.5.8's Looper taps `graph.master.meterPoint`, so resampling means one thing everywhere:
+    what came out of the master bus. The in-repo precedent rule (§13.6) settles it, not taste.
+  - **Mute and solo are honoured, and solo is evaluated against the WHOLE mixer** even when
+    `includeChannel` narrows what is written — otherwise a stem of a soloed track silences itself.
+  - **A bounce is of COMMITTED state, and that now covers the mixer as well as the §6 program.**
+    A §4.1 gesture in flight is on the transient channel and is not rendered; a §10.2 bend is a
+    performance gesture and is never applied. A file that cannot be reproduced from the saved
+    project is worse than one a moment out of date.
+  - **A §7.8 lane on a PER-VOICE §6 parameter is not applied, and the bounce's bridge is given no
+    voice pool to say so.** Offline every voice of the render exists from the moment it is built,
+    so "the voices sounding now" is the whole span at once, and the write would land on the param
+    the voice's own contour occupies — which §14 (x) forbids. Channel-scope program addresses (a
+    pad's amp and pan) resolve to the pad STRIP and do render. Filed as issue #138.
+  - **A render walks each segment in `SCHEDULER_INTERVAL_MS` windows.** Rendering the authored
+    curve directly would be a second implementation of §7.8's curve shapes AND a mix nobody has
+    heard: the staircase is what live playback sounds like.
+  - **`rampParamLinear` anchors on the TIMELINE (`cancelAndHoldAtTime`), not on the clock.**
+    `param.value` reads now; `ctxTime` is routinely ahead of now. Cancelling from `ctxTime` is
+    the other half: a live gesture supersedes automation already queued ahead of the playhead.
+  - **The §7.1.3 `rampEnd` is deliberately NOT consumed**, and `applyAutomation` says so. Pan and
+    every §5.7 effect core ramp with `setTargetAtTime`, which has no arrival time; the §4.3
+    dezipper is 10 ms inside a 25 ms window, so the param holds the window's own value.
+  - **A §7.8 `slotN` address is 1-based over the §4.2 SLOT ARRAY, on both sides.**
+    `ChannelHandle.setInserts` takes one handle per slot, `null` where empty, and only the
+    non-null ones are wired. The chain used to be compacted and indexed 0-based, so the address
+    reached the wrong effect or none — invisible live only because `mixerSync` rebuilds the whole
+    chain at the commit.
 
 - **(aq) — the sequence-filter closure (§7.7, §7.9).** The ⚑ items below are settled policy a new
   session should treat as binding, not as spec text:
@@ -393,6 +457,17 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   `announce` (and so a `setState` inside `LiveRegion`) from an effect without tripping it.
 - **A JSX comment cannot be the sole child of `{cond && (…)}`.** Put it above the conditional;
   inside it, the parser reports an unrelated "`)` expected" at the line after.
+- **A `await import()` of a BARREL marks that whole module consumed for `check:orphans`.** A
+  dynamic import cannot be resolved to named exports, so the checker credits every export in the
+  target — which turns existing allowlist entries into "no longer orphans" failures somewhere
+  else entirely. `audioProbe.ts` reaches `@/core/project/schemas` statically for that reason;
+  reach a barrel dynamically only when you mean to.
+- **A standalone Playwright driver reaches the probe BEFORE the DB worker has migrated.** The
+  engine reports `running` while the project is still opening, so an evaluate that touches the
+  stores gets `no such table: projects` or hydrates into a load that then replaces it. The smoke
+  never sees this because it reaches these probes late in its run. A probe that owns its own
+  arrangement should `await projectService.loadProject(projectId)` first, as `insertDefaultsProof`
+  and `bounceMixProof` do.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
@@ -402,6 +477,51 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
+
+**Building a §9.5 render (spec §5.2, §9.5):**
+
+- **`bounceService.renderSegments` builds the LIVE graph on the offline context** — `MixerGraph`
+  - `createAudioBridge` + `VoicePool`, all of which take a `BaseAudioContext`. A new §5.2 stage,
+    a new strip parameter or a new §5.7 effect reaches every bounce for free. **Do not add a
+    second, offline-only graph builder**; that is the defect this closed.
+- **`src/core/audio/bouncePlan.ts` is where a render's CONTENTS are decided**, before any node
+  exists. `bounceIncludesChannel` says which §5.2 strips a variant covers and
+  `bounceAutomationRamps` says which §7.8 ramps it applies — both pure, both unit-tested without
+  Web Audio. A new §9.5 variant states its `BounceScope` there, not in the render loop.
+- **`AudioBridge.resyncAll(includeChannel?)` is the one flush of the §4.2 strips onto the graph.**
+  The predicate exists for the stem; it also narrows `applyEffectiveMutes`, whose solo evaluation
+  still sees the whole mixer.
+- **Every channel a render needs is created BEFORE `resyncAll`**, because `resyncAll` writes onto
+  the channels the graph already holds and a pad channel is built on its first voice. The order is
+  §6 pad payload first, then the §4.2 store: the store is the §1.3 #16 runtime truth, and where it
+  has no strip for a pad the payload is the only value there is.
+- **`prepareVoiceWorklets` AND `prepareWorkletEffects` both run on the offline context.** Anything
+  else a render needs from a worklet needs the same treatment; `new AudioWorkletNode` throws on a
+  context that has never registered the processor.
+- **The §11.4 `bounceMixProof` reads the WAV back from `/bounces/` over real OPFS**, so every
+  number it reports is what is in the file the user gets. It restores the project it found —
+  `installAudioProbe` runs in production builds.
+
+**Insert slots and their §7.8 addresses (spec §5.7, §7.8):**
+
+- **`ChannelHandle.setInserts` takes one entry per §4.2 slot, `null` where the slot is empty.**
+  The graph's slot list IS the store's slot list, which is what lets `setInsertParam(slot)` take
+  the §7.8 grammar's own 1-based number. Only the non-null entries are wired, in order;
+  `setInsertTempo` and `insertLatencySamples` skip the empty ones.
+- **`insertParamPath(channelId, slotIndex + 1, param)` is how the address is built**, from the
+  store's slot position. Never renumber it against the wired chain.
+
+**Automation reaching a param (spec §4.3, §7.8):**
+
+- **`rampParamLinear` anchors with `cancelAndHoldAtTime(ctxTime)`.** It asks the param's own
+  timeline what the contour holds at the ramp's start; `param.value` answers for NOW, and `ctxTime`
+  is routinely ahead of now (§7.8 schedules into the lookahead) or, offline, before anything has
+  been rendered at all. A new ramp helper anchors the same way.
+- **`automatedTargets` and `laneForTarget` in `core/sequencer/automation.ts` are the one
+  lane-selection rule**, beside `automationRampForWindow`'s one emission rule. `SchedulerCore` and
+  the §9.5 render both call them. `resolveEffectivePoints` is module-private again.
+- **`applyAutomation` does not consume the §7.1.3 `rampEnd`, on purpose**, and says why at the
+  call site. Do not "fix" it without answering for `setTargetAtTime`, which has no arrival time.
 
 **Choosing the sequence to play (spec §7.7, §7.9):**
 
@@ -706,7 +826,11 @@ transient channel still stand. New this work:
 
 ## 5. Repository catalogue — unchanged. No repository or DDL change.
 
-**No repository method was added or changed this work.** The §11.4 insert-defaults proof reads and
+**No repository method was added or changed this work.** The §11.4 bounce-mix proof reaches storage
+only through paths that already existed: `importDecodedSample` for its test sample, the §9.1 OPFS
+wrapper for the WAV it reads back, and `projectService.loadProject` to restore what it found.
+
+From the previous work, and unchanged: the §11.4 insert-defaults proof reads and
 writes `projects.payload` through `ProjectRepository.getById`/`update`, which is what a §9.3 payload
 edit already goes through.
 
@@ -718,7 +842,8 @@ the §9.8 global-library audio its programs reference. No repository method was 
 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1**. **No migration added.**
 
-**No DDL column, §9.3 payload field or §6 payload shape changed this work.**
+**No DDL column, §9.3 payload field or §6 payload shape changed this work.** A §9.5 render reads
+the STORES, so nothing about the bounce-mixer closure is persisted at all.
 
 **A slot's `params` record now arrives at the store complete, and that needed no migration.** The
 §9.3 `tracks.mixer` column and the `master`/`returns` of `projects.payload` genuinely still hold
@@ -773,14 +898,20 @@ From the previous work, and unchanged: the **`songLoop` request**, the **`songEn
 
 Worklet processors registered at the start gate are now four: `meter-tap`, `dsp-effect`, `recorder`
 and **`granular-source`**. `prepareVoiceWorklets(context)` registers the last of them on an offline
-context, which the §9.5 bounce calls so a warp pad bounces the way it plays.
+context, and `prepareWorkletEffects(context)` registers `dsp-effect` — the §9.5 bounce calls
+BOTH, so a warp pad bounces the way it plays and a §5.7 worklet insert builds instead of
+throwing on a context that has never heard of the processor.
 
 `WorkletKernelName` gained `granularStretch`; `DspEffectKernelName` is the subset the DSP-effect
 worklet hosts, which is what keeps that processor's kernel switch exhaustive rather than defensive.
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store slice, field or action changed this work.** `useTransportStore.activeSequenceId` is
+**No store slice, field or action changed this work.** The §9.5 render READS `useMixerStore`,
+`useProgramStore` and `useSequenceStore` and writes none of them; `AudioBridge.resyncAll` gained an
+optional predicate, which is a graph concern rather than a store one.
+
+From the previous work, and unchanged: `useTransportStore.activeSequenceId` is
 §4.2's own field and already reached the worker through `sequenceMeta`; what changed is that the
 worker now uses it. `subscribeSequencerSync` still forwards an `eventsDiff` for every track in the
 project, and must — see §2 (aq) and §4.
@@ -850,7 +981,9 @@ Changes from the previous work, recorded in §14 (ai):
 ## 9. Component tree topography (as implemented)
 
 **Mode changes this work:** none. No component, primitive or mode markup changed for the
-sequence-filter closure — the defect and its fix are both below the §4.3 sync layer.
+bounce-mixer closure — the defect and its fix are both below the §4.3 sync layer, and the §8.5.6
+insert panel's addresses were already right. (The same was true of the sequence-filter closure
+before it.)
 
 From the previous work, and unchanged: `InsertPanel` gained comments only — its knobs read the same
 `slot.params[param] ?? range[0]` they always did, and what changed is that an occupied slot now
@@ -917,7 +1050,7 @@ transport mirror directly. Otherwise unchanged except (from earlier work):
 
 ## 10. Kernel inventory
 
-**No kernel changed this work.** The §5.6.4 set is complete and unchanged in membership. Every wrapper now guards its parameters
+**No kernel changed this work**, and none has since the §5.6.4 set was completed. The §5.6.4 set is complete and unchanged in membership. Every wrapper now guards its parameters
 per §14 (ak) — clamp in range, refuse a non-finite one, throw on a bad structural argument — and
 `LIMITER_RANGES`, `FDN_REVERB_RANGES` and `MULTIBAND_RANGES` mirror the §5.7 table under the
 `kernelRanges.test.ts` gate. `granularStretch` carries two entry points: the offline `render` (WSOLA, for the §8.5.4 stretch tool) and the streaming
@@ -933,20 +1066,15 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#132 is CLOSED by this work.** One new issue was filed while measuring it — a DELETED track's
-events are never withdrawn from the worker, listed below. Nothing was added to the
-`check:orphans` allowlist.
+**#134 is CLOSED by this work.** One new issue was filed while closing it — a §7.8 lane on a §6
+sound-design parameter still renders as nothing (#138), listed below. Nothing was added to the
+`check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
+instead.
 
-From the previous work: **#131 is CLOSED**, and #133, #134 and #135 were filed while tracing where
-a slot enters the store.
+From the previous work: **#132 and #131 are CLOSED**, and #133, #135 and #137 remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **#134** every §9.5 bounce renders a DRY mix. `renderSegments` connects each voice straight to a
-  bare master gain, so no level, pan, send or insert reaches any bounced file, and mixer automation
-  renders as nothing. `bounceTrack`'s "post-insert, pre-master" comment describes a channel the
-  offline context does not have. Voice-level §6 sound design does render — the pool is real; what
-  is missing is everything from §5.2 stage 3 outward.
 - **A DELETED track keeps sounding until the project is reloaded.**
   `subscribeSequencerSync`'s events subscriber iterates `Object.entries(events)` and never
   handles a REMOVED key, where the automation subscriber immediately below it does — so
@@ -962,7 +1090,54 @@ a slot enters the store.
   parsing, so the panel's own knobs, every automation lane and every Q-Link binding on that slot
   go dead while the effect still sounds. Hit while writing the #131 browser proof, whose gesture
   step silently addressed nothing until the proof stopped growing the chain.
+- **#138** a §7.8 lane on a §6 sound-design parameter (`program:<id>.pad:<idx>.filter.cutoff` and
+  its siblings) renders as nothing in a §9.5 bounce. It is not an oversight: offline every voice
+  of the render exists from the moment it is built, so `applyPadParam`'s "the voices sounding now"
+  is the whole span at once, and the write would land on the `AudioParam` the voice's own §6
+  contour occupies — which §14 (x) forbids. A fix means giving a per-voice lane its own summing
+  input, the way the §10.2 bend node has one; that is a change to how a voice is BUILT, not to the
+  bounce. Channel-scope program addresses (a pad's amp and pan) already render.
 - **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
+
+**Honest scope notes for the bounce-mixer work:**
+
+- **A bounce is now 3 dB quieter per channel than it used to be, and that is the fix.** A mono
+  sample reaching `destination` through a bare gain stayed mono; through the §5.2 pad strip it
+  passes an equal-power `StereoPannerNode` at centre. Measured 0.13638 → 0.09644 RMS, exactly
+  1/√2. The new number is what the live engine produces for the same hit.
+- **`rampParamLinear`'s new anchor changes LIVE behaviour, deliberately.** Automation ramps now
+  start from where the contour actually is rather than from a reading up to `LOOKAHEAD_MS` old,
+  and a live gesture now supersedes automation queued ahead of the playhead. One existing
+  assertion in `paramGuards.test.ts` pinned the scheduling call rather than the behaviour and was
+  corrected rather than added to.
+- **A §7.8 lane on a per-voice §6 parameter still renders as nothing** — issue #138 above.
+- **A pad channel is seeded from the §6 payload and then overwritten by the §4.2 store where a
+  strip exists.** For a pad of a program that is not the active one, `programSync` has published
+  no strip and the payload is the only value there is. Moot until #133 makes a pad strip persist.
+- **Nothing bounds the number of automation events a long song schedules.** The
+  `OfflineAudioContext` buffer dominates long before the event count matters — a §7.9 playlist at
+  `MAX_SONG_SEGMENTS` is over 55 hours, ~76 GB of float samples — so the browser's own allocation
+  failure is the limit, exactly as it was before this work.
+- **A stem still renders THROUGH the master bus**, at unity with no inserts, rather than tapping
+  the track strip directly. That is what keeps the topology identical across variants; it costs
+  three pass-through gains and a centred panner, none of which changes the signal.
+- **A §7.8 lane can still address a slot the §1.3.1 limit forbids** (#135). What changed is that
+  slots 1 to 8 now mean what they say.
+- **Every regression test was proven against the code it was written to catch**, by six
+  mutations: a `bounceIncludesChannel` that admits everything (2 failures), a valueTick that
+  ignores the song track scope (1), a `laneForTarget` that ignores lane ownership (2), the old
+  stale ramp anchor (3), the compacted 0-based insert chain (3), and an `applyInserts` that
+  filters empty slots out again (1).
+- **Measured in a real browser**: 13/13 driver checks at port 5344 and 70/70 smoke steps at
+  5342/5343 (up from 69), no console errors. Nine bounces of one bar carrying four hits of a
+  1 kHz tone, each read back from `/bounces/` over real OPFS: a −12 dB fader rendered ×0.251, a
+  hard-right pan left 0.00000 in the left channel, a 100 Hz lowpass insert left ×0.018, an open
+  send returned 0.1508 RMS into a silent beat gap, a master lane climbed 0.0013 → 0.0485, an
+  `insert:…:slot1.cutoff` lane on an `exp` curve climbed 0.0008 → 0.1330, and a master strip cut
+  to −42 dB and lowpassed left ×0.0001 of the mix while the STEM rendered ×1.000 of the
+  pre-master mix and kept its own send return. **Against the unfixed build all nine renders were
+  identical at 0.13638 RMS and 10 of the 13 checks failed**; the three that passed are the
+  anti-over-correction guards. One smoke step is new and permanent.
 
 **Honest scope notes for the sequence-filter work:**
 
@@ -1197,6 +1372,6 @@ a slot enters the store.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1852**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **69/69 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1874**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **70/70 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
