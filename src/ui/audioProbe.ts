@@ -35,6 +35,7 @@ import {
   type InsertSlotState,
   automationLaneKey,
   type KeygroupZone,
+  type Pad,
   type Sequence,
   type Track,
   type VelocityLayer,
@@ -163,6 +164,8 @@ export interface AudioProbe {
   songEntryIndexProof: () => Promise<SongEntryIndexResult>;
   /** A slot's stored params are the ones the graph runs, fresh or reloaded (issue #131). */
   insertDefaultsProof: () => Promise<InsertDefaultsResult>;
+  /** A pad's §4.2 strip is reachable and survives a save + reload (§4.2, §6, §9.3, #133). */
+  padStripProof: () => Promise<PadStripResult>;
   /** Sequence mode plays ONE sequence, and erases in only that one (§7.7, §7.9, #132). */
   sequenceFilterProof: () => Promise<SequenceFilterResult>;
 }
@@ -196,6 +199,41 @@ export interface InsertDefaultsResult {
   readonly touchedToMs: number;
   /** What an undo of the first touch of a fresh insert returns the parameter to, in ms. */
   readonly undoneToMs: number;
+}
+
+/**
+ * The four §4.2 fields issue #133 loses, read from one place — the §6 payload on disk, or
+ * the strip in the store. Both sides are read into the same shape so the smoke can compare
+ * them without knowing which is which.
+ */
+export interface PadStripReading {
+  readonly level: number;
+  readonly pan: number;
+  /** Send 2 of the four (spec §1.3.1), index 1 — a send nothing else in the proof touches. */
+  readonly send1: number;
+  readonly insertType: string | null;
+  /** The delay's time in ms, which is also the §5.7 default the slot arrives with (#131). */
+  readonly insertTimeMs: number;
+}
+
+/** Outcome of the §4.2 pad-strip proof (see {@link AudioProbe.padStripProof}). */
+export interface PadStripResult {
+  /** The §4.2 channel id the proof drives, so a failure names the strip it drove. */
+  readonly padChannel: string;
+  /** Whether a project just loaded has a pad strip at all — §8.5.6's Pads tab is dead without one. */
+  readonly stripPresentOnLoad: boolean;
+  /** The fader position the commit put in the store, so a gesture that reached nothing is visible. */
+  readonly committedLevel: number;
+  /** The same position after a real save and `loadProject`. */
+  readonly reloadedLevel: number;
+  /** RMS of a §9.5 bounce with the pad strip at its §4.2 default, over real OPFS. */
+  readonly defaultRms: number;
+  /** RMS of the same bounce after the −12 dB fader was saved and reloaded. */
+  readonly reloadedRms: number;
+  /** The four fields as the §9.3 `programs.payload` column holds them after `saveNow()`. */
+  readonly onDisk: PadStripReading;
+  /** The four fields as the strip reads them after `loadProject()`. */
+  readonly afterReload: PadStripReading;
 }
 
 /** Outcome of the §7.7 loop-boundary erase proof (see {@link liveEraseWrapProof}). */
@@ -2476,6 +2514,198 @@ async function insertDefaultsProof(): Promise<InsertDefaultsResult> {
   return { path, added, reloaded, legacy, touchedToMs, undoneToMs };
 }
 
+/** Both sides of the §6 ↔ §4.2 pair read into one shape, so the smoke compares like with like. */
+function padStripReading(
+  mixer: { level: number; pan: number; sendLevels: readonly number[] } | undefined,
+  inserts: readonly InsertSlotState[] | undefined,
+): PadStripReading {
+  const slot = inserts?.at(-1);
+  return {
+    level: mixer?.level ?? -1,
+    pan: mixer?.pan ?? -1,
+    send1: mixer?.sendLevels[1] ?? -1,
+    insertType: slot?.effectType ?? null,
+    insertTimeMs: slot?.params.time ?? -1,
+  };
+}
+
+/**
+ * A pad's mixer strip is REACHABLE and it PERSISTS (issue #133, spec §4.2, §6, §9.3, §9.5).
+ *
+ * Two halves, because the defect had two. §8.5.6's Pads tab was inert on a freshly loaded
+ * project — nothing published a `pad:` strip, so `useMixerStore.commit` found none and
+ * returned before it wrote anything — and where a strip did exist, `flushProgram` serialised
+ * a `useProgramStore` the edit had never reached, so the save reported success and stored the
+ * pad unchanged.
+ *
+ * The bounce is what makes the second half AUDIBLE rather than a claim about a JSON column
+ * (spec §11.2, §13.5). One bar carries four hits of a 1 kHz tone on pad 0; the pad fader is
+ * committed to 0.8, which the §8.5.6 law maps to −12 dB; the project is SAVED and RELOADED;
+ * and the same bounce is measured again. Only a strip that survived the reload can move that
+ * number, because §9.5 renders committed store state and the reload rebuilt every store from
+ * the §9.3 rows.
+ *
+ * The proof owns its whole arrangement as real §9.3 ROWS — a program, a sequence and a track
+ * of its own — because a save and a reload are the two things it is about, so nothing it
+ * measures may be hydrated into the stores and left there. It cannot borrow the project's own
+ * track either: by the time the §11.4 run reaches this step, earlier steps have opened
+ * imported and factory projects, and what a track points at is no longer predictable. The
+ * three rows are deleted at the end and the project reloaded — `installAudioProbe` runs in
+ * production builds, so it may not leave an arrangement behind.
+ */
+async function padStripProof(engine: AudioEngine): Promise<PadStripResult> {
+  const { bounceActiveSequence } = await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+  const { channelLevelPath, channelPanPath, channelSendPath } = await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const repos = getActiveRepositories();
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A quarter-second 1 kHz tone through a pad with no envelope shaping, so what a render
+  // measures is the strip and nothing else.
+  const HIT_SECONDS = 0.25;
+  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * HIT_SECONDS), sampleRate);
+  const toneData = tone.getChannelData(0);
+  for (let i = 0; i < toneData.length; i += 1) {
+    toneData[i] = 0.6 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+  }
+  const sample = await importDecodedSample(tone, 'pad strip probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  const program = createDefaultDrumProgram('Pad strip probe');
+  const pad = createDefaultPad(0, 'Pad strip probe');
+  pad.playbackMode = 'oneShot';
+  pad.layers = [layer({ sampleId: sample.id })];
+  pad.envelopes = {
+    ...pad.envelopes,
+    amp: { ...pad.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+  };
+  program.pads = [pad];
+  const padChannel = `pad:${program.id}:0`;
+
+  const sequence = { ...createDefaultSequence(projectId, 99, 'Pad strip probe'), lengthBars: 1 };
+  const trackId = crypto.randomUUID();
+
+  await repos.programs.create({
+    id: program.id,
+    project_id: projectId,
+    name: program.name,
+    type: 'drum',
+    payload: JSON.stringify(program),
+  });
+  await repos.sequences.create({
+    id: sequence.id,
+    project_id: projectId,
+    position: sequence.position,
+    name: sequence.name,
+    length_bars: sequence.lengthBars,
+    time_sig_numerator: sequence.timeSig.numerator,
+    time_sig_denominator: sequence.timeSig.denominator,
+    tempo: 120,
+    swing_amount: sequence.swingAmount,
+    swing_division: sequence.swingDivision,
+  });
+  await repos.tracks.create({
+    id: trackId,
+    sequence_id: sequence.id,
+    program_id: program.id,
+    position: 0,
+    name: 'Pad strip probe',
+    type: 'drum',
+    mixer: JSON.stringify(createDefaultChannelStrip(`track:${trackId}`)),
+  });
+  await repos.midiEvents.replaceTrack(
+    trackId,
+    [0, 960, 1_920, 2_880].map((tick) => ({
+      id: crypto.randomUUID(),
+      track_id: trackId,
+      tick_start: tick,
+      duration_ticks: 120,
+      note: 0,
+      velocity: 100,
+      extra: null,
+    })),
+  );
+
+  /** Re-read every row, then select the probe's own program and sequence (spec §4.4). */
+  const reload = async (): Promise<void> => {
+    await projectService.loadProject(projectId);
+    useProgramStore.getState().setActiveProgram(program.id);
+    const transport = useTransportStore.getState();
+    transport.setActiveSequenceId(sequence.id);
+    transport.setPlaybackMode('sequence');
+    transport.setBpm(120);
+  };
+  await reload();
+
+  // 1 — is there a strip at all? The project has just been loaded and the program selected
+  // exactly as hydration selects one; nothing has switched away from it and back.
+  const stripPresentOnLoad = useMixerStore.getState().channels[padChannel] !== undefined;
+
+  /** Render the active sequence and measure the WAV back over real OPFS (spec §9.5, §11.2). */
+  const measure = async (): Promise<number> => {
+    const path = await bounceActiveSequence('probe-pad-strip', ctx);
+    const decoded = decodeWav(new Uint8Array(await (await readFile(path)).arrayBuffer()));
+    const left = decoded.channels[0]!;
+    const right = decoded.channels[1] ?? left;
+    const mono = new Float32Array(left.length);
+    for (let i = 0; i < mono.length; i += 1) mono[i] = (left[i]! + right[i]!) / 2;
+    return rmsBetween(mono, decoded.sampleRate, 0, 2);
+  };
+
+  const defaultRms = await measure();
+
+  // 2 — the audible half. 0.8 on the §8.5.6 fader law is −12 dB, a quarter of the amplitude.
+  useMixerStore.getState().commit(channelLevelPath(padChannel), 0.8);
+  const committedLevel = useMixerStore.getState().channels[padChannel]?.level ?? -1;
+  await projectService.saveNow();
+  await reload();
+  const reloadedLevel = useMixerStore.getState().channels[padChannel]?.level ?? -1;
+  const reloadedRms = await measure();
+
+  // 3 — the other three fields, into the §9.3 column and back onto the strip.
+  const mixer = useMixerStore.getState();
+  mixer.commit(channelPanPath(padChannel), -0.5);
+  mixer.commit(channelSendPath(padChannel, 1), 0.6);
+  mixer.addInsert(padChannel, 'delay');
+  await projectService.saveNow();
+
+  const savedRow = await repos.programs.getById(program.id);
+  if (savedRow === undefined) throw new Error('padStripProof: the probe program lost its row.');
+  const savedPad = (JSON.parse(savedRow.payload) as { pads: Pad[] }).pads.find(
+    (candidate) => candidate.padIndex === 0,
+  );
+  const onDisk = padStripReading(savedPad?.mixer, savedPad?.inserts);
+
+  await reload();
+  const strip = useMixerStore.getState().channels[padChannel];
+  const afterReload = padStripReading(strip, strip?.inserts);
+
+  // Put the project back: the probe's own rows go, and the load takes its stores with them.
+  // The sequence cascades to the track and the track to its events (spec §9.3).
+  await repos.sequences.remove(sequence.id);
+  await repos.programs.remove(program.id);
+  await projectService.loadProject(projectId);
+
+  return {
+    padChannel,
+    stripPresentOnLoad,
+    committedLevel,
+    reloadedLevel,
+    defaultRms,
+    reloadedRms,
+    onDisk,
+    afterReload,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -2515,6 +2745,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     liveEraseWrapProof: () => liveEraseWrapProof(engine),
     songEntryIndexProof: () => songEntryIndexProof(),
     insertDefaultsProof: () => insertDefaultsProof(),
+    padStripProof: () => padStripProof(engine),
     sequenceFilterProof: () => sequenceFilterProof(engine),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,

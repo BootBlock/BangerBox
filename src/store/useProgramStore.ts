@@ -38,6 +38,7 @@ import {
   type Range,
   type VelocityLayer,
 } from '@/core/project/schemas';
+import { padWithStripEdit, type PadStripEdit } from './padStrips';
 import { recordParamGesture } from './automationRecord';
 import {
   anyTransientInFlight,
@@ -93,6 +94,18 @@ interface ProgramState {
   /** Assign or replace a drum pad (spec §4.5 pad assignment). */
   upsertPad: (programId: string, pad: Pad) => void;
   removePad: (programId: string, padIndex: number) => void;
+
+  /**
+   * Write a §4.2 pad-strip edit into the §6 pad that owns it, with NO undo entry and no
+   * autosave mark (issue #133). `derive/padStripMirror` is the one caller.
+   *
+   * Both were already recorded by the `useMixerStore` commit that moved the strip:
+   * `mixerChannelDirtyKey` marks `program:<id>` dirty for a `pad:` channel, and the commit's
+   * own revert closure puts the strip back — which this mirrors on the way out again. A
+   * second entry here would mean two Ctrl+Z presses for one fader move, and a second
+   * `markDirty` would be a second rule for one fact.
+   */
+  applyPadStripEdit: (programId: string, padIndex: number, edit: PadStripEdit) => void;
 
   /**
    * Assign a sample to a drum pad as a new velocity layer, creating the pad if it does not
@@ -466,6 +479,24 @@ export const useProgramStore = create<ProgramState>()(
         'Clear pad',
       );
     },
+
+    applyPadStripEdit: (programId, padIndex, edit) =>
+      set((state) => {
+        const program = state.programs[programId];
+        // A strip can outlive its program — nothing removes a pad channel when a program is
+        // deleted — so an edit addressing one that has gone is dropped rather than reviving it.
+        if (program?.type !== 'drum') return {};
+        let moved = false;
+        const pads = program.pads.map((pad) => {
+          if (pad.padIndex !== padIndex) return pad;
+          const next = padWithStripEdit(pad, edit);
+          if (next !== pad) moved = true;
+          return next;
+        });
+        // Same identity when the payload already agreed, so a §4.4 hydrate or a republished
+        // strip does not make every `programs` subscriber re-run for nothing (spec §3.3).
+        return moved ? { programs: { ...state.programs, [programId]: { ...program, pads } } } : {};
+      }),
 
     addPadLayer: (programId, padIndex, sampleId, maxLayers = DEFAULT_MAX_VELOCITY_LAYERS) => {
       const program = get().programs[programId];

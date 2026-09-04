@@ -696,6 +696,60 @@ async function assertShellAndSelfTest(page, label) {
     await page.getByTestId('mode-tab-main').click();
   });
 
+  // A pad's mixer strip is the §6 payload's own values wearing a §4.2 shape (issue #133), and
+  // it used to be neither reachable nor persistent: no strip was published for a project just
+  // loaded, so every control on §8.5.6's Pads tab did nothing; and where one did exist,
+  // `flushProgram` serialised a program the edit had never reached. The bounce is what makes
+  // the second half audible — a −12 dB pad fader, saved, reloaded, and heard in the file.
+  //
+  // It sits HERE, after the two §5.7 insert-defaults steps, because those end on a fresh
+  // `loadProject` and so does this one — while the two steps below it do not, and the Grid
+  // step reads the arrangement the §7.9 one leaves in the stores rather than the §9.3 rows.
+  await step(`${label}: a pad's mixer strip is reachable and survives a reload (#133)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.padStripProof());
+    if (!r.stripPresentOnLoad) {
+      throw new Error(
+        `no strip for ${r.padChannel} on a freshly loaded project — every control on the Pads tab is inert`,
+      );
+    }
+    // A gesture that reached nothing would leave every number below at its default, so the
+    // committed value is asserted first: without it the reload check could pass while proving
+    // nothing at all.
+    if (Math.abs(r.committedLevel - 0.8) > 0.001) {
+      throw new Error(`the fader commit put the strip at ${r.committedLevel} — expected 0.8`);
+    }
+    if (Math.abs(r.reloadedLevel - 0.8) > 0.001) {
+      throw new Error(`the strip read ${r.reloadedLevel} after a save and reload — expected 0.8`);
+    }
+    // §8.5.6's law maps 0.8 to −12 dB, which is 10^(-12/20) = 0.2512 of the amplitude.
+    if (!(r.defaultRms > 0.01)) {
+      throw new Error(`the unedited bounce is silent (${r.defaultRms.toFixed(5)} RMS) — nothing sounded`);
+    }
+    const ratio = r.reloadedRms / r.defaultRms;
+    if (Math.abs(ratio - 0.2512) > 0.02) {
+      throw new Error(
+        `the reloaded bounce rendered at ${ratio.toFixed(4)} of the unedited one — a −12 dB pad fader is 0.2512`,
+      );
+    }
+    for (const [where, reading] of [
+      ['the §6 payload on disk', r.onDisk],
+      ['the strip after a reload', r.afterReload],
+    ]) {
+      const wrong = [];
+      if (Math.abs(reading.level - 0.8) > 0.001) wrong.push(`level ${reading.level}`);
+      if (Math.abs(reading.pan + 0.5) > 0.001) wrong.push(`pan ${reading.pan}`);
+      if (Math.abs(reading.send1 - 0.6) > 0.001) wrong.push(`send 2 ${reading.send1}`);
+      if (reading.insertType !== 'delay') wrong.push(`insert ${String(reading.insertType)}`);
+      if (Math.abs(reading.insertTimeMs - DELAY_DEFAULT_MS) > 0.001) {
+        wrong.push(`insert time ${reading.insertTimeMs} ms`);
+      }
+      if (wrong.length > 0) throw new Error(`${where} carries ${wrong.join(', ')}`);
+    }
+    console.log(
+      `       pad strip: bounce ${r.defaultRms.toFixed(5)} → ${r.reloadedRms.toFixed(5)} RMS (×${ratio.toFixed(4)}) after a save and reload; disk and strip both read 0.8 / −0.5 / 0.6 / delay ${DELAY_DEFAULT_MS} ms`,
+    );
+  });
+
   // §7.9 makes song mode the way to play several sequences in order, which only means
   // something if sequence mode plays ONE. The unit tests drive the core with an injected
   // clock; the wire is what they cannot reach, and the defect lived on both sides of it —
