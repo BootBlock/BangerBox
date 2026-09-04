@@ -35,7 +35,7 @@ import {
   type Track,
   type VelocityLayer,
 } from '@/core/project/schemas';
-import { useMixerStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
+import { useMixerStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
 import { commitTempo } from '@/store/tempo';
 import { decodeWav, encodeWav } from '@/core/audio/wav';
 import {
@@ -140,6 +140,46 @@ export interface AudioProbe {
   schedulerBoundaryProof: () => SchedulerBoundaryResult;
   /** The §5.4 declick follows a pitch-modulated voice's real end (issue #87). */
   declickContourProof: () => Promise<DeclickContourResult>;
+  /** One announcer, two channels, and severity picking between them (spec §8.2, issue #34). */
+  announcementProof: () => Promise<AnnouncementResult>;
+  /** The §9.7 eviction warning is readable, dismissible UI in every mode (issue #51). */
+  platformNoticeProof: () => Promise<PlatformNoticeResult>;
+}
+
+/** Outcome of the §8.2 announcer proof (see {@link announcementProof}). */
+export interface AnnouncementResult {
+  /** Live regions in the whole document before anything is announced. Must be 2. */
+  readonly regionsIdle: number;
+  /** Live regions with three toasts on screen. Must still be 2 (issue #34). */
+  readonly regionsWithToasts: number;
+  /** Toasts actually rendered, so the count above is measured under real load. */
+  readonly toastsOnScreen: number;
+  /** What the assertive channel read after an error toast. */
+  readonly assertiveAfterError: string;
+  /** What the polite channel read at the same moment — it must NOT carry the error. */
+  readonly politeAfterError: string;
+  /** What the polite channel read after an advisory toast. */
+  readonly politeAfterInfo: string;
+  /** And the assertive one, which must not have been interrupted for advice. */
+  readonly assertiveAfterInfo: string;
+  /** Elements carrying a live role that are neither of the announcer's two. */
+  readonly strayRegions: readonly string[];
+}
+
+/** Outcome of the §9.7 shell-notice proof (see {@link platformNoticeProof}). */
+export interface PlatformNoticeResult {
+  /** Notice strips on screen while the persistence grant stands. Must be 0. */
+  readonly noticesWhileGranted: number;
+  /** The warning's own text once the grant is refused. */
+  readonly text: string;
+  /** Its Dismiss button's accessible name, which must name what it dismisses. */
+  readonly dismissName: string;
+  /** Whether that button is in the tab order — the `title` it replaced was not. */
+  readonly dismissFocusable: boolean;
+  /** Notice strips remaining after pressing Dismiss. Must be 0. */
+  readonly noticesAfterDismiss: number;
+  /** The storage gauge's `title`, which must no longer hide the same sentence. */
+  readonly gaugeTitle: string;
 }
 
 /** Outcome of the §7.9 song-parity proof (see {@link songParityProof}). */
@@ -1575,6 +1615,104 @@ async function declickContourProof(): Promise<DeclickContourResult> {
   };
 }
 
+/** Live regions in the document, tagged by the `data-testid` that identifies each. */
+function liveRegionIds(): string[] {
+  return [...document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')].map(
+    (element) =>
+      element.getAttribute('data-testid') ?? `${element.tagName}[role=${element.getAttribute('role') ?? ''}]`,
+  );
+}
+
+/** Let React commit and the announcer's effect run before reading the DOM back. */
+function settle(ms = 250): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function regionText(testId: string): string {
+  return document.querySelector(`[data-testid="${testId}"]`)?.textContent ?? '';
+}
+
+/**
+ * Spec §8.2 requires ONE announcer. This drives the real toast queue and reads the real
+ * DOM back, because the defect issue #34 reports — several regions competing, announcements
+ * dropped — is invisible to anything that inspects a component in isolation (spec §13.5).
+ *
+ * Every message it raises begins with "Probe ", because the severity split it demonstrates
+ * needs a real error and a real warning toast, and §11.4 fails the smoke on either. The
+ * smoke step that calls this takes its own traffic back out of the toast log.
+ */
+async function announcementProof(): Promise<AnnouncementResult> {
+  const ui = useUIStore.getState();
+  for (const toast of ui.toasts) ui.dismissToast(toast.id);
+  await settle();
+  const regionsIdle = liveRegionIds().length;
+
+  useUIStore.getState().pushToast('Probe error notice', 'error');
+  await settle();
+  const assertiveAfterError = regionText('live-region-assertive');
+  const politeAfterError = regionText('live-region');
+
+  useUIStore.getState().pushToast('Probe advisory notice', 'info');
+  await settle();
+  const politeAfterInfo = regionText('live-region');
+  const assertiveAfterInfo = regionText('live-region-assertive');
+
+  useUIStore.getState().pushToast('Probe warning notice', 'warning');
+  await settle();
+  const ids = liveRegionIds();
+  const result: AnnouncementResult = {
+    regionsIdle,
+    regionsWithToasts: ids.length,
+    toastsOnScreen: document.querySelectorAll('[data-testid="toast"]').length,
+    assertiveAfterError,
+    politeAfterError,
+    politeAfterInfo,
+    assertiveAfterInfo,
+    strayRegions: ids.filter((id) => id !== 'live-region' && id !== 'live-region-assertive'),
+  };
+
+  const after = useUIStore.getState();
+  for (const toast of after.toasts) after.dismissToast(toast.id);
+  return result;
+}
+
+/**
+ * Spec §9.7 asks for "a persistent dismissible warning that the browser may evict data".
+ * This drives the real §9.7 state through the store the always-mounted gauge publishes to,
+ * then reads the shell back — a `title` attribute would satisfy an inspection and fail a
+ * keyboard (issue #51).
+ */
+async function platformNoticeProof(): Promise<PlatformNoticeResult> {
+  // Restored at the end: a probe that leaves a FABRICATED refusal behind would have every
+  // later step of a smoke run reading a warning the browser never gave.
+  const granted = useUIStore.getState().storagePersisted;
+
+  useUIStore.getState().setStoragePersisted(true);
+  await settle();
+  const noticesWhileGranted = document.querySelectorAll('[data-testid^="platform-notice-"]').length;
+
+  useUIStore.getState().setStoragePersisted(false);
+  await settle();
+  const notice = document.querySelector('[data-testid="platform-notice-persistentStorage"]');
+  const dismiss = notice?.querySelector('button');
+  const result = {
+    noticesWhileGranted,
+    text: notice?.textContent ?? '',
+    dismissName: dismiss?.getAttribute('aria-label') ?? '',
+    dismissFocusable: dismiss instanceof HTMLElement && dismiss.tabIndex >= 0,
+    gaugeTitle: document.querySelector('[data-testid="transport-storage"]')?.getAttribute('title') ?? '',
+  };
+
+  if (dismiss instanceof HTMLElement) dismiss.click();
+  await settle();
+  const noticesAfterDismiss = document.querySelectorAll(
+    '[data-testid="platform-notice-persistentStorage"]',
+  ).length;
+
+  if (granted !== null) useUIStore.getState().setStoragePersisted(granted);
+  return { ...result, noticesAfterDismiss };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -1613,5 +1751,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,
+    announcementProof,
+    platformNoticeProof,
   };
 }

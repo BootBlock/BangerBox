@@ -1,13 +1,13 @@
-# BangerBox — Phase Handover (after the sequencer-correctness closure)
+# BangerBox — Phase Handover (after the accessibility closure)
 
-Generated at the close of the sequencer-correctness work per Protocol Alpha (spec §13.1). A
-new session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code,
-and MUST reuse the patterns recorded here rather than inventing parallel ones.
+Generated at the close of the accessibility work per Protocol Alpha (spec §13.1). A new session
+MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and MUST
+reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the sequencer work merged to `main` (`--no-ff`). All eight §12 phases were already
-complete; this was a defect closure against §7.1/§7.3/§7.7/§7.8/§7.9, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1761 unit tests**, `test:e2e` real-browser
-smoke (dev + offline, **55/55 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+**State:** the accessibility work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §2.1/§8.2/§9.7, not a new phase, so `package.json`
+`config.phase` remains **"8"**. Suite: **1815 unit tests**, `test:e2e` real-browser smoke
+(dev + offline, **59/59 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
 **The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
@@ -42,6 +42,60 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(an) — the accessibility closure (§2.1, §8.2, §9.7).** The ⚑ items below are settled
+  policy a new session should treat as binding, not as spec text:
+  - **The §8.2 announcer carries TWO channels and two is the whole set.** Polite waits its
+    turn, assertive interrupts. Severity picks the channel; it may never again pick a
+    `role`, because a role per notice is a live region per notice — the whole of issue #34.
+    A third region would be a competing region again.
+  - **The announcer is mounted by `App`, FIRST in its tree**, so it exists while the §5.1
+    start gate is up and its listeners are registered before any sibling's first effect can
+    announce. The three blocking screens render INSTEAD of `App` and keep their own regions.
+  - **`useAnnounce` is the one route a call site takes.** An effect written out at each site
+    is how a site grows a region of its own again.
+  - **An indicator that flips on every edit is READABLE, not ANNOUNCED** — the unsaved dot
+    keeps `sr-only` text and no `aria-live`.
+  - **Four `formatValueText` tokens name a DOMAIN, not a unit**: `pan`, `fraction`,
+    `faderLevel`, `ratio`. §8.2's wording belongs to the PARAMETER, not to the screen, so the
+    same send reads the same on a Mixer knob and an XYFX axis. No new `formatValue` closure.
+  - **`targetUnit` is the sibling of `targetRange`, and `resolveTargetUnit` of
+    `resolveTargetRange`.** An insert parameter's unit belongs to the effect in the slot
+    exactly as its range does. Resolving the two in different places is one edit from drawing
+    a delay time in ms and announcing it as a fraction.
+  - **A dimensionless parameter reads as a bare number, and that is right.** A filter Q has
+    no unit. `effectParams.test.ts` gates which parameters are allowed to have none.
+  - **The transport bar is a `group`, and the roving tabindex is deliberately NOT
+    implemented.** The bar holds two sliders and two segmented controls that each own the
+    arrow keys for their own value; the toolbar role was a promise it could not keep. The
+    tab-stop count is answered by the skip link instead — 14 stops down to one, measured.
+  - **The skip link is a BUTTON.** §1.3 #9 rules out a router and a hash would rewrite the
+    §2.4 `start_url` for the session. Focusing the `tabIndex={-1}` panel does everything the
+    anchor would.
+  - **`AppShell` takes focus when it first appears**, which is the moment the start gate
+    unmounts the button holding it. Gesture-driven, once per session.
+  - **Bypass is the verb, and `pressed` inverts to match it.** §5.7 defines `enabled` as true
+    bypass; a bypass light is lit when the effect is out of circuit. The store field keeps its
+    §13.6 name and the inversion lives at the one place the two meet. An EMPTY slot reads as
+    empty, never as bypassed.
+  - **`accessibleName` must BEGIN with the visible label** (WCAG 2.5.3), on `Button`, `Knob`,
+    `Fader` and `Toggle` alike.
+  - **A §2.1 soft capability with no control to disable gets a shell notice; one with a
+    control keeps the control.** `bluetooth` and `microphone` are already compliant at their
+    own controls, so they get no strip — repeating in eleven modes what the owning mode says
+    is not an improvement.
+  - **§9.7's warning is readable, dismissible text in every mode**, never a `title`: a `title`
+    is unreachable by keyboard and, on the §1.1 tablet, unreachable at all.
+  - **A toast is announced by `ToastViewport` and by NOTHING else.** Eleven call sites used to
+    `announce(message)` right after `pushToast(message, …)`; at `warning` tone that put the
+    identical sentence in the polite AND the assertive region at once. A call site that raises
+    a toast says nothing itself. `announce` direct is for a message with NO toast — the Grid's
+    automation refusal and the §8.5.7 arm-for-pad-grid message are the only two left.
+  - **A domain token is never suffixed onto a value with no reading.** "— pan" reads as a
+    measurement in pans. Non-finite falls through to the unit-less em dash or infinity symbol.
+  - **A shell notice announces what the DEVICE raises, not what is still on screen**, so a
+    dismissal does not re-read the survivor.
+  - **A §11.4 probe restores what it found, and a probe with no smoke caller guards nothing.**
 
 - **(am) — the sequencer-correctness closure (§7.1.3, §7.3, §7.7, §7.8, §7.9).** The ⚑ items
   below are settled policy a new session should treat as binding, not as spec text:
@@ -226,13 +280,58 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   never call the setter; a `useRef` with a lazy `??=` trips the rule.
 - **`react-hooks/set-state-in-effect` also fires on a synchronous `setState` in an effect BODY.**
   Initialise from a lazy `useState` initialiser instead and let the subscription callback be the
-  only setter.
+  only setter. It does NOT trace across a module boundary, which is why `useAnnounce` may call
+  `announce` (and so a `setState` inside `LiveRegion`) from an effect without tripping it.
+- **A JSX comment cannot be the sole child of `{cond && (…)}`.** Put it above the conditional;
+  inside it, the parser reports an unrelated "`)` expected" at the line after.
+- **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
+  focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
+  middle of the page — which reads as "the skip link is not the first stop" when it is.
 
 ## 4. Established patterns (reuse, do not reinvent)
 
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
+
+**The announcer (spec §8.2):**
+
+- **`src/ui/primitives/LiveRegion.tsx` holds the ONLY `aria-live` nodes in the application
+  tree**, and there are exactly two of them. A component that needs to say something imports
+  `useAnnounce` (or `announce` for non-React code) — it does not grow a `role="status"`, a
+  `role="alert"` or an `aria-live` of its own. Three tests assert that negative directly, on
+  `AppShell`, on `StoragePanel` and on every `Toast` tone, and a fourth asserts the running
+  application holds exactly two.
+- **`ToastViewport` is where a toast is announced**, once per notice id, on the channel its
+  severity chooses. `pushToast` refreshes a repeated notice in place rather than queueing a
+  second copy, which is what makes "once" mean once for an autosave failing every tick.
+- **`announce(message, urgency)` defaults to polite.** Interrupting is for what the user must
+  act on now — a failure, a refusal, a warning — never for confirming that something worked.
+
+**Human units (spec §8.2, §7.8):**
+
+- **`formatValueText` is still the one place a value becomes `aria-valuetext`**, and it now
+  knows four domain tokens beside its units. A new parameter gets a token there, not a
+  `formatValue` callback at its call site.
+- **`effectParams.ts` owns a §5.7 parameter's label and unit beside its range.** Reach them
+  through `effectParamLabel` / `effectParamUnit`; the tables themselves are module-private, and
+  `effectParams.test.ts` fails if a ranged parameter has no label or no known unit.
+- **`targetUnit` / `resolveTargetUnit` answer for a §7.8 ADDRESS**, which is what a picker and
+  an XY axis hold. Add a new registry leaf to both the range table and the unit table.
+- **`Fader` has a horizontal variant.** An inline continuous setting uses it rather than a
+  native `<input type="range">`, which §1.3 #10 forbids and which shares none of the §8.2
+  keyboard contract.
+
+**The shell (spec §8.1, §8.2, §2.1):**
+
+- **`src/ui/shell/PlatformNotices.tsx` is where a condition the DEVICE imposes is told to the
+  user**, in all 12 modes. It reads `useUIStore.capabilities` and `useUIStore.storagePersisted`
+  and renders `SOFT_CAPABILITY_NOTICES`. A new always-true-of-the-device warning goes here; a
+  warning about something the user just did is a toast.
+- **`useUIStore.storagePersisted` is the §9.7 grant.** `StorageGauge` asks and publishes;
+  everything else reads. The surface that must SHOW it is not the surface that ASKS for it.
+- **The skip link and the mode-panel focus move both live in `AppShell`**, because the panel is
+  what they target and the shell is what mounts once per session.
 
 **Song mode and capture (spec §7.7, §7.9):**
 
@@ -505,7 +604,14 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store SLICE changed this work, but two store actions changed what they do** (issue #27):
+**`useUIStore.storagePersisted` is new this work** (§4.2 permits adding fields with a changelog
+entry; none removed), with `setStoragePersisted`. It is the §9.7 persistence grant — `true`,
+`false`, or `null` before the first-run request has answered. `StorageGauge` writes it and
+`PlatformNotices`, `StoragePanel` and the §11.4 probe read it. Nothing persists it: it is a
+property of the browser, re-asked every session.
+
+From the previous work, and unchanged: **no store SLICE changed, but two store actions changed
+what they do** (issue #27):
 `useMixerStore.setTransient` and `useProgramStore.setPadParamTransient` no longer call `set()`.
 They publish on the §4.1 transient channel, and the store holds the pre-gesture value until the
 commit. Anything that read a store mid-gesture reads `readTransientValue` first — the §10.3
@@ -548,11 +654,31 @@ Changes from the previous work, recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-**Two primitives are new** (spec §2.5): `FilePickerButton` (a file picker on the shared button
-chassis, which a `<label>` could not have) and `ConfirmDialog` (which also carries the §8.1 rule
-for what earns a confirmation). `Button` exports `buttonChassis` so the picker shares it rather
-than copying it; `ValueReadout` takes an optional `valueRef`; `Knob` and `Fader` take an optional
-`livePath`.
+**One shell component is new** this work: `PlatformNotices`, a dismissible strip between the
+transport bar and the mode content, rendering the §2.1 soft-capability notices and the §9.7
+eviction warning. It renders nothing at all when the device can do everything, which on the
+§1.3 #15 baseline is every session where persistence was granted.
+
+**Primitive changes this work:** `LiveRegion` renders two regions (polite + assertive) and
+exports `useAnnounce`; `Toast` carries no `role`; `Knob`, `Fader` and `Toggle` take an optional
+`accessibleName` (which must BEGIN with the visible label — WCAG 2.5.3); `Fader` takes
+`orientation`, `quantise` and `showValue`.
+
+**Shell changes this work:** `AppShell` renders the skip link and focuses the mode panel once on
+mount, and no longer mounts `LiveRegion` (`App` does); `TransportBar` is a `group` rather than a
+`toolbar` and its unsaved-dot text is no longer live; `StorageGauge` publishes the §9.7 grant to
+the store and its `title` carries usage alone.
+
+**Mode changes this work:** `InsertPanel` names every control in a slot after the slot and its
+effect, names the `<li>`, and its bypass toggle inverts; `MixerMode`, `XyfxMode`, `GridMode` and
+`SampleEditPanel` pass units; the last two replaced their native ranges with a horizontal
+`Fader`; `StoragePanel` lost its eviction warning to the shell.
+
+**From earlier work, and unchanged — two primitives** (spec §2.5): `FilePickerButton` (a file
+picker on the shared button chassis, which a `<label>` could not have) and `ConfirmDialog` (which
+also carries the §8.1 rule for what earns a confirmation). `Button` exports `buttonChassis` so the
+picker shares it rather than copying it; `ValueReadout` takes an optional `valueRef`; `Knob` and
+`Fader` take an optional `livePath`.
 
 Mode changes:
 
@@ -599,27 +725,54 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#94, #25, #96 and #87 are CLOSED by this work.** The sequencer cluster is done, and four
-entries have left the `check:orphans` allowlist (`SCHEDULER_PROTOCOL_VERSION`,
-`automationRampForWindow`, `segmentAtSongTick`, `songTotalTicks`) with one added
-(`automationValueAt`, now internal to `automationRampForWindow`).
+**#34, #35, #46, #58 and #51 are CLOSED by this work.** The accessibility cluster is done, and
+`SOFT_CAPABILITY_LABELS` has left the `check:orphans` allowlist — deleted rather than wired, and
+replaced by `SOFT_CAPABILITY_NOTICES`, which real UI reads. Nothing was added to the allowlist.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **Accessibility (#34, #35, #46, #58, #51)** — several live regions compete with the single §8.2
-  announcer; continuous controls announce bare numbers rather than human units; there is no skip
-  link, focus is lost on start, and a toolbar role has no arrow navigation; every insert bypass
-  toggle shares the accessible name "Enabled"; the §2.1 soft capabilities are unhandled and the
-  §9.7 eviction warning is only a tooltip in one mode. Together they say Phase 7's §3.5 lens-1
-  sweep missed things it claimed. `SOFT_CAPABILITY_LABELS` is allowlisted awaiting #51.
 - **#16** live erase deletes across a loop boundary in one pass rather than the notes it swept.
+- **#131** a new insert displays and announces its RANGE FLOOR while the graph runs the §5.7
+  defaults — `addInsert`/`replaceInsert` write `params: {}` and `createInsert` merges
+  `defaultEffectParams` over it, so a fresh delay sounds at 350 ms and reads as 1 ms. A §3.4
+  store-to-graph disagreement; filed while closing #35, where the missing unit made it legible.
 - **#130** `songAdvanced { entryIndex }` addresses the FLATTENED playlist rather than §7.9's
   position-sorted entries, because `sequencerSync.flattenSong` expands `repeats` before the ids
   reach the worker. Latent: `onSongAdvanced` has no production caller yet. Filed while closing
   #94; fixing it means carrying repeats on the `songSequence` request.
 - **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
 
-**Honest scope notes for this work:**
+**Honest scope notes for the accessibility work:**
+
+- **A new insert still announces its range floor.** Issue #131 above; observed here and not
+  fixed, because the wrong NUMBER has a different cause from the missing UNIT.
+- **`wakeLock` is the only §2.1 soft capability given a shell strip rather than a disabled
+  control**, because it has no control to disable. A browser meeting the §1.3 #15 baseline never
+  sees it, so the copy is unexercised in practice.
+- **Notice dismissal is session-scoped**, exactly as `StoragePanel`'s warning was. §9.7 asks for
+  persistent-until-dismissed, not remembered across loads.
+- **Issue #51's "microphone has zero consumers" was stale.** `LooperPanel` already reads the
+  capability, disables the Mic source and says why, with tests. The dead thing was the labelling
+  table, and it is now deleted.
+- **The roving tabindex was considered and rejected**, not deferred. It would take the arrow keys
+  from the two sliders and two segmented controls that need them, to satisfy a role the bar never
+  needed. `role="toolbar"` now appears nowhere in the codebase.
+- **Every regression test was proven against the unfixed code**: 13 mutations, 29 failing
+  assertions, none of the 13 unnoticed.
+- **Measured in a real browser**: 27/27 driver checks at port 5342 and 59/59 smoke steps at
+  5343/5344, no console errors. Two of those steps are new and permanent: the announcer's two
+  channels under real toasts, and the §9.7 warning's text, its Dismiss name and its place in the
+  tab order. The announcer existed while the start gate was up; the running
+  application held exactly two live regions with three toasts on screen; the skip link was the
+  first tab stop and reached the panel in one press where the bar is 14 stops deep; focus was
+  already on the panel when the shell appeared; the Tempo knob stepped 120 → 121 on an arrow key;
+  pan read "Centre", a send "0 %" and the fader "0.0 dB" on one strip; ten insert knobs announced
+  ten units and none a bare number or a registry key; both XY axes read "0.0 dB" and "Centre"; no
+  `input[type=range]` survived; six bypass toggles carried six distinct names with the four empty
+  slots unpressed; and a refused persistence grant raised a readable, dismissible warning whose
+  button is in the tab order.
+
+**Honest scope notes from the sequencer work:**
 
 - **A held note's recorded duration is now its REAL length, in both modes.** Measuring the span
   before folding it fixed song mode's entry boundary and, with it, the same latent defect in
@@ -732,7 +885,6 @@ entries have left the `check:orphans` allowlist (`SCHEDULER_PROTOCOL_VERSION`,
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1761**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **55/55 steps**, ports overridden per #105) · `build` ·
-`build:wasm` · `build:factory` (byte-identical across rebuilds, re-checked after the packer
-change).
+`npm run type-check` · `lint` · `test` (**1815**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **59/59 steps**, ports overridden per #105) · `build` ·
+`build:wasm` · `build:factory`.

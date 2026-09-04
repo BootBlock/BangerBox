@@ -45,8 +45,8 @@ function fakePwaApi() {
 
 function renderApp() {
   const { api, updates, signalNeedRefresh } = fakePwaApi();
-  render(<App capabilities={fullCapabilities} pwaApiOverride={api} />);
-  return { updates, signalNeedRefresh };
+  const { container } = render(<App capabilities={fullCapabilities} pwaApiOverride={api} />);
+  return { container, updates, signalNeedRefresh };
 }
 
 /**
@@ -55,7 +55,7 @@ function renderApp() {
  * tests below.
  */
 function renderShell() {
-  render(<AppShell />);
+  return render(<AppShell />);
 }
 
 describe('AppShell (spec §8.1)', () => {
@@ -65,8 +65,19 @@ describe('AppShell (spec §8.1)', () => {
 
   it('renders the persistent transport bar and mode rail', () => {
     renderShell();
-    expect(screen.getByRole('toolbar', { name: 'Transport' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Transport' })).toBeInTheDocument();
     expect(screen.getByRole('tablist', { name: 'Modes' })).toBeInTheDocument();
+  });
+
+  it('names the transport bar without claiming the toolbar pattern (issue #46)', () => {
+    renderShell();
+    // The WAI-ARIA toolbar pattern promises one tab stop and arrow navigation between the
+    // controls. This bar holds two sliders and two segmented controls, each of which needs
+    // the arrow keys for its own value — so the role was a promise the bar could not keep,
+    // and an arrow landing on Tempo silently changed the BPM of a "toolbar" the user
+    // believed they were navigating.
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Transport' })).not.toHaveAttribute('aria-orientation');
   });
 
   it('offers exactly the 12 modes the spec requires (§8.5)', () => {
@@ -155,7 +166,7 @@ describe('AppShell (spec §8.1)', () => {
 
   it('exposes the transport controls with accessible names (spec §8.2)', () => {
     renderShell();
-    const toolbar = screen.getByRole('toolbar', { name: 'Transport' });
+    const toolbar = screen.getByRole('group', { name: 'Transport' });
     expect(within(toolbar).getByRole('button', { name: 'Play' })).toBeInTheDocument();
     expect(within(toolbar).getByRole('button', { name: 'Arm recording' })).toBeInTheDocument();
     expect(within(toolbar).getByRole('slider', { name: 'Tempo' })).toBeInTheDocument();
@@ -168,16 +179,73 @@ describe('AppShell (spec §8.1)', () => {
     expect(screen.getByTestId('transport-redo')).toBeDisabled();
   });
 
-  it('mounts the single polite live region (spec §8.2)', () => {
+  it('offers a skip link that lands focus in the mode content (spec §8.2, issue #46)', async () => {
+    const user = userEvent.setup();
     renderShell();
+
+    // The shell has just landed focus in the mode content (the other half of #46), so wind
+    // the caret back to the top of the document to measure the tab order a fresh page has.
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    // It is the FIRST tab stop, before any of the transport bar's eleven — which is the
+    // whole point of it, on every one of the 12 modes.
+    await user.tab();
+    const skip = screen.getByTestId('skip-to-content');
+    expect(skip).toHaveFocus();
+
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('tabpanel', { name: 'Main' })).toHaveFocus();
+  });
+
+  it('lands focus in the mode content when the shell first appears (issue #46)', () => {
+    renderShell();
+    // The §5.1 start gate unmounts the button holding focus at this exact moment, so
+    // without this the caret falls back to <body>.
+    expect(screen.getByRole('tabpanel', { name: 'Main' })).toHaveFocus();
+  });
+
+  it('mounts no live region of its own anywhere in the shell tree (spec §8.2, issue #34)', () => {
+    const { container } = renderShell();
+    // The one announcer is mounted by `App`, outside the §5.1 gate. Anything live in HERE
+    // is a second region competing with it — which is what the transport bar's unsaved-dot
+    // span, the toast roles and five mode error banners each used to be.
+    expect(container.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).toHaveLength(0);
+  });
+});
+
+describe('The single announcer (spec §8.2, issue #34)', () => {
+  it('mounts one polite and one assertive channel, outside the §5.1 start gate', () => {
+    renderApp();
     expect(screen.getByTestId('live-region')).toHaveAttribute('aria-live', 'polite');
+    expect(screen.getByTestId('live-region-assertive')).toHaveAttribute('aria-live', 'assertive');
+    // Both exist while the gate is still up: the gate, the update prompt and the browser
+    // notice all announce from there.
+    expect(screen.getByTestId('audio-start')).toBeInTheDocument();
+  });
+
+  it('is the only pair of live regions in the whole application tree', () => {
+    const { container } = renderApp();
+    const live = container.querySelectorAll('[aria-live], [role="status"], [role="alert"]');
+    expect(live).toHaveLength(2);
+  });
+
+  it('routes a toast onto the channel its severity chooses', async () => {
+    renderApp();
+    useUIStore.getState().pushToast('Autosave failed', 'error');
+    expect(await screen.findByTestId('toast')).toBeInTheDocument();
+    expect(screen.getByTestId('live-region-assertive')).toHaveTextContent('Autosave failed');
+    expect(screen.getByTestId('live-region')).not.toHaveTextContent('Autosave failed');
+
+    useUIStore.getState().pushToast('Project saved', 'success');
+    expect(await screen.findByText('Project saved')).toBeInTheDocument();
+    expect(screen.getByTestId('live-region')).toHaveTextContent('Project saved');
   });
 });
 
 describe('PWA update prompt (spec §2.4)', () => {
   beforeEach(() => {
     // The stores are module singletons, so a toast pushed by an earlier test's mode would
-    // otherwise still be mounted and compete with the prompt for `role="status"`.
+    // otherwise still be on screen while this one looks for the prompt.
     const { toasts, dismissToast } = useUIStore.getState();
     for (const toast of toasts) dismissToast(toast.id);
   });
@@ -185,11 +253,10 @@ describe('PWA update prompt (spec §2.4)', () => {
   it('surfaces the reload prompt when a new worker is waiting and applies it on accept', async () => {
     const user = userEvent.setup();
     const { updates, signalNeedRefresh } = renderApp();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByText('A new version of BangerBox is ready.')).not.toBeInTheDocument();
 
     signalNeedRefresh();
-    const toast = await screen.findByRole('status');
-    expect(toast).toHaveTextContent('A new version of BangerBox is ready.');
+    expect(await screen.findByText('A new version of BangerBox is ready.')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Reload to update' }));
     expect(updates).toEqual([true]);
@@ -199,10 +266,10 @@ describe('PWA update prompt (spec §2.4)', () => {
     const user = userEvent.setup();
     const { signalNeedRefresh } = renderApp();
     signalNeedRefresh();
-    await screen.findByRole('status');
+    await screen.findByText('A new version of BangerBox is ready.');
     await user.click(screen.getByRole('button', { name: 'Not now' }));
-    // AnimatePresence keeps the toast mounted until its exit animation completes.
-    await waitForElementToBeRemoved(() => screen.queryByRole('status'));
+    // AnimatePresence keeps the prompt mounted until its exit animation completes.
+    await waitForElementToBeRemoved(() => screen.queryByText('A new version of BangerBox is ready.'));
   });
 });
 

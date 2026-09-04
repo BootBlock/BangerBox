@@ -492,6 +492,71 @@ async function assertShellAndSelfTest(page, label) {
     }
   });
 
+  // §8.2 requires ONE announcer. Two regions competing produce an unpredictable order and
+  // drop announcements, which nothing that inspects a rendered tree can see — so the count is
+  // taken from the live document with real toasts on screen (spec §13.5, issue #34).
+  await step(
+    `${label}: one announcer, two channels, no region per notice (spec §8.2, issue #34)`,
+    async () => {
+      const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.announcementProof());
+      if (r.regionsIdle !== 2) {
+        throw new Error(`${r.regionsIdle} live regions with nothing announced — expected exactly 2`);
+      }
+      if (r.regionsWithToasts !== 2 || r.strayRegions.length > 0) {
+        throw new Error(
+          `${r.toastsOnScreen} toasts minted ${r.regionsWithToasts} live regions (stray: ${r.strayRegions.join(', ') || 'none'})`,
+        );
+      }
+      if (r.toastsOnScreen < 3) {
+        throw new Error(`only ${r.toastsOnScreen} toasts rendered — the count is untested`);
+      }
+      // Severity survives as a CHANNEL: an error interrupts, advice waits its turn.
+      if (!r.assertiveAfterError.includes('Probe error notice')) {
+        throw new Error(`an error toast did not reach the assertive channel: "${r.assertiveAfterError}"`);
+      }
+      if (r.politeAfterError.includes('Probe error notice')) {
+        throw new Error('an error toast reached BOTH channels — the two are not separated');
+      }
+      if (!r.politeAfterInfo.includes('Probe advisory notice')) {
+        throw new Error(`an advisory toast did not reach the polite channel: "${r.politeAfterInfo}"`);
+      }
+      if (r.assertiveAfterInfo.includes('Probe advisory notice')) {
+        throw new Error('an advisory toast interrupted — it must wait its turn');
+      }
+
+      // The proof deliberately raises an error and a warning toast, because the channel
+      // split it exists to demonstrate is chosen by severity. They are the probe's own
+      // traffic, not the product's, so they are taken back out of the log the next step
+      // reads — every message it raises begins with "Probe " for exactly this.
+      await page.evaluate(() => {
+        globalThis.__toastLog = (globalThis.__toastLog ?? []).filter(
+          (entry) => !entry.message.startsWith('Probe '),
+        );
+      });
+    },
+  );
+
+  // §9.7 wants "a persistent dismissible warning that the browser may evict data". A `title`
+  // satisfies an inspection and fails a keyboard, so the proof reads the real DOM back after
+  // driving the real §9.7 state (spec §13.5, issue #51).
+  await step(`${label}: the §9.7 eviction warning is readable and dismissible (issue #51)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.platformNoticeProof());
+    if (r.noticesWhileGranted !== 0) {
+      throw new Error(`${r.noticesWhileGranted} notices while storage was protected — it is not a nag`);
+    }
+    if (!/may clear your projects/i.test(r.text) || !/Install BangerBox as an app/i.test(r.text)) {
+      throw new Error(`the warning does not say what is at stake or what to do: "${r.text.slice(0, 120)}"`);
+    }
+    if (!r.dismissFocusable) throw new Error('the Dismiss control is not in the tab order');
+    if (!r.dismissName.startsWith('Dismiss ')) {
+      throw new Error(`the Dismiss control does not name what it dismisses: "${r.dismissName}"`);
+    }
+    if (r.noticesAfterDismiss !== 0) throw new Error('the warning survived being dismissed');
+    if (/evict/i.test(r.gaugeTitle)) {
+      throw new Error(`the gauge still hides the warning in a title: "${r.gaugeTitle}"`);
+    }
+  });
+
   // Grid scroll and zoom are held outside React (spec §3.3, §8.4, issue #28). Driven through
   // real wheel events on the real canvas, with the frame time measured across them — §11.5's
   // budget is 60 fps, and a mode re-rendering per wheel event is what used to threaten it.

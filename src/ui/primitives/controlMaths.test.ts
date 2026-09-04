@@ -103,6 +103,57 @@ describe('controlMaths — aria-valuetext in human units (spec §8.2)', () => {
   });
 });
 
+describe('formatValueText — the four domain tokens (spec §8.2, issue #35)', () => {
+  it('reads a pan position as a side and an amount, not a signed fraction', () => {
+    // "−0.3" says nothing about which side of the image the sound is on, which is the only
+    // thing a pan control means.
+    expect(formatValueText(-0.3, 'pan')).toBe('L 30');
+    expect(formatValueText(0.45, 'pan')).toBe('R 45');
+    expect(formatValueText(0, 'pan')).toBe('Centre');
+    // A hair off centre still reads as centre rather than "L 0", which would say the sound
+    // had moved when it has not.
+    expect(formatValueText(-0.001, 'pan')).toBe('Centre');
+    expect(formatValueText(-1, 'pan')).toBe('L 100');
+  });
+
+  it('reads a 0..1 amount as a percentage', () => {
+    expect(formatValueText(0.35, 'fraction')).toBe('35 %');
+    expect(formatValueText(0, 'fraction')).toBe('0 %');
+    expect(formatValueText(1, 'fraction')).toBe('100 %');
+  });
+
+  it('reads a fader POSITION as dB, through the one §8.5.6 fader law', () => {
+    // Unity position is 0 dB and the top of the travel is +6 dB — the law's own endpoints,
+    // read rather than restated here.
+    expect(formatValueText(1, 'faderLevel')).toBe('0.0 dB');
+    expect(formatValueText(1.2, 'faderLevel')).toBe('6.0 dB');
+    // Fully down is true silence, not a large negative number.
+    expect(formatValueText(0, 'faderLevel')).toBe('−∞ dB');
+    // A position nobody can interpret is silence too, never the em dash a bare number takes.
+    expect(formatValueText(Number.NaN, 'faderLevel')).toBe('−∞ dB');
+  });
+
+  it('reads a compression ratio as a ratio', () => {
+    expect(formatValueText(4, 'ratio')).toBe('4.0:1');
+    expect(formatValueText(1, 'ratio')).toBe('1.0:1');
+  });
+
+  it('never suffixes a domain token onto a value that has no reading', () => {
+    // A domain token is not a unit, so "— pan" and "∞ fraction" would read as measurements
+    // in pans and in fractions. A value with no reading falls back to the unit-less form.
+    expect(formatValueText(Number.NaN, 'pan')).toBe('—');
+    expect(formatValueText(Number.NaN, 'fraction')).toBe('—');
+    expect(formatValueText(Number.NaN, 'ratio')).toBe('—');
+    expect(formatValueText(Number.POSITIVE_INFINITY, 'fraction')).toBe('∞');
+    expect(formatValueText(Number.NEGATIVE_INFINITY, 'pan')).toBe('−∞');
+  });
+
+  it('keeps dBFS distinct from dB (spec §5.7 limiter ceiling)', () => {
+    expect(formatValueText(-0.3, 'dBFS')).toBe('−0.3 dBFS');
+    expect(formatValueText(-0.3, 'dB')).toBe('−0.3 dB');
+  });
+});
+
 describe('formatValueText guards its input (spec §8.2, issue #97)', () => {
   it('never puts "NaN" into aria-valuetext', () => {
     expect(formatValueText(Number.NaN, 'dB')).toBe('— dB');

@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { CHOKE_GROUP_RANGE, createDefaultPad, type DrumProgram, type Pad } from '@/core/project/schemas';
 import { useProgramStore, useUIStore } from '@/store';
-import { announce, Button, ConfirmDialog, FieldLabel, SegmentControl } from '@/ui/primitives';
+import { Button, ConfirmDialog, FieldLabel, SegmentControl } from '@/ui/primitives';
 import { describePadContents } from './destructive';
 import { NumberField, SelectField, ToggleField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
@@ -60,7 +60,6 @@ export function PadEditor({ program }: { program: DrumProgram }) {
     const result = addPadLayer(program.id, padIndex, dragDropPayload.sampleId);
     const message = result.ok ? `${dragDropPayload.name} assigned to pad ${padIndex + 1}.` : result.reason;
     useUIStore.getState().pushToast(message, result.ok ? 'success' : 'warning');
-    announce(message);
     // Disarm either way: a refusal that left the payload armed would re-fire on the next
     // press, so selecting a different pad would silently try the same assignment again.
     useUIStore.getState().setDragDropPayload(null);
@@ -193,7 +192,6 @@ export function PadEditor({ program }: { program: DrumProgram }) {
               setConfirmingClear(false);
               const message = `Cleared pad ${padNumber}. Undo with Ctrl+Z.`;
               useUIStore.getState().pushToast(message, 'success');
-              announce(message);
             }}
           >
             <p>This removes {describePadContents(activePad)}. The samples themselves stay in the library.</p>

@@ -18,7 +18,7 @@ import { getActiveRepositories } from '@/core/project';
 import type { SampleRow } from '@/core/storage/repositories';
 import { useProjectStore } from '@/store';
 import { IconPlay } from '@/ui/icons';
-import { Button, EmptyState, Modal, TextField } from '@/ui/primitives';
+import { Button, EmptyState, Modal, TextField, useAnnounce } from '@/ui/primitives';
 import { auditionSample } from '../sample-edit/sampleContext';
 
 export interface SamplePickerProps {
@@ -41,6 +41,9 @@ export function SamplePicker({ open, title, onClose, onChoose, 'data-testid': te
   const projectId = useProjectStore((state) => state.projectId);
   const [samples, setSamples] = useState<ScopedSample[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Reported through the single §8.2 announcer rather than through a `role="alert"` of
+  // its own, which is a live region competing with it (issue #34).
+  useAnnounce(error, 'assertive');
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
 
@@ -133,7 +136,7 @@ export function SamplePicker({ open, title, onClose, onChoose, 'data-testid': te
             </li>
           ))}
           {error !== null && (
-            <li role="alert" className="px-2 py-2 text-xs text-bb-danger">
+            <li className="px-2 py-2 text-xs text-bb-danger">
               Could not read the sample library: {error} Your samples have not been lost — reload the app
               rather than re-importing.
             </li>

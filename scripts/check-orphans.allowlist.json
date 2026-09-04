@@ -198,11 +198,6 @@
     },
     {
       "file": "src/core/platform/capabilities.ts",
-      "export": "SOFT_CAPABILITY_LABELS",
-      "reason": "Issue #51 — soft capabilities are unhandled and the eviction warning is only a tooltip in one mode; this is the labelling table that issue's UI needs."
-    },
-    {
-      "file": "src/core/platform/capabilities.ts",
       "export": "evaluateCapabilities",
       "reason": "Internal caller: the cached-report accessor. Exported so detection is testable against a synthetic environment."
     },

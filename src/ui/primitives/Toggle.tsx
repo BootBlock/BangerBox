@@ -33,6 +33,14 @@ export interface ToggleProps {
   icon?: ReactNode;
   /** Hide the text label visually while keeping it as the accessible name. */
   iconOnly?: boolean;
+  /**
+   * A fuller accessible name for a control whose visible caption is only meaningful beside
+   * its neighbours — an insert's "Cutoff" becomes "Cutoff, insert 2, Filter", so the name
+   * still distinguishes it when a screen reader lists the controls out of context. Must
+   * *begin with* the visible label: WCAG 2.5.3 (Label in Name) requires the accessible name
+   * to contain the visible text, so speech-input users can say what they see.
+   */
+  accessibleName?: string;
   size?: ToggleSize;
   /** Stretch to the width of the container rather than hugging the label, as Button does. */
   block?: boolean;
@@ -61,6 +69,7 @@ export function Toggle({
   disabled = false,
   icon,
   iconOnly = false,
+  accessibleName,
   size = 'md',
   block = false,
   title,
@@ -73,9 +82,9 @@ export function Toggle({
       whileTap={reduceMotion || disabled ? undefined : { scale: PRESS_SCALE }}
       transition={SPRING_BB_PRESS}
       aria-pressed={pressed}
-      aria-label={iconOnly ? label : undefined}
+      aria-label={accessibleName ?? (iconOnly ? label : undefined)}
       disabled={disabled}
-      title={title ?? (iconOnly ? label : undefined)}
+      title={title ?? (iconOnly ? (accessibleName ?? label) : undefined)}
       data-testid={testId}
       onClick={() => onChange(!pressed)}
       className={[

@@ -39,10 +39,13 @@ import {
   useUIStore,
 } from '@/store';
 import { isGlobalLibraryPath, scopeOfPath } from '../browser/libraryLocation';
-import { Button, EmptyState, FilePickerButton } from '@/ui/primitives';
+import { Button, EmptyState, Fader, FilePickerButton, useAnnounce } from '@/ui/primitives';
 import { SegmentControl } from '@/ui/primitives/SegmentControl';
 import { WaveformEditor } from '@/ui/primitives/WaveformEditor';
 import { auditionSample, refreshSamples, reloadSampleList, sampleEditContext } from './sampleContext';
+
+/** §7.5 transient-detection sensitivity, as a 0..1 amount. */
+const SENSITIVITY_RANGE = [0, 1] as const;
 
 /** The three §8.5.4 Chop modes, in the order the spec lists them. */
 type ChopMode = ChopSpec['mode'];
@@ -98,6 +101,10 @@ export function SampleEditPanel() {
   /** Why the selected sample's audio could not be read, or null when it read fine. */
   const [waveformError, setWaveformError] = useState<string | null>(null);
   const samplesError = useBrowserStore((state) => state.samplesError);
+  // Reported through the single §8.2 announcer rather than through a `role="alert"` of
+  // its own, which is a live region competing with it (issue #34).
+  useAnnounce(samplesError, 'assertive');
+  useAnnounce(waveformError, 'assertive');
   const currentPath = useBrowserStore((state) => state.currentPath);
   const tracks = useSequenceStore((state) => state.tracks);
   const [grooveTrackId, setGrooveTrackId] = useState<string | null>(null);
@@ -335,7 +342,7 @@ export function SampleEditPanel() {
             </li>
           ))}
           {samplesError !== null && (
-            <li role="alert" className="px-2 py-2 text-xs text-bb-danger">
+            <li className="px-2 py-2 text-xs text-bb-danger">
               Could not read the {locationLabel}: {samplesError} Your samples have not been lost — reload the
               app rather than re-importing.
             </li>
@@ -368,7 +375,7 @@ export function SampleEditPanel() {
           />
           {/* A waveform that would not load must not look like an empty one (spec §5.1). */}
           {selected && waveformError !== null && (
-            <p role="alert" data-testid="waveform-error" className="mt-2 text-xs text-bb-danger">
+            <p data-testid="waveform-error" className="mt-2 text-xs text-bb-danger">
               Could not read the audio for {selected.name}: {waveformError} The editing tools are unavailable
               for it — the file may be missing from storage.
             </p>
@@ -505,19 +512,24 @@ export function SampleEditPanel() {
                   onChange={setChopMode}
                   data-testid="chop-mode"
                 />
+                {/*
+                 * A §2.5 primitive rather than a native `<input type="range">` (§1.3 #10,
+                 * issue #35): "0.50" is not a human unit, and the native control shared none
+                 * of the §8.2 keyboard contract the rest of the app's continuous controls do.
+                 */}
                 {chopMode === 'transients' && (
-                  <label className="flex items-center gap-1">
-                    Sensitivity
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={sensitivity}
-                      onChange={(e) => setSensitivity(Number(e.target.value))}
-                      aria-valuetext={sensitivity.toFixed(2)}
-                    />
-                  </label>
+                  <Fader
+                    label="Sensitivity"
+                    accessibleName="Sensitivity, transient chop"
+                    orientation="horizontal"
+                    value={sensitivity}
+                    range={SENSITIVITY_RANGE}
+                    unit="fraction"
+                    step={0.05}
+                    quantise
+                    onCommit={setSensitivity}
+                    data-testid="chop-sensitivity"
+                  />
                 )}
                 {chopMode === 'equal' && (
                   <label className="flex items-center gap-1">

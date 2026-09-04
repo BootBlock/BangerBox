@@ -28,7 +28,16 @@ import {
 } from '@/core/audio/params/catalogue';
 import { isAutomatable, parseParamTarget } from '@/core/audio/params/registry';
 import { IconRemove } from '@/ui/icons';
-import { Button, EmptyState, FieldLabel, Modal, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
+import {
+  Button,
+  EmptyState,
+  Fader,
+  FieldLabel,
+  Modal,
+  SegmentControl,
+  Toggle,
+  ValueReadout,
+} from '@/ui/primitives';
 import { announce } from '@/ui/primitives/LiveRegion';
 import { Panel } from '@/ui/shell/Panel';
 import { noteName } from '../pad-perform/scales';
@@ -47,6 +56,8 @@ const SNAP_OPTIONS = [
 ] as const;
 
 const QUANTISE_DIVISIONS = [4, 8, 16, 32, 64] as const;
+/** §7.4 quantise strength, as a percentage of the way to the grid. */
+const QUANTISE_STRENGTH_RANGE = [0, 100] as const;
 type QuantiseDivision = (typeof QUANTISE_DIVISIONS)[number];
 
 /** A drawn note defaults to a sixteenth — the usual step-sequencing unit. */
@@ -828,19 +839,24 @@ export function GridMode() {
             />
           </span>
           <Toggle label="Triplet" pressed={quantiseTriplet} onChange={setQuantiseTriplet} size="sm" />
-          <label className="flex flex-col gap-1 text-xs text-bb-muted">
-            <span>Strength: {quantiseStrength}%</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={quantiseStrength}
-              onChange={(event) => setQuantiseStrength(Number(event.target.value))}
-              aria-label="Quantise strength"
-              className="accent-bb-accent"
-            />
-          </label>
+          {/*
+           * A §2.5 primitive rather than a native `<input type="range">` (§1.3 #10, issue
+           * #35): the native control announced "45" with no unit, took none of the §8.2
+           * keyboard contract the other continuous controls share, and carried none of the
+           * §3.6 focus and press treatment.
+           */}
+          <Fader
+            label="Strength"
+            accessibleName="Strength, quantise"
+            orientation="horizontal"
+            value={quantiseStrength}
+            range={QUANTISE_STRENGTH_RANGE}
+            unit="%"
+            step={1}
+            quantise
+            onCommit={setQuantiseStrength}
+            data-testid="quantise-strength"
+          />
           <p className="text-xs text-bb-muted">
             {selectedIds.length > 0
               ? `Quantising ${selectedIds.length} selected note${selectedIds.length === 1 ? '' : 's'}.`

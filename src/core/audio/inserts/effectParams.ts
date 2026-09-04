@@ -139,6 +139,129 @@ export const EFFECT_PARAM_RANGES: Record<EffectType, Record<string, Range>> = {
 };
 
 /**
+ * The unit each §5.7 parameter's number is IN — spec §8.2 requires human units in
+ * `aria-valuetext`, and the effect table is the only thing that knows whether `time` is
+ * milliseconds and `feedback` a fraction (issue #35). A missing entry means the parameter
+ * is genuinely dimensionless (a filter Q, a resonance) and reads as a bare number, which
+ * is what such a control says on hardware too.
+ *
+ * The `pan`, `fraction`, `faderLevel` and `ratio` tokens name a DOMAIN rather than a unit —
+ * see `formatValueText`, which is the one place any of them becomes words.
+ */
+const EFFECT_PARAM_UNITS: Readonly<Record<EffectType, Readonly<Record<string, string>>>> = {
+  eq4: {
+    lowFreq: 'Hz',
+    lowGain: 'dB',
+    peak1Freq: 'Hz',
+    peak1Gain: 'dB',
+    peak2Freq: 'Hz',
+    peak2Gain: 'dB',
+    highFreq: 'Hz',
+    highGain: 'dB',
+  },
+  filter: { cutoff: 'Hz' },
+  delay: { time: 'ms', feedback: 'fraction', tone: 'Hz', mix: 'fraction' },
+  compressor: {
+    threshold: 'dB',
+    ratio: 'ratio',
+    attack: 'ms',
+    release: 'ms',
+    knee: 'dB',
+    makeup: 'dB',
+  },
+  saturator: { drive: 'dB', output: 'dB', mix: 'fraction' },
+  reverb: { size: 's', damping: 'fraction', predelay: 'ms', mix: 'fraction' },
+  multibandComp: {
+    crossoverLowMid: 'Hz',
+    crossoverMidHigh: 'Hz',
+    band0Threshold: 'dB',
+    band0Ratio: 'ratio',
+    band0Attack: 'ms',
+    band0Release: 'ms',
+    band0Makeup: 'dB',
+    band1Threshold: 'dB',
+    band1Ratio: 'ratio',
+    band1Attack: 'ms',
+    band1Release: 'ms',
+    band1Makeup: 'dB',
+    band2Threshold: 'dB',
+    band2Ratio: 'ratio',
+    band2Attack: 'ms',
+    band2Release: 'ms',
+    band2Makeup: 'dB',
+  },
+  // spec §5.7 states the ceiling in dBFS, and it is measured against full scale rather
+  // than being a relative change, so it keeps that suffix rather than reading as dB.
+  limiter: { ceiling: 'dBFS', release: 'ms' },
+};
+
+/**
+ * What a §5.7 parameter is CALLED, for the accessible name and the visible caption of the
+ * control that edits it (spec §8.2, issue #35). The registry keys are frozen identifiers
+ * (spec §13.6) chosen to be short in a store payload, so `peak1Q` and `crossoverLowMid` are
+ * the right keys and the wrong words to read out. A key with no entry falls back to itself.
+ */
+const EFFECT_PARAM_LABELS: Readonly<Record<EffectType, Readonly<Record<string, string>>>> = {
+  eq4: {
+    lowFreq: 'Low shelf frequency',
+    lowGain: 'Low shelf gain',
+    peak1Freq: 'Peak 1 frequency',
+    peak1Gain: 'Peak 1 gain',
+    peak1Q: 'Peak 1 Q',
+    peak2Freq: 'Peak 2 frequency',
+    peak2Gain: 'Peak 2 gain',
+    peak2Q: 'Peak 2 Q',
+    highFreq: 'High shelf frequency',
+    highGain: 'High shelf gain',
+  },
+  filter: { type: 'Type', cutoff: 'Cutoff', resonance: 'Resonance' },
+  delay: { time: 'Time', sync: 'Sync', feedback: 'Feedback', tone: 'Tone', mix: 'Mix' },
+  compressor: {
+    threshold: 'Threshold',
+    ratio: 'Ratio',
+    attack: 'Attack',
+    release: 'Release',
+    knee: 'Knee',
+    makeup: 'Makeup gain',
+  },
+  saturator: { drive: 'Drive', curve: 'Curve', output: 'Output trim', mix: 'Mix' },
+  reverb: { size: 'Size', damping: 'Damping', predelay: 'Pre-delay', mix: 'Mix' },
+  multibandComp: {
+    crossoverLowMid: 'Low/mid crossover',
+    crossoverMidHigh: 'Mid/high crossover',
+    band0Threshold: 'Low band threshold',
+    band0Ratio: 'Low band ratio',
+    band0Attack: 'Low band attack',
+    band0Release: 'Low band release',
+    band0Makeup: 'Low band makeup gain',
+    band1Threshold: 'Mid band threshold',
+    band1Ratio: 'Mid band ratio',
+    band1Attack: 'Mid band attack',
+    band1Release: 'Mid band release',
+    band1Makeup: 'Mid band makeup gain',
+    band2Threshold: 'High band threshold',
+    band2Ratio: 'High band ratio',
+    band2Attack: 'High band attack',
+    band2Release: 'High band release',
+    band2Makeup: 'High band makeup gain',
+  },
+  limiter: { ceiling: 'Ceiling', release: 'Release' },
+};
+
+/** The wrapper-level dry/wet mix every insert exposes, which no per-effect table lists. */
+const MIX_LABEL = 'Mix';
+
+/** Human name for one §5.7 parameter, falling back to the registry key (spec §8.2). */
+export function effectParamLabel(effectType: EffectType, param: string): string {
+  return EFFECT_PARAM_LABELS[effectType][param] ?? (param === 'mix' ? MIX_LABEL : param);
+}
+
+/** Unit or domain for one §5.7 parameter; empty where it is genuinely dimensionless. */
+export function effectParamUnit(effectType: EffectType, param: string): string {
+  return EFFECT_PARAM_UNITS[effectType][param] ?? (param === 'mix' ? 'fraction' : '');
+}
+
+/**
  * The labels behind an index-encoded parameter (spec §5.7): the `filter` type, the
  * `saturator` curve, and the `delay` sync division. These params are integers so the whole
  * effect surface fits `InsertSlotState.params` and stays automatable (spec §7.8), but a knob

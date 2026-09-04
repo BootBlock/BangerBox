@@ -9,12 +9,18 @@
  * page is backgrounded, and the app must not silently go mute.
  *
  * Children mount only once the engine is running, so no mode can touch the graph before
- * the worklets exist.
+ * the worklets exist. When they do, `AppShell` takes focus — the Start button holding it
+ * is about to be unmounted, and focus would otherwise fall back to `<body>` (issue #46).
+ *
+ * The gate's own progress and failure text is announced through the single §8.2 announcer
+ * rather than through live regions of its own (issue #34); `App` mounts that announcer
+ * outside this gate precisely so it exists while the gate is up.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AudioEngine } from '@/core/audio/engine';
 import { startAudioEngine } from '@/core/project';
 import { installAudioProbe } from '@/ui/audioProbe';
+import { useAnnounce } from '@/ui/primitives';
 import { IconPlay, IconPower, IconWarning } from '@/ui/icons';
 
 type GateStatus = 'idle' | 'starting' | 'running' | 'suspended' | 'failed';
@@ -54,10 +60,14 @@ export function StartGate({ children }: { children: ReactNode }) {
     void engineRef.current?.context.resume();
   }, []);
 
-  if (status === 'running') return <>{children}</>;
-
   const suspended = status === 'suspended';
   const busy = status === 'starting';
+  // Only the two TRANSITIONS are announced. "Ready to start" is the state the page loads
+  // in, and a screen reader has just read the gate; saying it again would be noise.
+  useAnnounce(busy ? 'Loading worklets and DSP kernels…' : suspended ? 'Audio suspended' : null);
+  useAnnounce(error, 'assertive');
+
+  if (status === 'running') return <>{children}</>;
 
   return (
     <div className="flex h-dvh flex-col items-center justify-center gap-6 bg-bb-bg p-6 text-center">
@@ -86,20 +96,12 @@ export function StartGate({ children }: { children: ReactNode }) {
       </button>
 
       {/* Progress/status indicator for the gate's loading work (spec §5.1). */}
-      <p
-        data-testid="audio-engine-status"
-        data-status={status}
-        aria-live="polite"
-        className="text-xs text-bb-muted"
-      >
+      <p data-testid="audio-engine-status" data-status={status} className="text-xs text-bb-muted">
         {busy ? 'Loading worklets and DSP kernels…' : suspended ? 'Suspended' : 'Ready to start'}
       </p>
 
       {error && (
-        <p
-          role="alert"
-          className="flex max-w-md items-start gap-2 rounded-bb-md border border-bb-danger bg-bb-surface px-4 py-3 text-left text-xs text-bb-text"
-        >
+        <p className="flex max-w-md items-start gap-2 rounded-bb-md border border-bb-danger bg-bb-surface px-4 py-3 text-left text-xs text-bb-text">
           <IconWarning size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-bb-danger" />
           <span>{error}</span>
         </p>

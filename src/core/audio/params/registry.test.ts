@@ -10,6 +10,7 @@ import {
   parseParamTarget,
   programParamPath,
   targetRange,
+  targetUnit,
 } from './registry';
 
 describe('canonical builders (spec §7.8)', () => {
@@ -135,5 +136,43 @@ describe('unresolvable addresses are refused (spec §7.8 gate, issue #97)', () =
     expect(isAutomatable('mixer.master.sendLevels.0')).toBe(true);
     expect(isAutomatable('insert:master:slot01.mix')).toBe(false);
     expect(isAutomatable('program:abc.pad:007.pitch')).toBe(false);
+  });
+});
+
+describe('targetUnit (spec §8.2 human units, issue #35)', () => {
+  it('answers for every channel-level address the registry knows', () => {
+    expect(targetUnit({ kind: 'channelLevel', channelId: 'master' })).toBe('faderLevel');
+    expect(targetUnit({ kind: 'channelPan', channelId: 'master' })).toBe('pan');
+    expect(targetUnit({ kind: 'channelSend', channelId: 'master', sendIndex: 0 })).toBe('fraction');
+  });
+
+  it('takes an insert parameter unit from the EFFECT in the slot, as its range does', () => {
+    const target = { kind: 'insertParam', channelId: 'master', slot: 1, param: 'time' } as const;
+    // The same address is milliseconds under a delay and unknown with no effect named —
+    // exactly the asymmetry `targetRange` already has, and for the same reason (spec §5.7).
+    expect(targetUnit(target, 'delay')).toBe('ms');
+    expect(targetUnit(target)).toBe('');
+    expect(targetUnit({ ...target, param: 'mix' })).toBe('fraction');
+    expect(targetUnit({ ...target, param: 'cutoff' }, 'filter')).toBe('Hz');
+    expect(targetUnit({ ...target, param: 'ratio' }, 'compressor')).toBe('ratio');
+  });
+
+  it('is empty for a genuinely dimensionless parameter rather than inventing one', () => {
+    expect(
+      targetUnit({ kind: 'insertParam', channelId: 'master', slot: 1, param: 'resonance' }, 'filter'),
+    ).toBe('');
+    expect(targetUnit({ kind: 'programParam', programId: 'p', padIndex: 0, param: 'filter.resonance' })).toBe(
+      '',
+    );
+  });
+
+  it('answers for the §7.8 program leaves and the §10.3 transport macros', () => {
+    expect(targetUnit({ kind: 'programParam', programId: 'p', padIndex: 0, param: 'filter.cutoff' })).toBe(
+      'Hz',
+    );
+    expect(targetUnit({ kind: 'programParam', programId: 'p', padIndex: 0, param: 'pan' })).toBe('pan');
+    expect(targetUnit({ kind: 'programParam', programId: 'p', padIndex: 0, param: 'amp.attack' })).toBe('ms');
+    expect(targetUnit({ kind: 'transportParam', param: 'bpm' })).toBe('bpm');
+    expect(targetUnit({ kind: 'transportParam', param: 'swing' })).toBe('%');
   });
 });

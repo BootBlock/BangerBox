@@ -123,12 +123,32 @@ export const HARD_CAPABILITY_LABELS: Readonly<Record<keyof HardCapabilities, str
   ) as Record<keyof HardCapabilities, string>,
 );
 
-export const SOFT_CAPABILITY_LABELS: Readonly<Record<keyof SoftCapabilities, string>> = Object.freeze({
-  bluetooth: 'Web Bluetooth (BLE-MIDI hardware)',
-  microphone: 'Microphone input (Looper source)',
-  persistentStorage: 'Persistent storage grant',
-  wakeLock: 'Screen wake lock',
-});
+/**
+ * Copy for a missing soft requirement that has NO control of its own to disable — spec
+ * §2.1 asks for "hidden/disabled with an explanatory tooltip", and a capability nothing on
+ * screen represents has nothing to hide (issue #51). The shell notice bar renders one
+ * entry per condition here, which is what makes these two visible in all 12 modes.
+ *
+ * `bluetooth` and `microphone` are deliberately absent: each already has the treatment
+ * §2.1 actually prefers, at the control it governs — Q-Link Edit disables Connect and says
+ * why, and the Looper disables the Mic source and says why. A second notice in the shell
+ * would repeat what the mode has already said, in a mode where it is not actionable.
+ */
+export const SOFT_CAPABILITY_NOTICES: Readonly<Partial<Record<keyof SoftCapabilities, CapabilityDetail>>> =
+  Object.freeze({
+    persistentStorage: Object.freeze({
+      title: 'Your work may be deleted to reclaim space',
+      what: 'The browser has not protected BangerBox’s storage, so it may clear your projects, samples and recordings when the device runs low on space.',
+      fix: 'Install BangerBox as an app — the browser usually grants protection once you do. Until then, export anything you care about as a .mpcweb file.',
+      technical: 'navigator.storage.persist',
+    }),
+    wakeLock: Object.freeze({
+      title: 'The screen may dim while you play',
+      what: 'BangerBox normally keeps the screen awake while the transport is running. This browser has no way to ask for that.',
+      fix: 'Nothing is at risk — audio keeps playing. Raise the screen timeout in your system settings if the dimming gets in the way.',
+      technical: 'navigator.wakeLock',
+    }),
+  });
 
 /**
  * Pure evaluation of probed capability booleans into a frozen report. Kept separate

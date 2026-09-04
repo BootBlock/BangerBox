@@ -136,6 +136,40 @@ describe('Fader (spec §8.5.6)', () => {
   });
 });
 
+describe('Fader orientation (spec §1.3 #10, issue #35)', () => {
+  it('lies down without losing any of the §8.2 slider contract', async () => {
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    render(
+      <Fader
+        label="Strength"
+        orientation="horizontal"
+        value={45}
+        range={[0, 100]}
+        unit="%"
+        step={1}
+        onCommit={onCommit}
+      />,
+    );
+    const fader = screen.getByRole('slider', { name: 'Strength' });
+    expect(fader).toHaveAttribute('aria-orientation', 'horizontal');
+    // The native `<input type="range">` this replaced announced "45" with no unit at all.
+    expect(fader).toHaveAttribute('aria-valuetext', '45 %');
+
+    // Same keyboard contract as the upright one — a horizontal slider still reads Right
+    // as increasing (spec §8.2).
+    await user.tab();
+    expect(fader).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(onCommit).toHaveBeenCalledWith(46);
+  });
+
+  it('stays upright by default, which is what a channel fader is', () => {
+    render(<Fader label="Level" value={1} range={[0, 1.2]} onCommit={vi.fn()} />);
+    expect(screen.getByRole('slider', { name: 'Level' })).toHaveAttribute('aria-orientation', 'vertical');
+  });
+});
+
 describe('Pad (spec §8.3 velocity + §8.2 keyboard)', () => {
   it('triggers from the keyboard with a nominal velocity', async () => {
     const user = userEvent.setup();
@@ -484,18 +518,18 @@ describe('Modal (spec §8.2 dialog contract)', () => {
   });
 });
 
-describe('Toast (spec §8.2 severity → announcement role)', () => {
-  it.each([
-    ['info', 'status'],
-    ['success', 'status'],
-    ['warning', 'alert'],
-    ['error', 'alert'],
-  ] as const)('announces a %s notice as role="%s"', (tone, role) => {
-    render(<Toast message="Autosave failed" tone={tone} onDismiss={vi.fn()} />);
-    const toast = screen.getByRole(role);
-    expect(toast).toHaveTextContent('Autosave failed');
-    expect(toast).toHaveAttribute('data-tone', tone);
-  });
+describe('Toast (spec §8.2 one announcer)', () => {
+  it.each(['info', 'success', 'warning', 'error'] as const)(
+    'carries no live region of its own for a %s notice (issue #34)',
+    (tone) => {
+      const { container } = render(<Toast message="Autosave failed" tone={tone} onDismiss={vi.fn()} />);
+      expect(screen.getByTestId('toast')).toHaveTextContent('Autosave failed');
+      // Severity survives as data, for the §11.4 smoke and for ToastViewport's channel
+      // choice — but not as a role, which used to mint a live region per notice.
+      expect(screen.getByTestId('toast')).toHaveAttribute('data-tone', tone);
+      expect(container.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).toHaveLength(0);
+    },
+  );
 
   it('dismisses through a labelled control (spec §8.2)', async () => {
     const user = userEvent.setup();

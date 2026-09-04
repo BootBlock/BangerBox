@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useProjectStore } from '@/store';
-import { Button } from './primitives';
+import { Button, useAnnounce } from './primitives';
 import { EASE_BB_SNAP } from './motionTokens';
 import { usePwaUpdate, type PwaUpdateApi } from './usePwaUpdate';
 
@@ -25,27 +25,31 @@ async function flushThenUpdate(update: () => Promise<void>): Promise<void> {
  * the page is never reloaded out from under an unsaved project. "Not now" snoozes the
  * prompt until a genuinely newer worker appears (visibility is derived: a snooze
  * records the sequence number it silenced, and a fresh worker increments past it).
+ *
+ * Announced through the single §8.2 announcer rather than through a `role="status"` of its
+ * own (issue #34) — politely, because an available update is an offer, not a demand.
  */
+const UPDATE_MESSAGE = 'A new version of BangerBox is ready.';
+
 export function PwaUpdatePrompt({ apiOverride }: { apiOverride?: PwaUpdateApi }) {
   const { needRefresh, updateAvailableSeq, update } = usePwaUpdate(apiOverride);
   const [snoozedSeq, setSnoozedSeq] = useState(0);
   const reduceMotion = useReducedMotion();
 
   const visible = needRefresh && updateAvailableSeq > snoozedSeq;
+  useAnnounce(visible ? UPDATE_MESSAGE : null);
 
   return (
     <AnimatePresence>
       {visible && (
         <motion.div
-          role="status"
-          aria-live="polite"
           initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
           animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
           exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
           transition={{ duration: 0.18, ease: EASE_BB_SNAP }}
           className="fixed right-4 bottom-4 z-50 flex items-center gap-3 rounded-bb-md border border-bb-line bg-bb-raised px-4 py-3 shadow-bb-raised"
         >
-          <p className="text-sm">A new version of BangerBox is ready.</p>
+          <p className="text-sm">{UPDATE_MESSAGE}</p>
           <Button label="Reload to update" variant="accent" onClick={() => void flushThenUpdate(update)} />
           <Button label="Not now" variant="quiet" onClick={() => setSnoozedSeq(updateAvailableSeq)} />
         </motion.div>

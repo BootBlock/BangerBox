@@ -14,8 +14,7 @@ import { getAudioEngine } from '@/core/project/session';
 import { useMixerStore } from '@/store';
 import { channelLevelPath } from '@/core/audio/params/registry';
 import { LEVEL_RANGE } from '@/core/project/schemas';
-import { faderLevelToDb } from '@/core/audio/params/faderLaw';
-import { Button, Fader, MeterCanvas, Pad, formatValueText } from './primitives';
+import { Button, Fader, MeterCanvas, Pad } from './primitives';
 
 /** The four bundled demo pads the engine proof triggers (spec §12 Phase 3). */
 const DEMO_PADS = [0, 1, 2, 3];
@@ -94,7 +93,7 @@ export function AudioEnginePanel() {
             value={masterLevel}
             range={LEVEL_RANGE}
             defaultValue={1}
-            formatValue={(level) => formatValueText(faderLevelToDb(level), 'dB')}
+            unit="faderLevel"
             // spec §10.3 "UI reacts concurrently": a project-mode Q-Link turn of the master
             // level, or an XYFX axis bound to it, moves this fader as it happens — painted
             // by ref rather than by a re-render, as the Mixer's strips are (issue #27).

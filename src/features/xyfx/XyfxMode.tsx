@@ -13,6 +13,7 @@ import { parseParamTarget } from '@/core/audio/params/registry';
 import {
   channelAutomatableParams,
   resolveTargetRange,
+  resolveTargetUnit,
   type AutomatableParam,
 } from '@/core/audio/params/catalogue';
 import type { ChannelStrip } from '@/core/project/schemas';
@@ -83,6 +84,17 @@ export function XyfxMode() {
     const target = path ? parseParamTarget(path) : null;
     if (!target) return UNIT_RANGE;
     return resolveTargetRange(target, channels) ?? UNIT_RANGE;
+  };
+
+  /**
+   * Unit for a path, from the same registry as the range (spec §8.2, issue #35). Without
+   * it an axis announced a bare number, so a fader position bound to X read "0.83" where
+   * the Mixer strip driving the same address read "−6.0 dB".
+   */
+  const unitAt = (path: string | null): string => {
+    const target = path ? parseParamTarget(path) : null;
+    if (!target) return '';
+    return resolveTargetUnit(target, channels);
   };
 
   const applyTransient = useCallback(
@@ -170,11 +182,13 @@ export function XyfxMode() {
                 label: choices.find((c) => c.path === effectiveX)?.label ?? 'X',
                 value: valueAt(effectiveX),
                 range: rangeAt(effectiveX),
+                unit: unitAt(effectiveX),
               }}
               y={{
                 label: choices.find((c) => c.path === effectiveY)?.label ?? 'Y',
                 value: valueAt(effectiveY),
                 range: rangeAt(effectiveY),
+                unit: unitAt(effectiveY),
               }}
               onTransient={applyTransient}
               onCommit={applyCommit}

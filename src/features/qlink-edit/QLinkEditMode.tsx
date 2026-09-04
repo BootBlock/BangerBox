@@ -38,7 +38,16 @@ import {
   type TransportParam,
 } from '@/core/audio/params/registry';
 import { qLinkModeSchema, type QLinkBinding, type QLinkMode } from '@/core/project/schemas';
-import { Button, EmptyState, FieldLabel, Knob, SegmentControl, Toggle, ValueReadout } from '@/ui/primitives';
+import {
+  Button,
+  EmptyState,
+  FieldLabel,
+  Knob,
+  SegmentControl,
+  Toggle,
+  ValueReadout,
+  useAnnounce,
+} from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { StoragePanel } from '@/ui/StoragePanel';
 import { IconRemove } from '@/ui/icons';
@@ -128,6 +137,14 @@ export function QLinkEditMode() {
   const [learningEncoder, setLearningEncoder] = useState<number | null>(null);
   const [encoderCount, setEncoderCount] = useState(DEFAULT_ENCODERS);
   const [connectError, setConnectError] = useState<string | null>(null);
+  // Reported through the single §8.2 announcer rather than through a `role="alert"` of
+  // its own, which is a live region competing with it (issue #34).
+  useAnnounce(connectError, 'assertive');
+  useAnnounce(
+    learningEncoder === null
+      ? null
+      : `Learning encoder Q${learningEncoder + 1}. Choose a parameter from its row to bind it.`,
+  );
   const bluetoothAvailable = useUIStore((s) => s.capabilities?.soft.bluetooth ?? false);
 
   /**
@@ -269,7 +286,7 @@ export function QLinkEditMode() {
           />
         </div>
         {connectError !== null && (
-          <p className="mt-3 text-xs text-bb-danger" role="alert" data-testid="qlink-connect-error">
+          <p className="mt-3 text-xs text-bb-danger" data-testid="qlink-connect-error">
             {connectError}
           </p>
         )}
@@ -454,7 +471,7 @@ export function QLinkEditMode() {
         </table>
 
         {learningEncoder !== null && (
-          <p className="mt-3 text-xs text-bb-accent" role="status">
+          <p className="mt-3 text-xs text-bb-accent">
             Learning encoder Q{learningEncoder + 1} — choose a parameter from its row to bind it.
           </p>
         )}

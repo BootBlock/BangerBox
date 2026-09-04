@@ -84,3 +84,15 @@ describe('XyfxMode latch, keyboard', () => {
     expect(xAxis).toHaveFocus();
   });
 });
+
+describe('XyfxMode axis units (spec §8.2, issue #35)', () => {
+  it('announces an axis in the unit its §7.8 address is measured in', () => {
+    render(<XyfxMode />);
+    // X defaults to the first assignable parameter, the master LEVEL — a §8.5.6 fader
+    // position, which reads as dB. It used to announce the raw position, so the same
+    // address said "1" here and "0.0 dB" on the Mixer strip driving it.
+    const [x, y] = screen.getAllByRole('slider');
+    expect(x).toHaveAttribute('aria-valuetext', '0.0 dB');
+    expect(y).toHaveAttribute('aria-valuetext', 'Centre');
+  });
+});

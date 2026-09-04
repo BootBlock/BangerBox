@@ -1,11 +1,14 @@
 /**
  * Pure value↔travel mapping shared by every continuous primitive (Knob, Fader,
- * XYSurface) — spec §3.1 permits shared math mappers, and keeping this dependency-free
- * makes it trivially unit-testable (spec §2.5). One implementation means the taper,
- * stepping, and `aria-valuetext` wording are identical across all controls, which is the
+ * XYSurface) — spec §3.1 permits shared math mappers, and keeping this DOM-free makes it
+ * trivially unit-testable (spec §2.5). One implementation means the taper, stepping, and
+ * `aria-valuetext` wording are identical across all controls, which is the
  * ZERO-DRY-violations rule for `src/ui/primitives/` (spec §3.6).
  */
 import { clamp } from '@/core/math';
+// The §8.5.6 fader law's single source of truth — the `faderLevel` domain below reads it
+// rather than restating the taper (spec §3.6).
+import { faderLevelToDb } from '@/core/audio/params/faderLaw';
 
 // The taper itself lives in `@/core/math` so the Q-Link encoder scaling (spec §10.3) maps
 // values through exactly the same curve the primitives draw (spec §3.6 ZERO DRY). It is
@@ -41,6 +44,13 @@ export function quantiseToStep(value: number, range: ControlRange, step: number)
 /** en-GB minus sign (U+2212) — typographically correct, and what `Intl` emits (spec §1.3.1). */
 const MINUS = '−';
 
+/**
+ * The tokens below that name a DOMAIN rather than a unit. They are the ones a non-finite
+ * value cannot be suffixed with, since "— pan" reads as a measurement in pans. `faderLevel`
+ * is absent deliberately: the §8.5.6 law answers for its own non-finite position.
+ */
+const DOMAINS: ReadonlySet<string> = new Set(['pan', 'fraction', 'ratio']);
+
 function withSign(text: string, negative: boolean): string {
   return negative ? `${MINUS}${text}` : text;
 }
@@ -52,13 +62,50 @@ function withSign(text: string, negative: boolean): string {
  *
  * A NaN reads as an em dash rather than the literal "NaN", which a screen reader announces
  * verbatim (issue #97); a positive infinity reads as the infinity symbol.
+ *
+ * ## Units, and the four that are domains rather than units
+ *
+ * `dB`/`dBFS`, `Hz`, `%`, `ms`, `s`, `st`, `bpm` and anything else are plain units: the
+ * number is already in them and the suffix is appended.
+ *
+ * Four tokens instead name the DOMAIN a raw control value lives in, because the number a
+ * control stores is not the number a person reads (issue #35):
+ *
+ *   `pan`        a −1..1 position, read as "Centre" / "L 30" / "R 30"
+ *   `fraction`   a 0..1 amount, read as a percentage — sends, mix, feedback, damping
+ *   `faderLevel` a §8.5.6 fader position, read as dB through the one fader law
+ *   `ratio`      a compression ratio, read as "4.0:1"
+ *
+ * They live here rather than as a `formatValue` callback at each call site because §8.2's
+ * wording is a property of the parameter, not of the screen it appears on: the same send
+ * has to read the same way on a Mixer knob and on an XYFX axis (spec §3.6).
  */
 export function formatValueText(value: number, unit: string): string {
+  // The fader law owns what a non-finite POSITION means — true silence, not the em dash a
+  // bare number takes (§8.5.6, issue #97). It is read here, never restated.
+  if (unit === 'faderLevel') return formatValueText(faderLevelToDb(value), 'dB');
+
+  // A domain token is not a unit, so it must not be appended like one: "— pan" and
+  // "∞ fraction" are not readings of anything. A value with no reading falls through to the
+  // unit-less em dash or infinity symbol (issue #97).
+  if (!Number.isFinite(value) && DOMAINS.has(unit)) return formatValueText(value, '');
+
   if (Number.isNaN(value)) return unit ? `— ${unit}` : '—';
   if (!Number.isFinite(value)) {
     const symbol = value < 0 ? `${MINUS}∞` : '∞';
     return unit ? `${symbol} ${unit}` : symbol;
   }
+
+  // spec §8.2 wants a pan POSITION, not a signed fraction: "−0.3" says nothing about which
+  // side of the image it is on, which is the only thing a pan control means.
+  if (unit === 'pan') {
+    const offset = Math.round(Math.abs(value) * 100);
+    if (offset === 0) return 'Centre';
+    return `${value < 0 ? 'L' : 'R'} ${offset}`;
+  }
+  if (unit === 'fraction') return withSign(`${Math.round(Math.abs(value) * 100)} %`, value < 0);
+  if (unit === 'ratio') return `${Math.abs(value).toFixed(1)}:1`;
+
   const negative = value < 0;
   const magnitude = Math.abs(value);
 
@@ -69,7 +116,9 @@ export function formatValueText(value: number, unit: string): string {
     return withSign(`${Math.round(magnitude)} Hz`, negative);
   }
   if (unit === '%') return withSign(`${Math.round(magnitude)} %`, negative);
-  if (unit === 'dB') return withSign(`${magnitude.toFixed(1)} dB`, negative);
+  // dBFS keeps its own suffix: §5.7 states the limiter's ceiling in it, and "dB" would
+  // lose that it is measured against full scale rather than being a relative change.
+  if (unit === 'dB' || unit === 'dBFS') return withSign(`${magnitude.toFixed(1)} ${unit}`, negative);
 
   // Everything else: integers stay integral, fractions keep one decimal place.
   const body = Number.isInteger(magnitude) ? String(magnitude) : magnitude.toFixed(1);

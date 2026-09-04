@@ -3,11 +3,13 @@
  * the dismiss affordance and the entry/exit motion (§8.3, transform/opacity only, and
  * collapsing to a plain fade under `prefers-reduced-motion`).
  *
- * Severity drives the announcement role, and it does so here rather than at the call
- * site so the mapping cannot drift: info/success are advisory and announce politely
- * (`status`), warning/error interrupt (`alert`) — spec §8.2. {@link ToastViewport}
- * supplies the queue and its placement; this component supplies everything a single
- * notice looks and behaves like (§3.6).
+ * A toast carries NO live role of its own (issue #34). It used to take `role="status"` or
+ * `role="alert"` from its own severity, which minted a fresh live region per notice — so a
+ * burst of toasts put several competing regions on the page at once, and §8.2 asks for one
+ * announcer. {@link ToastViewport} announces each new notice through that announcer, on the
+ * channel its severity chooses, so the distinction survives and the regions do not.
+ * The viewport supplies the queue and its placement; this component supplies everything a
+ * single notice looks and behaves like (§3.6).
  */
 import { motion, useReducedMotion } from 'motion/react';
 import type { ToastTone } from '@/store/useUIStore';
@@ -26,19 +28,15 @@ const TONE_CLASS: Record<ToastTone, string> = {
   error: 'border-bb-danger/50 text-bb-danger',
 };
 
-/** Warnings and errors interrupt; advisory notices wait their turn (spec §8.2). */
-const ASSERTIVE: ReadonlySet<ToastTone> = new Set<ToastTone>(['warning', 'error']);
-
 export function Toast({ message, tone, onDismiss }: ToastProps) {
   const reduceMotion = useReducedMotion();
 
   return (
     <motion.div
       data-testid="toast"
-      // The tone is the smoke's hook for "did anything warn or fail?" (spec §11.4) — the
-      // role alone cannot say, since several notices share `role="status"`.
+      // The tone is the smoke's hook for "did anything warn or fail?" (spec §11.4), and
+      // now the only place severity is legible in the DOM.
       data-tone={tone}
-      role={ASSERTIVE.has(tone) ? 'alert' : 'status'}
       initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
       animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
       exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}

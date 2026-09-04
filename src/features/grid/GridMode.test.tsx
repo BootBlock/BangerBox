@@ -281,3 +281,45 @@ describe('scroll and zoom stay out of React (spec §3.3, issue #28)', () => {
     expect(screen.getByRole('button', { name: 'Reset zoom' })).toBeEnabled();
   });
 });
+
+describe('quantise strength is a §2.5 primitive (spec §1.3 #10, issue #35)', () => {
+  /** The Quantise dialog only opens with notes to quantise. */
+  function openQuantise() {
+    useSequenceStore.setState({
+      events: {
+        t1: [{ id: 'n1', trackId: 't1', tickStart: 7, durationTicks: 240, note: 60, velocity: 100 }],
+        t2: [],
+      },
+    });
+  }
+
+  it('announces its value with a unit, and steps with the arrow keys', async () => {
+    const user = userEvent.setup();
+    openQuantise();
+    render(<GridMode />);
+    await user.click(screen.getByTestId('grid-quantise-open'));
+
+    const strength = screen.getByTestId('quantise-strength');
+    // The native `<input type="range">` this replaced announced "45" with no unit at all,
+    // and carried none of the §8.2 keyboard contract every other continuous control has.
+    expect(strength).toHaveAttribute('role', 'slider');
+    expect(strength).toHaveAttribute('aria-valuetext', '100 %');
+    expect(strength).toHaveAttribute('aria-orientation', 'horizontal');
+
+    strength.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByTestId('quantise-strength')).toHaveAttribute('aria-valuetext', '99 %');
+  });
+
+  it('applies the strength the slider actually holds', async () => {
+    const user = userEvent.setup();
+    openQuantise();
+    render(<GridMode />);
+    await user.click(screen.getByTestId('grid-quantise-open'));
+    const strength = screen.getByTestId('quantise-strength');
+    strength.focus();
+    await user.keyboard('{Home}');
+    // Zero strength moves nothing — the dialog's own readout has to agree with the slider.
+    expect(screen.getByTestId('quantise-strength')).toHaveAttribute('aria-valuenow', '0');
+  });
+});

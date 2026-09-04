@@ -82,7 +82,7 @@ describe('index-encoded parameters (spec §5.7)', () => {
   it('offers the delay’s synced divisions by name rather than by index', async () => {
     const user = userEvent.setup();
     renderPanel();
-    const sync = screen.getByLabelText('Delay 1 sync');
+    const sync = screen.getByLabelText('Sync, insert 1, Delay');
 
     // spec §5.7 bounds the synced set at 1/2, so the whole note is deliberately absent.
     expect(screen.getByRole('option', { name: 'free' })).toBeInTheDocument();
@@ -97,5 +97,92 @@ describe('index-encoded parameters (spec §5.7)', () => {
   it('keeps a knob for the parameters that really are continuous', () => {
     renderPanel();
     expect(screen.getByTestId('insert-param-0-feedback').tagName).not.toBe('SELECT');
+  });
+});
+
+describe('naming inside a slot (spec §8.2, issue #58)', () => {
+  it('names each bypass toggle by its slot AND its effect', () => {
+    renderPanel();
+    // Four inserts used to present four buttons all called "Enabled", so a screen-reader
+    // user could not tell which effect they were about to bypass.
+    expect(screen.getByRole('button', { name: 'Bypass insert 1, Delay' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bypass insert 2, Limiter' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Enabled' })).not.toBeInTheDocument();
+  });
+
+  it('gives every control in a slot a name unique across the whole panel', () => {
+    renderPanel();
+    const names = screen
+      .getAllByRole('button')
+      .map((button) => button.getAttribute('aria-label') ?? button.textContent);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('names the list item, so browsing by list item is coherent too', () => {
+    renderPanel();
+    const items = screen.getAllByRole('listitem');
+    expect(items[0]).toHaveAttribute('aria-label', 'Insert 1 — Delay');
+    expect(items[1]).toHaveAttribute('aria-label', 'Insert 2 — Limiter');
+  });
+
+  it('presses when the slot is BYPASSED, following the verb §5.7 uses', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const bypass = screen.getByRole('button', { name: 'Bypass insert 1, Delay' });
+
+    // §5.7 defines the slot's `enabled` field as true bypass via routing, so "Bypass" is
+    // what the control does — and a bypass light is lit when the effect is out of circuit.
+    expect(stripNow().inserts[0]!.enabled).toBe(true);
+    expect(bypass).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(bypass);
+    expect(stripNow().inserts[0]!.enabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Bypass insert 1, Delay' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('has nothing to bypass in an empty slot', async () => {
+    const user = userEvent.setup();
+    const strip = stripNow();
+    useMixerStore.getState().setChannels({
+      [CHANNEL]: { ...strip, inserts: [{ ...strip.inserts[0]!, effectType: null }] },
+    });
+    renderPanel();
+    const bypass = screen.getByRole('button', { name: 'Bypass insert 1, empty' });
+    expect(bypass).toBeDisabled();
+    await user.click(bypass);
+    expect(stripNow().inserts[0]!.enabled).toBe(true);
+  });
+});
+
+describe('parameter knobs read as words and units (spec §8.2, issue #35)', () => {
+  it('names a knob after the parameter rather than after its store key', () => {
+    renderPanel();
+    // `feedback` is a frozen §13.6 registry key chosen to be short in a payload, not words.
+    expect(screen.getByRole('slider', { name: 'Feedback, insert 1, Delay' })).toBeInTheDocument();
+    expect(screen.queryByRole('slider', { name: 'feedback' })).not.toBeInTheDocument();
+  });
+
+  it('announces each parameter in the unit its §5.7 range is stated in', () => {
+    renderPanel();
+    expect(screen.getByRole('slider', { name: 'Feedback, insert 1, Delay' })).toHaveAttribute(
+      'aria-valuetext',
+      '60 %',
+    );
+    expect(screen.getByRole('slider', { name: 'Time, insert 1, Delay' })).toHaveAttribute(
+      'aria-valuetext',
+      '1 ms',
+    );
+    expect(screen.getByRole('slider', { name: 'Tone, insert 1, Delay' })).toHaveAttribute(
+      'aria-valuetext',
+      '200 Hz',
+    );
+    // §5.7 states the limiter's ceiling against full scale, and the readout keeps that.
+    expect(screen.getByRole('slider', { name: 'Ceiling, insert 2, Limiter' })).toHaveAttribute(
+      'aria-valuetext',
+      '−6.0 dBFS',
+    );
   });
 });

@@ -6,7 +6,7 @@
  */
 import { MOD_AMOUNT_RANGE, type ModRoute, type ModSource } from '@/core/project/schemas';
 import { useUIStore } from '@/store';
-import { announce, Button } from '@/ui/primitives';
+import { Button } from '@/ui/primitives';
 import { IconRemove } from '@/ui/icons';
 import { NumberField, SelectField } from './controls';
 
@@ -56,7 +56,6 @@ export function ModMatrixEditor({
     onChange(routes.filter((_, i) => i !== index));
     const message = `Removed route ${index + 1}. Undo with Ctrl+Z.`;
     useUIStore.getState().pushToast(message, 'success');
-    announce(message);
   };
 
   return (
