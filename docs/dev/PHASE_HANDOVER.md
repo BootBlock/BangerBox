@@ -6,7 +6,7 @@ MUST reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the pad-strip work merged to `main` (`--no-ff`). All eight §12 phases were already
 complete; this was a defect closure against §4.2/§6, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1904 unit tests**, `test:e2e` real-browser smoke
+`config.phase` remains **"8"**. Suite: **1907 unit tests**, `test:e2e` real-browser smoke
 (dev + offline, **72/72 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
@@ -1539,6 +1539,6 @@ From the previous work: **#134, #132 and #131 are CLOSED**, and #135, #137 and #
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1904**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**1907**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **72/72 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
