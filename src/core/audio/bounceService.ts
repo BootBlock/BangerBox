@@ -21,6 +21,7 @@ import { useProgramStore, useSequenceStore, useTransportStore } from '@/store';
 import { resolveVoice, resolvedVoiceToTrigger } from './programVoice';
 import { decodeWav } from './wav';
 import { encodeWavInWorker, saveChannelsAsSample } from './sampleImport';
+import { buildSongMap } from '@/core/sequencer/songMap';
 import { prepareVoiceWorklets } from './context';
 import { ReversedBufferCache } from './voiceBuffer';
 import { VoicePool } from './voicePool';
@@ -202,16 +203,20 @@ export async function bounceSong(name: string, ctx: BounceContext): Promise<stri
   const { songEntries, sequences } = useSequenceStore.getState();
   const projectBpm = useTransportStore.getState().bpm;
 
+  // The expansion is `buildSongMap`'s, not a second copy of it. §9.5 renders "the same span"
+  // the scheduler plays, so the two reading `repeats` differently is the drift the shared
+  // maths exists to prevent — and the segment bound that guard carries (issue #130) applies
+  // to the render as well, which is the path that expands the playlist on the MAIN thread.
   const segments: Segment[] = [];
-  let cursorSeconds = 0;
-  for (const entry of [...songEntries].sort((a, b) => a.position - b.position)) {
-    const sequence = sequences[entry.sequenceId];
+  for (const segment of buildSongMap(songEntries, sequences, projectBpm)) {
+    const sequence = sequences[segment.sequenceId];
     if (!sequence) continue; // a deleted sequence leaves a hole, never a crash
-    const bpm = sequence.tempo ?? projectBpm;
-    for (let pass = 0; pass < entry.repeats; pass += 1) {
-      segments.push({ sequence, bpm, startSeconds: cursorSeconds, onlyTrackId: null });
-      cursorSeconds += segmentSeconds(sequence, bpm);
-    }
+    segments.push({
+      sequence,
+      bpm: segment.bpm,
+      startSeconds: segment.startSeconds,
+      onlyTrackId: null,
+    });
   }
   if (segments.length === 0) throw new Error('The song playlist is empty.');
 

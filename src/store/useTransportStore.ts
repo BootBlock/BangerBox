@@ -190,7 +190,15 @@ export const useTransportStore = create<TransportState>()(
           beat: clampInt(coarsePosition.beat, 1, 16),
         },
       }),
+    // A report is only meaningful while the song is rolling. The worker learns about a stop
+    // on its next wake (spec §7.1.4), so a `songAdvanced` already in flight arrives after
+    // `stop()` has cleared the readout — and would light a playlist row on a stopped
+    // transport, permanently, since nothing else arrives to correct it.
     setSongEntryIndex: (songEntryIndex) =>
-      set({ songEntryIndex: songEntryIndex === null ? null : Math.max(0, Math.floor(songEntryIndex)) }),
+      set((state) =>
+        !state.isPlaying && songEntryIndex !== null
+          ? {}
+          : { songEntryIndex: songEntryIndex === null ? null : Math.max(0, Math.floor(songEntryIndex)) },
+      ),
   })),
 );

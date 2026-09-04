@@ -300,9 +300,11 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
     orderedEntries: z.array(
       z.object({
         sequenceId: schedulerIdSchema,
-        // The floor the §9.3 `song_entries.repeats` column and `songEntrySchema` already
-        // take. A guard may not be looser than the store it mirrors, and §7.9 states no
-        // ceiling, so the bound on the WORK a large count implies lives in `buildSongMap`.
+        // §7.9's own floor, which is 0 rather than 1: an entry that "contributes no
+        // segments and is skipped" is an arrangement, not corruption. The guard refuses a
+        // whole MESSAGE over one bad field, so a stricter floor here would silence the
+        // entire playlist of a song the spec describes. §7.9 states no ceiling, so the
+        // bound on the WORK a large count implies lives in `buildSongMap`.
         repeats: z.number().int().min(SONG_REPEATS_MIN),
       }),
     ),

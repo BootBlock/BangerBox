@@ -117,6 +117,39 @@ describe('songAdvanced entry index (spec §7.9, issue #130)', () => {
     expect(run(core, 3.0).songAdvanced).toEqual([1]);
   });
 
+  /**
+   * §7.9: "entries with `repeats: 0` contribute no segments and are skipped". Since the
+   * count crosses the §7.1.3 boundary the guard sees it, and the guard refuses a whole
+   * message over one bad field — so a floor of 1 there would have silenced the WHOLE
+   * playlist of a song the spec describes, with nothing said (found in review of #130).
+   */
+  it('skips an entry with repeats: 0 and plays the rest of the song', () => {
+    const core = new SchedulerCore();
+    song(
+      core,
+      ['A', 'B'],
+      [
+        { sequenceId: 'A', repeats: 0 },
+        { sequenceId: 'B', repeats: 1 },
+      ],
+    );
+    const beat: MidiEvent = {
+      id: 'b1',
+      tickStart: 0,
+      durationTicks: 120,
+      note: 36,
+      velocity: 100,
+      extra: null,
+    };
+    core.applyEventsDiff('tb', 'B', [beat], []);
+    core.setTransport(true, false, 0);
+
+    const result = run(core, 3.0);
+    // The skipped entry still consumes index 0, so the survivor is entry 1 — and it sounds.
+    expect(result.songAdvanced).toEqual([1]);
+    expect(result.batch.filter((e) => e.kind === 'noteOn')).toHaveLength(1);
+  });
+
   it('keeps the §7.7 capture flush counting PLAYS while the index counts entries', () => {
     const core = new SchedulerCore();
     song(core, ['A'], [{ sequenceId: 'A', repeats: 3 }]);

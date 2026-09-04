@@ -138,6 +138,12 @@ describe('the guard is no looser than the store it mirrors (spec §1.3 #11, issu
     expect(
       parseSchedulerRequest({ kind: 'songSequence', orderedEntries: [{ sequenceId: 'b:c', repeats: 1 }] }),
     ).toBeNull();
+    // …but `repeats: 0` is an ARRANGEMENT, not corruption (spec §7.9): the entry contributes
+    // no segments and is skipped. The guard refuses a whole message over one bad field, so a
+    // floor of 1 here would silence the entire playlist of a song the spec describes (#130).
+    expect(
+      parseSchedulerRequest({ kind: 'songSequence', orderedEntries: [{ sequenceId: 'a', repeats: 0 }] }),
+    ).not.toBeNull();
     // The target path itself is exempt — §7.8 addresses are built from colons.
     expect(
       parseSchedulerRequest({
