@@ -162,6 +162,40 @@ describe('subscribeSequencerSync — incremental forwarding (spec §4.3)', () =>
     expect(scheduler.sendEventsDiff).toHaveBeenCalledWith('t2', 'O', [event('n1', 0)], []);
   });
 
+  /**
+   * spec §7.1.4: with no user brace the loop IS the active sequence's own length, so anything
+   * that changes which sequence is active — or that sequence's length — changes the loop too.
+   * Found reviewing issue #132: while every sequence played at once the wrong loop length was
+   * one symptom among many, and with one sequence playing it is the whole of what is heard.
+   */
+  it('re-derives the implicit loop when the active sequence changes', () => {
+    const long = { ...createDefaultSequence('proj', 1, 'Long', 'L'), lengthBars: 4 };
+    useSequenceStore.getState().hydrate({
+      sequences: { S: SEQ, L: long },
+      tracks: { t1: TRACK },
+      events: {},
+      automation: {},
+      songEntries: [],
+    });
+    useTransportStore.setState({ activeSequenceId: 'S', playbackMode: 'sequence', loopEnabled: false });
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+    expect(scheduler.setLoop).toHaveBeenLastCalledWith(true, 0, 7680); // 2 bars of 4/4
+
+    useTransportStore.getState().setActiveSequenceId('L');
+    expect(scheduler.setLoop).toHaveBeenLastCalledWith(true, 0, 15360); // 4 bars of 4/4
+  });
+
+  it('re-derives the implicit loop when the active sequence is made longer', () => {
+    seed();
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+    scheduler.setLoop.mockClear();
+
+    useSequenceStore.getState().updateSequence('S', { lengthBars: 4 });
+    expect(scheduler.setLoop).toHaveBeenLastCalledWith(true, 0, 15360);
+  });
+
   it('stops forwarding after dispose', () => {
     seed();
     const scheduler = fakeScheduler();

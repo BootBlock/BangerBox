@@ -6,7 +6,7 @@ MUST reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the sequence-filter work merged to `main` (`--no-ff`). All eight §12 phases were already
 complete; this was a defect closure against §7.7/§7.9, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1849 unit tests**, `test:e2e` real-browser smoke
+`config.phase` remains **"8"**. Suite: **1852 unit tests**, `test:e2e` real-browser smoke
 (dev + offline, **69/69 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
@@ -77,6 +77,12 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   - **Note repeat and the arpeggiator are NOT filtered, deliberately.** A §7.3 hit carries the
     track the input layer chose (issue #25) and `usePadTrigger` already scopes that; song mode
     does not filter them either.
+  - **The implicit §7.1.4 loop is DERIVED from the active sequence, so it travels with the
+    metadata.** `pushActiveSequence` sends both. Switching to a longer sequence otherwise left
+    the worker looping the previous sequence's length over the new pattern.
+  - **A changed loop region re-bases `lastLoopPass`, because it changes what a PASS counts.**
+    Widening the brace mid-playback otherwise suppressed every `loopWrapped` — and with it the
+    §7.7 per-pass overdub merge — until the longer loop caught up with the old tally.
 
 - **(ap) — the insert-defaults closure (§3.4, §4.2, §5.7, §9.2).** The ⚑ items below are settled
   policy a new session should treat as binding, not as spec text:
@@ -407,9 +413,15 @@ transient channel still stand. New this work:
   not "optimise" it to the active sequence: song mode needs the rest, and §7.1.3 forbids the
   full re-send a switch would then require. `sequencerSync.test.ts` pins that with a test named
   for it.
-- **A switch of active sequence sends `sequenceMeta` and NOTHING else.** That is what makes the
-  worker's event map right at the moment the transport reaches a newly activated sequence
-  rather than only at the moment the user switched.
+- **A switch of active sequence sends `sequenceMeta` and the §7.1.4 LOOP, and nothing else.**
+  The event map needs nothing because it already holds the project; the loop does, because with
+  no user brace it IS the active sequence's own length. `pushActiveSequence` is the one place
+  that pairs them — a new subscriber that can change which sequence is active calls it, not
+  `pushMeta`.
+- **`SchedulerCore.setLoop` re-bases `lastLoopPass`.** A loop region change alters what a pass
+  counts, so anything comparing pass numbers across one has to be re-based against the new
+  region. `nextScheduleTick` is the reference rather than a clock reading, for the same reason
+  `setTempo` defers to the next `tick(now)`: the core has no clock (§11.3).
 
 **Insert slot parameters (spec §5.7, §4.2, §3.4):**
 
@@ -964,12 +976,20 @@ a slot enters the store.
   sequence with a pad still held, which is not a case §7.3 or §7.7 describes.
 - **Live erase still applies to the LOOKAHEAD window**, unchanged by this work — see the
   entry-index notes below. The filter narrows WHICH tracks a sweep reaches, not when.
+- **The review found two defects BEHIND this one**, both fixed here and both about a switch of
+  active sequence being COMPLETE rather than about which tracks it selects: the implicit loop
+  was never re-derived, and `lastLoopPass` was never re-based. Neither was reachable as a
+  distinct symptom while every sequence played at once. Both were measured before being fixed —
+  a switch to a 4-bar sequence pushed no new loop at all, and widening a 1-bar loop to 4 bars
+  after five passes reported 0 wraps over the next 32 seconds where 4 occur.
 - **Every regression test was proven against the unfixed code**: 5 of the 6 assertions in
   `sequenceFilter.test.ts` fail against it, and the sixth is the anti-over-correction guard that
   must keep passing — song mode still plays every segment's own sequence. The `sequencerSync`
   assertion is the same kind of guard on the other side of the wire. The §11.4 smoke step was
   proven the same way, against a build whose predicate was mutated to return true: it failed with
-  "4 tracks sounded in sequence mode — only the active sequence's may".
+  "4 tracks sounded in sequence mode — only the active sequence's may". The three review fixes
+  add three more failing-first tests: two in `sequencerSync.test.ts` and one in
+  `sequenceFilter.test.ts`.
 - **Measured in a real browser**: 69/69 smoke steps at ports 5342/5343, no console errors, up from 67. Two one-bar sequences carrying the SAME pad on the same four beats scheduled one track of
   the two; switching the active sequence mid-transport, with `sequenceMeta` the only message sent,
   moved playback to the other track at the next window; and a held erase swept ticks 960 and 1920
@@ -1177,6 +1197,6 @@ a slot enters the store.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1849**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**1852**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **69/69 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.

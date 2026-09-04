@@ -63,6 +63,19 @@ function pushMeta(scheduler: SchedulerClient): void {
   scheduler.setSongSequence(orderedSongEntries());
 }
 
+/**
+ * The active sequence's metadata AND the loop derived from it (spec §7.1.4, §7.9).
+ *
+ * With no user brace the loop IS the active sequence's own length, so everything that changes
+ * which sequence is active — or that sequence's length — changes the loop as well. Pushing the
+ * metadata alone left the worker looping the OLD sequence's length over the new pattern, which
+ * stayed inaudible only while every sequence played at once (issue #132).
+ */
+function pushActiveSequence(scheduler: SchedulerClient): void {
+  pushMeta(scheduler);
+  pushLoop(scheduler);
+}
+
 /** The scheduler's loop region: the user brace when enabled, else the sequence length. */
 function pushLoop(scheduler: SchedulerClient): void {
   const { loopEnabled, loopStartTick, loopEndTick } = useTransportStore.getState();
@@ -143,7 +156,7 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     ),
     useTransportStore.subscribe(
       (s) => `${s.activeSequenceId}:${s.playbackMode}`,
-      () => pushMeta(scheduler),
+      () => pushActiveSequence(scheduler),
     ),
     // spec §7.9: what the worker does when it reaches `songTotalTicks`.
     useTransportStore.subscribe(
@@ -157,7 +170,7 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     ),
     useSequenceStore.subscribe(
       (s) => s.sequences,
-      () => pushMeta(scheduler),
+      () => pushActiveSequence(scheduler),
     ),
     useSequenceStore.subscribe(
       (s) => s.songEntries,

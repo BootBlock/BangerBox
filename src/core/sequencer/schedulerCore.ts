@@ -221,8 +221,26 @@ export class SchedulerCore {
     this.swingAmount = amount;
     this.swingDivision = division;
   }
+  /**
+   * spec §7.1.5 — a changed loop region changes what a PASS counts, so the counter that
+   * reports one has to be re-based against the new region (issue #132 review).
+   *
+   * `lastLoopPass` is compared against `loopPassAt(to, this.loop)`, which is a count of the
+   * CURRENT loop's lengths. Widening the brace mid-playback therefore left the counter holding
+   * a tally of the old, shorter passes while the new one counted from near zero, so `newPass`
+   * sat below it until the longer loop caught up — suppressing every `loopWrapped` and, with
+   * it, the §7.7 per-pass overdub merge. That is the half that costs a take rather than a
+   * sound. Narrowing the brace has the mirror fault, reporting a burst of wraps that never
+   * happened.
+   *
+   * The reference is `nextScheduleTick`, not a clock reading: the core has no clock (spec
+   * §11.3), and that cursor is the linear tick the lookahead has already posted to — the very
+   * domain `scheduleSequence` compares against on the next wake. Before playback there is
+   * nothing to re-base, and `beginPlayback` sets the counter from `originTick` anyway.
+   */
   setLoop(loop: LoopRegion): void {
     this.loop = loop;
+    if (this.playing) this.lastLoopPass = loopPassAt(this.nextScheduleTick, loop);
   }
   /**
    * Assign (or clear, with `null`) a track's groove template — spec §7.5: a groove is a

@@ -710,6 +710,11 @@ async function assertShellAndSelfTest(page, label) {
     if (r.otherTicksBefore.join(',') !== '0,960,1920,2880') {
       throw new Error(`the second sequence lost notes before the erase: [${r.otherTicksBefore.join(', ')}]`);
     }
+    // Nothing scheduled at all is a transport or engine failure, not a filter that took too
+    // much — and blaming the filter for it would send the next person to the wrong file.
+    if (r.scheduledBeforeSwitch.length === 0) {
+      throw new Error('nothing was scheduled at all — the transport did not roll, so this proves nothing');
+    }
     if (r.scheduledBeforeSwitch.join(',') !== r.activeTrackId) {
       throw new Error(
         `${r.scheduledBeforeSwitch.length} tracks sounded in sequence mode — only the active sequence's may`,

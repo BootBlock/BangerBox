@@ -161,3 +161,36 @@ describe('a live erase reaches only the active sequence (spec §7.7, issue #132)
     expect(run(twoSequencesSharingAPad(null), [0.1, 0.2, 0.3, 0.4]).erased).toEqual([]);
   });
 });
+
+/**
+ * Switching sequence mid-transport also changes the LOOP, and the pass counter with it.
+ *
+ * Found reviewing the filter above. Until it landed, every sequence played at once and the
+ * loop was whichever length the transport happened to hold, so a wrong loop length was one
+ * symptom among many; with one sequence playing it is the whole of what the user hears. The
+ * two halves are on opposite sides of the §7.1.3 wire — `sequencerSync` has to re-derive the
+ * implicit loop, and `SchedulerCore` has to re-base what it counts a pass against.
+ */
+describe('a changed loop region is counted from where the transport is (spec §7.1.5)', () => {
+  it('keeps reporting wraps after the loop widens mid-playback', () => {
+    // Ten seconds of a 1-bar loop is five passes. Widening to four bars used to leave
+    // `lastLoopPass` at 5 while the new, longer loop counted from 1, so `newPass` sat below
+    // it for forty seconds — and with it the §7.7 per-pass overdub flush, which is the half
+    // that costs the user a take rather than a sound.
+    const core = new SchedulerCore();
+    meta(core, ['S'], 'S');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    core.applyEventsDiff('t1', 'S', [note('n', 0)], []);
+    core.setTransport(true, false, 0);
+    const early = run(core, steps(10)).loopWrapped.length;
+    expect(early).toBe(5);
+
+    core.setLoop({ enabled: true, startTick: 0, endTick: 15_360 }); // four bars: 8 s at 120 bpm
+    const late = run(
+      core,
+      Array.from({ length: 320 }, (_, i) => 10.1 + i * 0.1),
+    ).loopWrapped.length;
+    expect(late).toBe(4); // 32 s of an 8 s loop
+  });
+});
