@@ -1,14 +1,18 @@
-# BangerBox — Phase Handover (after the accessibility closure)
+# BangerBox — Phase Handover (after the song entry-index closure)
 
-Generated at the close of the accessibility work per Protocol Alpha (spec §13.1). A new session
+Generated at the close of the §7.9 entry-index work per Protocol Alpha (spec §13.1). A new session
 MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and MUST
 reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the accessibility work merged to `main` (`--no-ff`). All eight §12 phases were already
-complete; this was a defect closure against §2.1/§8.2/§9.7, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1815 unit tests**, `test:e2e` real-browser smoke
-(dev + offline, **59/59 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+**State:** the entry-index work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §7.1.3/§7.7/§7.9, not a new phase, so `package.json`
+`config.phase` remains **"8"**. Suite: **1831 unit tests**, `test:e2e` real-browser smoke
+(dev + offline, **63/63 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
+
+**`SCHEDULER_PROTOCOL_VERSION` is now 2** (§7.1.3), and it is the first bump the project has
+made: `songSequence` carries §7.9 entries rather than a repeat-expanded id list, which changes
+an existing kind's shape rather than adding one. See §2 (ao) and §7.
 
 **The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
 human developer. Nothing in this work touched it.
@@ -42,6 +46,42 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(ao) — the song entry-index closure (§7.1.3, §7.7, §7.9, §9.5).** The ⚑ items below are
+  settled policy a new session should treat as binding, not as spec text:
+  - **The §7.9 playlist crosses the §7.1.3 boundary as ENTRIES, and the worker expands
+    `repeats`.** `buildSongMap` already numbered entries the way §7.9 requires and was simply
+    never given the real ones. Correcting the number on the way out instead would have meant a
+    second place that knows what a repeat is.
+  - **The SENDER sorts by `position` and the worker takes the array index.** `position` is the
+    §9.3 column and `songEntries` is the store's own array, so the sort belongs beside the store.
+    `SchedulerSongEntry` carries neither `id` nor `position`: a field the worker cannot use is
+    one more thing that can disagree with the store.
+  - **A guard field's floor comes from the section that DEFINES the field, not from the schema
+    that happens to hold it.** `repeats` has a floor of 0 in §7.9 — a skipped entry is an
+    arrangement — and 1 in `songEntrySchema`, which nothing parses at runtime. The guard refuses
+    a whole MESSAGE over one bad field, so taking the stricter of the two silenced the entire
+    playlist of a song the spec describes. A negative or fractional count is still refused.
+  - **`songAdvanced`'s entry index and `flushOnSegmentChange`'s segment ordinal are DIFFERENT
+    numbers and must stay so.** An entry played three times is one entry (§7.9's index) and
+    three plays (§7.7's merge boundary).
+  - **A consumer of `songAdvanced` MUST render the position-sorted projection**, which §8.5.12's
+    playlist now does in render, in `removeEntry` and in `moveEntry`. Indexing the raw
+    `songEntries` array is what §7.9 forbids in as many words.
+  - **The entry mark clears on a stop and on leaving song mode, and a report that arrives after
+    a stop is ignored.** The worker learns about a stop on its next wake (§7.1.4) and nothing
+    arrives afterwards to correct the mark, so a stopped transport would show a playing row for
+    good.
+  - **There is ONE expansion of the §7.9 playlist.** The §9.5 song bounce used to carry its own,
+    on the main thread, so the segment cap bounded the worker and left the render able to freeze
+    the tab on the same damaged pack.
+  - **What a live-erase sweep LONGER than one loop pass means is now recorded** (§7.7 answers
+    only the ordinary case): the UNION of the sequence ticks the window passed over, each event
+    exactly once. Counting instead would make the number of `erased` reports depend on the
+    scheduler's wake rate.
+  - **Song mode keeps its own erase SELECTION and shares `reportErased`.** A song slice is a
+    segment window in song ticks and a sequence window is a linear window folded on the loop;
+    one function taking either would be a flag, not a shared rule.
 
 - **(an) — the accessibility closure (§2.1, §8.2, §9.7).** The ⚑ items below are settled
   policy a new session should treat as binding, not as spec text:
@@ -347,7 +387,14 @@ transient channel still stand. New this work:
 - **`emitSongHit` places a live-generated hit on the song timeline.** Both note repeat and the
   arpeggiator go through it, so neither can drift from the other on swing, tempo or tick domain.
 - **`reportErased` applies a sweep AFTER the read that found it**, never during: it replaces
-  `track.events`.
+  `track.events`. It is the SHARED half of live erase; each mode selects its own ids, because
+  the two windows are in different domains.
+- **`buildSongMap` is the only expansion of the §7.9 playlist.** The scheduler and the §9.5 song
+  bounce both call it, so `repeats`, the position sort, the skipped-entry index and the
+  `MAX_SONG_SEGMENTS` bound cannot mean two things. A new consumer of the playlist calls it too.
+- **`useTransportStore.songEntryIndex` is the one consumer of `songAdvanced`.** `AudioEngine`
+  writes it and §8.5.12's playlist reads it; the setter owns the three rules that keep it honest
+  (cleared on stop, cleared on leaving song mode, ignored while stopped).
 
 **The worker boundary (spec §7.1.3, §1.3 #11):**
 
@@ -573,13 +620,20 @@ own defaults and needs no migration.
 
 ## 7. Worker / worklet / message protocol versions
 
-`SCHEDULER_PROTOCOL_VERSION` is still **1** and is no longer inert (issue #96): the `init` request
+`SCHEDULER_PROTOCOL_VERSION` is **2** as of the entry-index work (issue #130). `songSequence` now
+carries `orderedEntries` — the §7.9 playlist in `position` order, each `{ sequenceId, repeats }` —
+instead of a repeat-expanded `orderedSequenceIds`. That is the FIRST change to an existing kind's
+shape rather than an addition, and so the first thing the version has ever had to name: an older
+peer's message no longer parses, and without the bump the only symptom would be the §1.3 #11 guard
+dropping it in silence. `SchedulerSongEntry` is exported from the sequencer barrel. No request or
+response KIND was added.
+
+From the previous work, and otherwise unchanged: the version is no longer inert (issue #96): the `init` request
 carries it and `applySchedulerRequest` compares it with the worker's own copy, reporting a
 mismatch — or a handshake with no version at all — through `console.error`, which §11.4 fails the
-smoke on. It stays 1: adding a request or response kind does not bump it (the extend-by-adding-kinds
-rule). **`init.protocolVersion` is the one OPTIONAL field in the request union**, so a skewed
-peer's handshake reaches the report instead of being dropped by the guard. No request or response
-KIND was added this work.
+smoke on. Adding a request or response kind still does not bump it (the extend-by-adding-kinds
+rule); changing one's shape does. **`init.protocolVersion` is the one OPTIONAL field in the request
+union**, so a skewed peer's handshake reaches the report instead of being dropped by the guard.
 
 From the previous work, and unchanged: the **pack worker's** protocol changed completely:
 the single `pack` request is replaced by a session — `packBegin` / `packSample` / `packEnd` /
@@ -604,8 +658,15 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**`useUIStore.storagePersisted` is new this work** (§4.2 permits adding fields with a changelog
-entry; none removed), with `setStoragePersisted`. It is the §9.7 persistence grant — `true`,
+**`useTransportStore.songEntryIndex` is new this work** (§4.2 permits adding fields with a
+changelog entry; none removed), with `setSongEntryIndex`. It is the §7.9 playlist entry song mode
+is playing — the index into the POSITION-SORTED entry list, `null` when the song is not rolling.
+`AudioEngine`'s `onSongAdvanced` writes it and §8.5.12's `SongMode` reads it. It persists nowhere:
+it is playback position, not arrangement. It changes at most once per sequence pass, so it is
+ordinary React state rather than a §3.3 high-frequency value.
+
+From the previous work, and unchanged: **`useUIStore.storagePersisted`** (§4.2 permits adding fields
+with a changelog entry; none removed), with `setStoragePersisted`. It is the §9.7 persistence grant — `true`,
 `false`, or `null` before the first-run request has answered. `StorageGauge` writes it and
 `PlatformNotices`, `StoragePanel` and the §11.4 probe read it. Nothing persists it: it is a
 property of the browser, re-asked every session.
@@ -654,7 +715,12 @@ Changes from the previous work, recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-**One shell component is new** this work: `PlatformNotices`, a dismissible strip between the
+**Mode changes this work:** §8.5.12's `SongMode` renders its playlist in `position` order — the
+projection §7.9 numbers its entries against — and marks the entry that is playing, with an
+`sr-only` "(playing)" beside the name and `aria-current` on the row. `removeEntry` and `moveEntry`
+take the same sorted projection. No primitive changed and no shell component was added.
+
+From the previous work, and unchanged — **one shell component**: `PlatformNotices`, a dismissible strip between the
 transport bar and the mode content, rendering the §2.1 soft-capability notices and the §9.7
 eviction warning. It renders nothing at all when the device can do everything, which on the
 §1.3 #15 baseline is every session where persistence was granted.
@@ -725,22 +791,50 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#34, #35, #46, #58 and #51 are CLOSED by this work.** The accessibility cluster is done, and
-`SOFT_CAPABILITY_LABELS` has left the `check:orphans` allowlist — deleted rather than wired, and
-replaced by `SOFT_CAPABILITY_NOTICES`, which real UI reads. Nothing was added to the allowlist.
+**#130 is CLOSED by this work, and #16 was already closed** by the 2026-07-18 `collectErase` fix —
+the neighbour list below had gone stale and said otherwise. Nothing was added to the
+`check:orphans` allowlist.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **#16** live erase deletes across a loop boundary in one pass rather than the notes it swept.
+- **#132** sequence mode plays EVERY sequence at once, and a live erase deletes the held pad from
+  all of them. `scheduleSequence` iterates `this.tracks` with no `sequenceId` filter where
+  `emitSongPass` has one, and `sequencerSync` forwards an `eventsDiff` for every track in the
+  project. Filed while pinning #16's "and nothing else" half; reproduced against the real core.
+  Both halves are wrong — a sequence that is not playing sounds, and its notes are erased.
 - **#131** a new insert displays and announces its RANGE FLOOR while the graph runs the §5.7
   defaults — `addInsert`/`replaceInsert` write `params: {}` and `createInsert` merges
   `defaultEffectParams` over it, so a fresh delay sounds at 350 ms and reads as 1 ms. A §3.4
   store-to-graph disagreement; filed while closing #35, where the missing unit made it legible.
-- **#130** `songAdvanced { entryIndex }` addresses the FLATTENED playlist rather than §7.9's
-  position-sorted entries, because `sequencerSync.flattenSong` expands `repeats` before the ids
-  reach the worker. Latent: `onSongAdvanced` has no production caller yet. Filed while closing
-  #94; fixing it means carrying repeats on the `songSequence` request.
 - **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
+
+**Honest scope notes for the entry-index work:**
+
+- **Live erase applies to the LOOKAHEAD window**, so the erased region sits up to `LOOKAHEAD_MS`
+  later than the region the user swept. That is inherent to a lookahead scheduler — the notes
+  under the playhead are already scheduled — and at 100 ms it is a twentieth of a bar at 120 bpm.
+  Nothing is done about it and nothing should be.
+- **A held erase commits one "Delete notes" undo entry per scheduler wake.** `removeEvents` takes
+  a `coalesceKey` and `AudioEngine`'s `onErased` passes none, so a sweep across a bar can spend a
+  good part of the §4.5 100-entry history. Observed here, out of scope, not fixed.
+- **`songEntrySchema`'s `repeats` floor moved from 1 to 0**, which is §7.9's own. Nothing parsed
+  it at runtime, so the change is inert for the store and load-bearing for the §7.1.3 guard.
+- **`MAX_SONG_SEGMENTS` truncates and warns rather than refusing.** A `console.warn` does not fail
+  the §11.4 smoke, which fails on console errors; the bound is on memory, and the anomaly is
+  visible rather than gated.
+- **Issue #16 needed no code.** The `collectErase` fix landed on 2026-07-18 and was verified here
+  by reverting it, which fails the shipped wrap test. What was missing was the multi-pass rule,
+  the song-wrap test and a real-browser measurement.
+- **Every regression test was proven against the unfixed code**: 3 of 4 entry-index assertions and
+  the sync-layer assertion fail against the repeat-expanding sender, 3 of 7 playlist assertions
+  fail against a raw-array index and 3 more against the three review fixes reverted, and both new
+  erase tests fail against the code they were written to catch.
+- **Measured in a real browser**: 10/10 driver checks at ports 5342–5344 and 63/63 smoke steps, no
+  console errors. A sweep held across the bar line of a 3840-tick loop took ticks 3600 and 0 and
+  left 960, 1920 and 2880; against the reverted `collectErase` it took the complement and left
+  only tick 0. A two-entry song of three plays reported entry indices [0, 1] and Song mode marked
+  row 0 while that entry was on its SECOND play; against the repeat-expanding sender the same song
+  reported [0, 1, 2] and marked row 1, a whole entry early. Two smoke steps are new and permanent.
 
 **Honest scope notes for the accessibility work:**
 
@@ -885,6 +979,6 @@ replaced by `SOFT_CAPABILITY_NOTICES`, which real UI reads. Nothing was added to
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1815**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **59/59 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1831**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **63/63 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
