@@ -745,6 +745,14 @@ async function assertShellAndSelfTest(page, label) {
       }
       if (wrong.length > 0) throw new Error(`${where} carries ${wrong.join(', ')}`);
     }
+    // §5.2 solo-in-place, now that a pad strip exists from the moment a project loads. A pad
+    // channel feeds its track's input, so a solo judged across one group mutes every pad of
+    // the soloed track and renders silence — the regression this work would otherwise ship.
+    if (!(r.soloedTrackRms > r.defaultRms * 0.9)) {
+      throw new Error(
+        `soloing the track rendered ${r.soloedTrackRms.toFixed(5)} RMS against ${r.defaultRms.toFixed(5)} unsoloed — its own pads were muted (spec §5.2)`,
+      );
+    }
     console.log(
       `       pad strip: bounce ${r.defaultRms.toFixed(5)} → ${r.reloadedRms.toFixed(5)} RMS (×${ratio.toFixed(4)}) after a save and reload; disk and strip both read 0.8 / −0.5 / 0.6 / delay ${DELAY_DEFAULT_MS} ms`,
     );

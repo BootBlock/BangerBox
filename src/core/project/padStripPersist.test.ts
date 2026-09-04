@@ -147,6 +147,27 @@ describe('a pad strip survives saveNow() + loadProject() (issue #133)', () => {
     expect(useMixerStore.getState().channels[padChannel()]).toMatchObject({ level: 1, pan: 0 });
   });
 
+  it('saves an insert REORDER, which reaches the store through a bare upsertChannel', async () => {
+    // §8.5.6's Reorder buttons call `upsertChannel`, which marks nothing dirty — so the
+    // write-back marks the program itself rather than leaning on the commit that did not
+    // happen. Without that, both stores agree in memory and the old order comes back.
+    const mixer = useMixerStore.getState();
+    mixer.addInsert(padChannel(), 'delay');
+    mixer.addInsert(padChannel(), 'filter');
+    await saveNow();
+    const strip = useMixerStore.getState().channels[padChannel()]!;
+    const inserts = [...strip.inserts];
+    const [moved] = inserts.splice(inserts.length - 1, 1);
+    inserts.splice(inserts.length - 1, 0, moved!);
+    useMixerStore.getState().upsertChannel({ ...strip, inserts });
+    expect(queue.pendingKeys).toEqual([`program:${programId}`]);
+
+    await saveNow();
+    await loadProject();
+    const reloaded = useMixerStore.getState().channels[padChannel()];
+    expect(reloaded?.inserts.map((slot) => slot.effectType).slice(-2)).toEqual(['filter', 'delay']);
+  });
+
   it('does not disturb a pad the strip never touched', async () => {
     useProgramStore.getState().upsertPad(programId, createDefaultPad(5));
     useMixerStore.getState().commit(channelLevelPath(padChannel()), 0.4);

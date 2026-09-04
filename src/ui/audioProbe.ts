@@ -234,6 +234,8 @@ export interface PadStripResult {
   readonly onDisk: PadStripReading;
   /** The four fields as the strip reads them after `loadProject()`. */
   readonly afterReload: PadStripReading;
+  /** RMS of the same bounce with the TRACK strip soloed, and the pad strips present (§5.2). */
+  readonly soloedTrackRms: number;
 }
 
 /** Outcome of the §7.7 loop-boundary erase proof (see {@link liveEraseWrapProof}). */
@@ -2688,6 +2690,19 @@ async function padStripProof(engine: AudioEngine): Promise<PadStripResult> {
   const strip = useMixerStore.getState().channels[padChannel];
   const afterReload = padStripReading(strip, strip?.inserts);
 
+  // 4 — §5.2 solo-in-place, with the pad strips this work made permanent. A pad channel
+  // feeds its TRACK's input (stage 5), so a solo evaluated across one group would mute every
+  // pad of the soloed track and render silence. Measured rather than inspected (spec §11.2):
+  // the strip levels are put back to their defaults first, so the only variable is the solo.
+  await reload();
+  const soloTrack = useMixerStore.getState().channels[`track:${trackId}`];
+  if (soloTrack !== undefined) useMixerStore.getState().setSolo(soloTrack.id, true);
+  const soloedTrackRms = await measure();
+  // `setSolo` marks the track dirty, and §14 (aj) makes `loadProject` REFUSE over unsaved
+  // work — so the restore below would throw rather than restore. The write goes to the
+  // probe's own track row, which the removal takes with it.
+  await projectService.saveNow();
+
   // Put the project back: the probe's own rows go, and the load takes its stores with them.
   // The sequence cascades to the track and the track to its events (spec §9.3).
   await repos.sequences.remove(sequence.id);
@@ -2703,6 +2718,7 @@ async function padStripProof(engine: AudioEngine): Promise<PadStripResult> {
     reloadedRms,
     onDisk,
     afterReload,
+    soloedTrackRms,
   };
 }
 

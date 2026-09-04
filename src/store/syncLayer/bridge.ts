@@ -8,6 +8,11 @@
  * The transport and mode hooks are part of the interface but do nothing in the audio
  * bridge: the scheduler worker owns transport (spec §7.1.3) and `core/midi` owns Q-Link
  * mode, so those subscribers exist to keep the §4.3 surface complete, not to make sound.
+ * They ride alongside subscribers that DO work — `subscribeTransportSync` also carries
+ * `setBpm` and `subscribeHardwareSync` loads the mode's §10.3 bindings. A hook whose
+ * subscriber had nothing else to do would be a speculative export (§3.4), which is what
+ * `onActiveProgramChanged` became once the §4.2 pad strips moved to `derive/padStripMirror`
+ * (issue #133); it was removed rather than left calling nothing.
  */
 import type { InsertSlotState } from '@/core/project/schemas';
 
@@ -31,7 +36,6 @@ export interface SyncBridge {
   setTransportRecording: (isRecording: boolean) => void;
   setBpm: (bpm: number) => void;
 
-  onActiveProgramChanged: (programId: string | null) => void;
   onQLinkModeChanged: (mode: string) => void;
 
   /**
@@ -57,7 +61,6 @@ export const noopBridge: SyncBridge = {
   setTransportPlaying: () => {},
   setTransportRecording: () => {},
   setBpm: () => {},
-  onActiveProgramChanged: () => {},
   onQLinkModeChanged: () => {},
   applyParam: () => {},
 };

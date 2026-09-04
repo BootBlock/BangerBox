@@ -132,6 +132,21 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
     payload and then overwritten by the §4.2 store" is no longer moot and no longer able to
     matter: both carry the same numbers, and a bounce after a reload renders the strip the
     user set.
+  - **§5.2 solo-in-place is per GROUP: pads and tracks are separate.** A pad channel feeds
+    its TRACK's input (stage 5), so a solo judged across one group mutes every pad of the
+    soloed track and silences it. Pre-existing and hard to reach — no pad strip existed on a
+    fresh load — and permanent strips would have made it the state of every session. §8.5.3's
+    two lists and §8.5.6's two tabs are the same reading. Measured: 0.00308 RMS against
+    0.10244 unsoloed, on the one-group build.
+  - **`applyPadStripEdit` marks the program dirty ITSELF.** `commit` runs `apply()` — and so
+    the mirror's write — before it marks anything, and §8.5.6's insert reorder reaches the
+    store through `upsertChannel`, a bare `set` that marks nothing. Not a second rule: the key
+    is the same one and the §4.4 queue coalesces by key. **The same reorder on a TRACK strip
+    is still unsaved**, which is the pre-existing half.
+  - **`subscribeProgramSync` and `SyncBridge.onActiveProgramChanged` are GONE.** With the
+    publish moved, the subscriber's whole body called a hook that is `() => {}` in both
+    bridges — a speculative export in §3.4's sense. The transport and Q-Link hooks that are
+    also inert stay, because their subscribers do real work beside them; `bridge.ts` says so.
 
 - **(ar) — the bounce-mixer closure (§5.2, §9.5, §7.8, §4.3).** The ⚑ items below are settled
   policy a new session should treat as binding, not as spec text:
@@ -1191,7 +1206,13 @@ leaves the Mixer's own pad fader stale until a reload (#140). Nothing was added 
   here. The mirror follows the strip back on an undo; whether that reaches disk depends on the
   same rule it always did.
 - **`padStripProof` leaves its imported tone sample in the library**, as `bounceMixProof`
-  does. It deletes the three rows it created and reloads.
+  does. It deletes the three rows it created and reloads. It also calls `saveNow()` after the
+  solo measurement, because `setSolo` marks the track dirty and §14 (aj) makes `loadProject`
+  REFUSE over unsaved work — the restore would otherwise throw instead of restoring.
+- **An insert REORDER on a TRACK strip is still unsaved.** `InsertPanel.moveSlot` calls
+  `upsertChannel`, a bare `set` that records no undo entry and marks nothing dirty. The pad
+  case is covered because `applyPadStripEdit` marks the program itself; the track case is
+  pre-existing and untouched here.
 - **Every regression test was proven against the code it was written to catch**, by five
   mutations: no write-back at all — the defect as filed (8 failures); the pre-fix publish, on an
   active-program change alone (16, and the 5 that pass are the guards); a `padStripEdit` that
