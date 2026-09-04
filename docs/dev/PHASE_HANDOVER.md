@@ -1135,9 +1135,11 @@ From the previous work: **#132 and #131 are CLOSED**, and #133, #135 and #137 re
   send returned 0.1508 RMS into a silent beat gap, a master lane climbed 0.0013 → 0.0485, an
   `insert:…:slot1.cutoff` lane on an `exp` curve climbed 0.0008 → 0.1330, and a master strip cut
   to −42 dB and lowpassed left ×0.0001 of the mix while the STEM rendered ×1.000 of the
-  pre-master mix and kept its own send return. **Against the unfixed build all nine renders were
-  identical at 0.13638 RMS and 10 of the 13 checks failed**; the three that passed are the
-  anti-over-correction guards. One smoke step is new and permanent.
+  pre-master mix and kept its own send return. **Against the unfixed build every render was
+  identical at 0.13638 RMS**, and the 12 checks that existed at that point failed 9 of 12; the
+  three that passed are the anti-over-correction guards. The thirteenth, the insert-parameter
+  lane, came from the review and was measured against the compacted insert chain instead — it
+  rendered 0.0005 flat there. One smoke step is new and permanent.
 
 **Honest scope notes for the sequence-filter work:**
 
