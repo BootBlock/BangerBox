@@ -1,22 +1,26 @@
-# BangerBox — Phase Handover (after the insert-defaults closure)
+# BangerBox — Phase Handover (after the sequence-filter closure)
 
-Generated at the close of the §5.7 insert-defaults work per Protocol Alpha (spec §13.1). A new
+Generated at the close of the §7.9 sequence-filter work per Protocol Alpha (spec §13.1). A new
 session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the insert-defaults work merged to `main` (`--no-ff`). All eight §12 phases were already
-complete; this was a defect closure against §3.4/§4.2/§5.7, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1842 unit tests**, `test:e2e` real-browser smoke
-(dev + offline, **67/67 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+**State:** the sequence-filter work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §7.7/§7.9, not a new phase, so `package.json`
+`config.phase` remains **"8"**. Suite: **1849 unit tests**, `test:e2e` real-browser smoke
+(dev + offline, **69/69 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
-**No §9.2 migration was added and `PRAGMA user_version` is unchanged.** A project written before
-this work holds `"params":{}` on an occupied insert slot and resolves correctly because the
-completion sits at the store's own admission of a strip — see §2 (ap) and §6.
+**Sequence mode plays ONE sequence** (§7.9), and a §7.7 live erase reaches only that one.
+`SchedulerCore.playsInSequenceMode` is the whole of it, and the reason it sits in the WORKER
+rather than in `sequencerSync` is recorded in §2 (aq) and §4 — it is the half of the decision a
+new session is most likely to get wrong.
 
-**`SCHEDULER_PROTOCOL_VERSION` is 2** (§7.1.3), and it is the first bump the project has made:
-`songSequence` carries §7.9 entries rather than a repeat-expanded id list, which changes an
-existing kind's shape rather than adding one. See §2 (ao) and §7.
+**No §9.2 migration was added and `PRAGMA user_version` is unchanged.** Nothing this work touched
+is persisted: the filter is a scheduling decision, and the §7.1.3 wire is unchanged.
+
+**`SCHEDULER_PROTOCOL_VERSION` is 2** (§7.1.3), unchanged by this work. It was bumped by the
+entry-index work because `songSequence` carries §7.9 entries rather than a repeat-expanded id
+list, which changes an existing kind's shape rather than adding one. See §2 (ao) and §7.
 
 **The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
 human developer. Nothing in this work touched it.
@@ -50,6 +54,29 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(aq) — the sequence-filter closure (§7.7, §7.9).** The ⚑ items below are settled policy a new
+  session should treat as binding, not as spec text:
+  - **Sequence mode plays the ACTIVE sequence's tracks and no others**, and the filter lives in
+    `SchedulerCore`, beside the one `emitSongPass` already had. The two are one rule stated in
+    the two places that schedule — each mode selects the sequence it is playing.
+  - **The sender ships the WHOLE project and must keep doing so.** The worker holds every track
+    because song mode selects a different one per segment, so narrowing in `sequencerSync` would
+    empty song mode. That is the decisive argument, not a preference.
+  - **A sender-side filter would also breach §7.1.3.** `eventsDiff` is "incremental — never full
+    re-sends during playback", and narrowing at the sender makes every switch of active sequence
+    exactly that: delete one sequence's tracks, upsert another's, while the transport rolls.
+  - **A track whose sequence becomes active LATER is already correct when the transport reaches
+    it.** That is what the worker-side filter buys. A switch sends `sequenceMeta` and nothing
+    else, and the next wake schedules the new pattern; the sender-side alternative leaves a
+    window in which the worker holds no events for the pattern it has been told to play.
+  - **A `null` active sequence matches nothing.** `tracksOfSequence` already answers the same
+    question with the empty list, and §7.7's erase deletes what it sweeps, so the safe reading
+    of "no sequence selected" is that no track is armed. Unreachable in a loaded project:
+    `hydrate` activates the first sequence row and `deleteSequence` refuses to remove the last.
+  - **Note repeat and the arpeggiator are NOT filtered, deliberately.** A §7.3 hit carries the
+    track the input layer chose (issue #25) and `usePadTrigger` already scopes that; song mode
+    does not filter them either.
 
 - **(ap) — the insert-defaults closure (§3.4, §4.2, §5.7, §9.2).** The ⚑ items below are settled
   policy a new session should treat as binding, not as spec text:
@@ -370,6 +397,20 @@ Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment 
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
 
+**Choosing the sequence to play (spec §7.7, §7.9):**
+
+- **`SchedulerCore.playsInSequenceMode` is where sequence mode picks its tracks**, and
+  `emitSongPass`'s `track.sequenceId !== segment.sequenceId` is where song mode picks its own.
+  A new schedule-time decision that depends on WHICH sequence is playing goes in both, or it is
+  silently mode-specific — the same trap as issue #94, and this defect was its mirror image.
+- **`sequencerSync` forwards an `eventsDiff` for every track in the project, on purpose.** Do
+  not "optimise" it to the active sequence: song mode needs the rest, and §7.1.3 forbids the
+  full re-send a switch would then require. `sequencerSync.test.ts` pins that with a test named
+  for it.
+- **A switch of active sequence sends `sequenceMeta` and NOTHING else.** That is what makes the
+  worker's event map right at the moment the transport reaches a newly activated sequence
+  rather than only at the moment the user switched.
+
 **Insert slot parameters (spec §5.7, §4.2, §3.4):**
 
 - **`completeInsertParams(effectType, params)` in `effectParams.ts` is the one rule**, beside
@@ -684,7 +725,12 @@ own defaults and needs no migration.
 
 ## 7. Worker / worklet / message protocol versions
 
-`SCHEDULER_PROTOCOL_VERSION` is **2** as of the entry-index work (issue #130). `songSequence` now
+**Nothing in the §7.1.3 protocol changed this work** (issue #132): no request kind, no response
+kind, no `ScheduledEvent` field, and no change to an existing kind's shape. The fix is a
+scheduling decision inside the worker, taken against `activeSequenceId`, which `sequenceMeta`
+already carried.
+
+From the previous work, and unchanged: `SCHEDULER_PROTOCOL_VERSION` is **2** as of the entry-index work (issue #130). `songSequence` now
 carries `orderedEntries` — the §7.9 playlist in `position` order, each `{ sequenceId, repeats }` —
 instead of a repeat-expanded `orderedSequenceIds`. That is the FIRST change to an existing kind's
 shape rather than an addition, and so the first thing the version has ever had to name: an older
@@ -721,6 +767,11 @@ context, which the §9.5 bounce calls so a warp pad bounces the way it plays.
 worklet hosts, which is what keeps that processor's kernel switch exhaustive rather than defensive.
 
 ## 8. Stores — all eight implemented (§4.2)
+
+**No store slice, field or action changed this work.** `useTransportStore.activeSequenceId` is
+§4.2's own field and already reached the worker through `sequenceMeta`; what changed is that the
+worker now uses it. `subscribeSequencerSync` still forwards an `eventsDiff` for every track in the
+project, and must — see §2 (aq) and §4.
 
 **No store slice or field changed this work, but four `useMixerStore` actions changed what they
 write.** `setChannels`, `upsertChannel`, `addInsert` and `replaceInsert` all pass a strip through
@@ -786,7 +837,10 @@ Changes from the previous work, recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-**Mode changes this work:** none. `InsertPanel` gained comments only — its knobs read the same
+**Mode changes this work:** none. No component, primitive or mode markup changed for the
+sequence-filter closure — the defect and its fix are both below the §4.3 sync layer.
+
+From the previous work, and unchanged: `InsertPanel` gained comments only — its knobs read the same
 `slot.params[param] ?? range[0]` they always did, and what changed is that an occupied slot now
 carries the value, so the floor is never what a fresh insert draws. No primitive, shell component
 or mode markup changed.
@@ -867,8 +921,12 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#131 is CLOSED by this work.** Three new issues were filed while tracing where a slot enters the
-store — #133, #134 and #135 below. Nothing was added to the `check:orphans` allowlist.
+**#132 is CLOSED by this work.** One new issue was filed while measuring it — a DELETED track's
+events are never withdrawn from the worker, listed below. Nothing was added to the
+`check:orphans` allowlist.
+
+From the previous work: **#131 is CLOSED**, and #133, #134 and #135 were filed while tracing where
+a slot enters the store.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
@@ -877,11 +935,13 @@ store — #133, #134 and #135 below. Nothing was added to the `check:orphans` al
   renders as nothing. `bounceTrack`'s "post-insert, pre-master" comment describes a channel the
   offline context does not have. Voice-level §6 sound design does render — the pool is real; what
   is missing is everything from §5.2 stage 3 outward.
-- **#132** sequence mode plays EVERY sequence at once, and a live erase deletes the held pad from
-  all of them. `scheduleSequence` iterates `this.tracks` with no `sequenceId` filter where
-  `emitSongPass` has one, and `sequencerSync` forwards an `eventsDiff` for every track in the
-  project. Filed while pinning #16's "and nothing else" half; reproduced against the real core.
-  Both halves are wrong — a sequence that is not playing sounds, and its notes are erased.
+- **A DELETED track keeps sounding until the project is reloaded.**
+  `subscribeSequencerSync`'s events subscriber iterates `Object.entries(events)` and never
+  handles a REMOVED key, where the automation subscriber immediately below it does — so
+  `removeTrack` deletes the store's events and tells the worker nothing, and the worker keeps
+  scheduling them. Confirmed against the sync layer while measuring #132 (the smoke's failure
+  message counted four tracks where the probe had hydrated two), filed as issue #137, and
+  deliberately not fixed there: it is a withdrawal defect, not a selection one.
 - **#133** a pad's mixer-strip edits never reach the §6 program payload, so level, pan, sends and
   the whole insert chain on the Mixer's Pads tab are lost on reload. `mixerChannelDirtyKey` marks
   the right entity dirty and `flushProgram` serialises `useProgramStore`, which nothing writes the
@@ -891,6 +951,30 @@ store — #133, #134 and #135 below. Nothing was added to the `check:orphans` al
   go dead while the effect still sounds. Hit while writing the #131 browser proof, whose gesture
   step silently addressed nothing until the proof stopped growing the chain.
 - **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
+
+**Honest scope notes for the sequence-filter work:**
+
+- **The `null` active-sequence branch is unreachable in a loaded project**, so its two tests pin a
+  decision rather than a path the user can walk. `hydrate` activates the first sequence row and
+  `deleteSequence` refuses to remove the last. It is written down because the issue asked for it
+  to be decided explicitly, and because the permissive reading was what made every track sound.
+- **Note repeat, the arpeggiator and recording capture are unfiltered**, and that is a judgement
+  rather than an oversight. Each is driven by a live gesture carrying its own `trackId`, and the
+  input layer already scopes the gesture; the case a filter would change is a user switching
+  sequence with a pad still held, which is not a case §7.3 or §7.7 describes.
+- **Live erase still applies to the LOOKAHEAD window**, unchanged by this work — see the
+  entry-index notes below. The filter narrows WHICH tracks a sweep reaches, not when.
+- **Every regression test was proven against the unfixed code**: 5 of the 6 assertions in
+  `sequenceFilter.test.ts` fail against it, and the sixth is the anti-over-correction guard that
+  must keep passing — song mode still plays every segment's own sequence. The `sequencerSync`
+  assertion is the same kind of guard on the other side of the wire. The §11.4 smoke step was
+  proven the same way, against a build whose predicate was mutated to return true: it failed with
+  "4 tracks sounded in sequence mode — only the active sequence's may".
+- **Measured in a real browser**: 69/69 smoke steps at ports 5342/5343, no console errors, up from 67. Two one-bar sequences carrying the SAME pad on the same four beats scheduled one track of
+  the two; switching the active sequence mid-transport, with `sequenceMeta` the only message sent,
+  moved playback to the other track at the next window; and a held erase swept ticks 960 and 1920
+  out of the active sequence and left the other sequence's bar whole. Against the mutated build
+  four tracks sounded. One smoke step is new and permanent.
 
 **Honest scope notes for the insert-defaults work:**
 
@@ -1093,6 +1177,6 @@ store — #133, #134 and #135 below. Nothing was added to the `check:orphans` al
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1842**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **67/67 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1849**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **69/69 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
