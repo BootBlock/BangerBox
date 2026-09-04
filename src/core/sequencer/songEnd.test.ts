@@ -104,12 +104,16 @@ describe('end of song — stop (spec §7.9, songLoopEnabled false)', () => {
     const core = new SchedulerCore();
     twoEntrySong(core);
     core.setTransport(true, true, 0);
-    core.tick(0);
-    core.pushLiveNote(40, 100, true, 0.5, 'ta');
-    core.pushLiveNote(40, 100, false, 1.0, 'ta');
+    // Run into the last entry first, so the note below is played after the scheduler has
+    // already crossed into it. A take from an earlier entry is merged by the per-pass flush
+    // (issue #94); what §7.9 pins is that whatever is STILL uncommitted at the end goes out
+    // with the end, which is the last chance to persist it.
+    for (let i = 0; i <= 60; i++) core.tick(i * 0.05); // to 3.0 s of a 4 s song
+    core.pushLiveNote(40, 100, true, 3.1, 'tb');
+    core.pushLiveNote(40, 100, false, 3.4, 'tb');
 
     let ending: SchedulerTickResult | null = null;
-    for (let i = 1; i <= 120; i++) {
+    for (let i = 61; i <= 120; i++) {
       const r = core.tick(i * 0.05);
       if (r.songEnded) {
         ending = r;

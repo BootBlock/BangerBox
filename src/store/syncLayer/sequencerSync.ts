@@ -9,7 +9,7 @@
  */
 import type { SchedulerClient, SchedulerSequenceMeta } from '@/core/sequencer';
 import { sequenceLengthTicks } from '@/core/sequencer/songMap';
-import type { MidiEvent } from '@/core/project/schemas';
+import { parseAutomationLaneKey, type AutomationPoint, type MidiEvent } from '@/core/project/schemas';
 import { useSequenceStore } from '../useSequenceStore';
 import { useTransportStore } from '../useTransportStore';
 import { combineUnsubscribers, type Unsubscribe } from './bridge';
@@ -99,8 +99,7 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
     diffTrackEvents(scheduler, trackId, [], events);
   }
   for (const [key, points] of Object.entries(useSequenceStore.getState().automation)) {
-    const { scope, ownerId, targetPath } = splitLaneKey(key);
-    scheduler.sendAutomationDiff(scope, ownerId, targetPath, points);
+    pushLane(scheduler, key, points);
   }
   pushGrooves(scheduler);
   scheduler.setSongLoop(useTransportStore.getState().songLoopEnabled);
@@ -206,16 +205,10 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
       (s) => s.automation,
       (automation) => {
         for (const [key, points] of Object.entries(automation)) {
-          if (points !== prevAutomation[key]) {
-            const { scope, ownerId, targetPath } = splitLaneKey(key);
-            scheduler.sendAutomationDiff(scope, ownerId, targetPath, points);
-          }
+          if (points !== prevAutomation[key]) pushLane(scheduler, key, points);
         }
         for (const key of Object.keys(prevAutomation)) {
-          if (!(key in automation)) {
-            const { scope, ownerId, targetPath } = splitLaneKey(key);
-            scheduler.sendAutomationDiff(scope, ownerId, targetPath, []); // lane cleared
-          }
+          if (!(key in automation)) pushLane(scheduler, key, []); // lane cleared
         }
         prevAutomation = automation;
       },
@@ -233,13 +226,16 @@ function pushGrooves(scheduler: SchedulerClient): void {
   }
 }
 
-/** Split a lane key `${scope}:${ownerId}:${targetPath}` (targetPath may contain colons). */
-function splitLaneKey(key: string): { scope: 'sequence' | 'track'; ownerId: string; targetPath: string } {
-  const first = key.indexOf(':');
-  const second = key.indexOf(':', first + 1);
-  return {
-    scope: key.slice(0, first) as 'sequence' | 'track',
-    ownerId: key.slice(first + 1, second),
-    targetPath: key.slice(second + 1),
-  };
+/**
+ * Forward one lane's points, or skip a key that is not a lane key at all (spec §7.8).
+ *
+ * The split lives in `parseAutomationLaneKey`, beside the `automationLaneKey` that builds
+ * it, rather than being open-coded here: this copy also cast the scope to its union without
+ * checking it, so a malformed key would have reached the worker claiming to be a scope the
+ * §7.1.3 guard then rejected, dropping the lane in silence (issue #96).
+ */
+function pushLane(scheduler: SchedulerClient, key: string, points: readonly AutomationPoint[]): void {
+  const lane = parseAutomationLaneKey(key);
+  if (!lane) return;
+  scheduler.sendAutomationDiff(lane.scope, lane.ownerId, lane.targetPath, points);
 }

@@ -51,6 +51,37 @@ export function automationLaneKey(
   return `${scope}:${ownerId}:${targetPath}`;
 }
 
+/** The three parts of an automation lane key (spec §4.2). */
+export interface AutomationLaneKeyParts {
+  readonly scope: AutomationPoint['scope'];
+  readonly ownerId: string;
+  readonly targetPath: string;
+}
+
+/**
+ * The inverse of {@link automationLaneKey} (spec §4.2), and the only place a lane key is
+ * taken apart (issue #96).
+ *
+ * It splits at the first two colons and no further, because a §7.8 target path contains
+ * colons of its own (`mixer.pad:<prog>:<idx>.sendLevels.2`, `insert:track:<id>:slot2.mix`)
+ * and only the scope and the owner id precede it. Counting separators rather than searching
+ * for one is sound because an `ownerId` never carries a colon — §1.3.1 makes every id a
+ * `crypto.randomUUID()`, and the scheduler's own §7.1.3 Zod guard is where that invariant
+ * is checked for anything crossing into the worker. `SchedulerCore` open-coded this slice
+ * twice, so a rule stated in two places could disagree with itself; it is stated here.
+ *
+ * Returns null for a string that is not a lane key at all.
+ */
+export function parseAutomationLaneKey(key: string): AutomationLaneKeyParts | null {
+  const firstColon = key.indexOf(':');
+  if (firstColon < 0) return null;
+  const secondColon = key.indexOf(':', firstColon + 1);
+  if (secondColon < 0) return null;
+  const scope = key.slice(0, firstColon);
+  if (scope !== 'sequence' && scope !== 'track') return null;
+  return { scope, ownerId: key.slice(firstColon + 1, secondColon), targetPath: key.slice(secondColon + 1) };
+}
+
 // --- Sequence (spec §4.2, §9.3 sequences) ----------------------------------------
 const timeSignatureSchema = z.object({
   numerator: rangedInt(TIME_SIG_NUMERATOR_RANGE),

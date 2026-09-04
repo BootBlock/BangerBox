@@ -57,6 +57,8 @@ export class AudioEngine {
   private readonly playheadReader: PlayheadReader;
   private readonly meterNodes: AudioWorkletNode[] = [];
   private readonly meterSinks: GainNode[] = [];
+  /** Observers of the dispatched batch — see {@link watchScheduledEvents}. Empty in use. */
+  private readonly eventObservers = new Set<(event: ScheduledEvent) => void>();
   /** Decoded program sample buffers keyed by sampleId (spec §9.4 decode-once). */
   private readonly programBuffers = new Map<string, AudioBuffer>();
   /** Reversed copies for §6 reversed layers, one per decoded buffer (spec §6). */
@@ -231,11 +233,29 @@ export class AudioEngine {
     return this.scheduledNotes;
   }
 
+  /**
+   * Watch what the dispatcher realises, and stop watching (spec §11.4). Returns an
+   * unsubscribe.
+   *
+   * The scheduled batch is the worker's only observable output, and nothing downstream of
+   * this point can stand in for it: a note reaches a voice, a click reaches the metronome
+   * and a ramp reaches an `AudioParam`, so measuring the audio says a sound happened but
+   * never which of the three the worker actually sent. A browser proof of what song mode
+   * SCHEDULES therefore has to read the batch itself (spec §13.5, issue #94).
+   */
+  watchScheduledEvents(observer: (event: ScheduledEvent) => void): () => void {
+    this.eventObservers.add(observer);
+    return () => {
+      this.eventObservers.delete(observer);
+    };
+  }
+
   dispose(): void {
     if (this.playheadRaf !== null && typeof cancelAnimationFrame === 'function') {
       cancelAnimationFrame(this.playheadRaf);
     }
     this.playheadRaf = null;
+    this.eventObservers.clear();
     this.scheduler.dispose();
     setAutomationClock(null);
     meterScope.setRegistry(null);
@@ -271,6 +291,10 @@ export class AudioEngine {
 
   /** Realise one scheduled event on the audio graph (spec §7.1.4 dispatcher). */
   private dispatchScheduledEvent(event: ScheduledEvent): void {
+    // Empty in production, so this costs one `size` read per scheduled event.
+    if (this.eventObservers.size > 0) {
+      for (const observer of this.eventObservers) observer(event);
+    }
     switch (event.kind) {
       case 'noteOn':
         this.triggerScheduledNote(event);

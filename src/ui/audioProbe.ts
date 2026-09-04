@@ -29,13 +29,25 @@ import {
   createDefaultSequence,
   createDefaultTrack,
   type EffectType,
+  automationLaneKey,
   type KeygroupZone,
+  type Sequence,
+  type Track,
   type VelocityLayer,
 } from '@/core/project/schemas';
 import { useMixerStore, useProjectStore, useSequenceStore, useTransportStore } from '@/store';
 import { commitTempo } from '@/store/tempo';
 import { decodeWav, encodeWav } from '@/core/audio/wav';
-import { createPlayheadSab, PlayheadReader, PlayheadWriter } from '@/core/sequencer';
+import {
+  createPlayheadSab,
+  PlayheadReader,
+  PlayheadWriter,
+  SCHEDULER_PROTOCOL_VERSION,
+  type ScheduledEvent,
+} from '@/core/sequencer';
+// Not through the barrel: the guard is the worker's own entry point, and the proof below
+// checks that module rather than a re-export of it (spec §7.1.3, issue #96).
+import { parseSchedulerRequest } from '@/core/sequencer/messages';
 import { MAX_MOD_ROUTES, type ModRoute } from '@/core/project/schemas';
 
 export interface RecordPlaybackResult {
@@ -120,6 +132,67 @@ export interface AudioProbe {
   bounceReachProof: () => Promise<BounceReachResult>;
   /** A gesture moves the graph and re-renders nothing (spec §3.3, §4.1, issue #27). */
   gestureRenderProof: () => Promise<GestureRenderResult>;
+  /** Song mode schedules everything sequence mode does (spec §7.9, issue #94). */
+  songParityProof: () => Promise<SongParityResult>;
+  /** One pad held on two tracks repeats on both, not twice on one (spec §7.3, issue #25). */
+  noteRepeatOwnerProof: () => Promise<NoteRepeatOwnerResult>;
+  /** The §7.1.3 handshake, and the guards tightened to the store's own ranges (issue #96). */
+  schedulerBoundaryProof: () => SchedulerBoundaryResult;
+  /** The §5.4 declick follows a pitch-modulated voice's real end (issue #87). */
+  declickContourProof: () => Promise<DeclickContourResult>;
+}
+
+/** Outcome of the §7.9 song-parity proof (see {@link songParityProof}). */
+export interface SongParityResult {
+  /** Automation ramps the worker emitted while the song played (spec §7.8). */
+  readonly automationRamps: number;
+  /** The lane climbs 0 → 1 across the song, so the last ramp is well above the first. */
+  readonly firstAutomationValue: number;
+  readonly lastAutomationValue: number;
+  /** Written notes on the erase-armed track, before and after the song swept them (§7.7). */
+  readonly eventsBeforeErase: number;
+  readonly eventsAfterErase: number;
+  /** Notes merged into the track by the per-pass flush WHILE the song was still rolling. */
+  readonly flushedWhilePlaying: number;
+  /** The tick that take landed on, and the pattern length it has to fall inside (§9.3). */
+  readonly flushedTick: number;
+  readonly patternLengthTicks: number;
+}
+
+/** Outcome of the §7.3 note-repeat ownership proof (see {@link noteRepeatOwnerProof}). */
+export interface NoteRepeatOwnerResult {
+  /** Sequence mode: repeat hits per track for ONE pad held on two tracks (issue #25). */
+  readonly sequenceHits: { readonly one: number; readonly two: number };
+  /** The velocity each track's hits carried — 100 and 60, never both the same (issue #25). */
+  readonly sequenceVelocities: { readonly one: number[]; readonly two: number[] };
+  /** Song mode: the same again, where note repeat used to produce nothing (issue #94). */
+  readonly songHits: { readonly one: number; readonly two: number };
+  /** Song mode: arpeggiator notes per track, which also produced nothing (issue #94). */
+  readonly songArpNotes: { readonly one: number[]; readonly two: number[] };
+}
+
+/** Outcome of the §7.1.3 worker-boundary proof (see {@link schedulerBoundaryProof}). */
+export interface SchedulerBoundaryResult {
+  /** The version this build attaches to the handshake, which the worker checks (issue #96). */
+  readonly attachedVersion: number | null;
+  /** A message the guard must still accept, beside the four it must now refuse. */
+  readonly acceptsInRangeTempo: boolean;
+  /**
+   * A handshake with NO version must still be accepted, so the skew reaches the reporting
+   * branch. Dropping it would leave the SAB uninstalled and nothing said (issue #96).
+   */
+  readonly acceptsVersionlessHandshake: boolean;
+  readonly refusals: { readonly name: string; readonly refused: boolean }[];
+}
+
+/** Outcome of the §5.4 declick proof (see {@link declickContourProof}). */
+export interface DeclickContourResult {
+  /** The unmodulated voice, whose region ends where the base rate says it does. */
+  readonly flatSeconds: number;
+  /** The same pad swept an octave DOWN: half the rate at note-on, so a longer region. */
+  readonly sweptSeconds: number;
+  /** The last audible sample of the swept voice — a declicked end lands on near-zero. */
+  readonly sweptFinalMagnitude: number;
 }
 
 /** Outcome of the §6 mod-matrix clamp proof (see {@link modClampProof}). */
@@ -1148,6 +1221,360 @@ async function gestureRenderProof(engine: AudioEngine): Promise<GestureRenderRes
   };
 }
 
+/** The id shape the §6/§9.3 default factories take, so a probe can mint one (spec §1.3.1). */
+type Uuid = ReturnType<typeof crypto.randomUUID>;
+
+/** Collect every event the dispatcher realises while the given body runs (spec §11.4). */
+async function captureScheduled(engine: AudioEngine, body: () => Promise<void>): Promise<ScheduledEvent[]> {
+  const seen: ScheduledEvent[] = [];
+  const stop = engine.watchScheduledEvents((event) => seen.push(event));
+  try {
+    await body();
+  } finally {
+    stop();
+  }
+  return seen;
+}
+
+/**
+ * Create the §9.3 rows a hydrated sequence and track need before anything records into them.
+ *
+ * `hydrate` is the DB → store load path and marks nothing dirty (spec §4.4), so a track that
+ * exists only in memory leaves a recorded take's autosave failing forever on the
+ * midi_events → tracks foreign key — see the note on `recordThenPlayback`.
+ */
+async function createSequenceRows(
+  projectId: string,
+  sequences: readonly { id: Uuid; name: string }[],
+  tracks: readonly { id: Uuid; sequenceId: string; name: string }[],
+): Promise<{ sequences: Record<string, Sequence>; tracks: Record<string, Track> }> {
+  const repos = getActiveRepositories();
+  const seqMap: Record<string, Sequence> = {};
+  const trackMap: Record<string, Track> = {};
+  for (const [position, spec] of sequences.entries()) {
+    const sequence = { ...createDefaultSequence(projectId, position, spec.name, spec.id), lengthBars: 1 };
+    seqMap[sequence.id] = sequence;
+    await repos.sequences.create({
+      id: sequence.id,
+      project_id: sequence.projectId,
+      position: sequence.position,
+      name: sequence.name,
+      length_bars: sequence.lengthBars,
+      time_sig_numerator: sequence.timeSig.numerator,
+      time_sig_denominator: sequence.timeSig.denominator,
+      tempo: sequence.tempo,
+      swing_amount: sequence.swingAmount,
+      swing_division: sequence.swingDivision,
+    });
+  }
+  for (const [position, spec] of tracks.entries()) {
+    const track = createDefaultTrack(spec.sequenceId, null, position, spec.name, 'drum', spec.id);
+    trackMap[track.id] = track;
+    await repos.tracks.create({
+      id: track.id,
+      sequence_id: track.sequenceId,
+      program_id: track.programId,
+      position: track.position,
+      name: track.name,
+      type: track.type,
+      mixer: '{}',
+    });
+  }
+  return { sequences: seqMap, tracks: trackMap };
+}
+
+/**
+ * Song mode does everything sequence mode does (spec §7.9, issue #94), over the real worker.
+ *
+ * A three-entry song of one-bar sequences — A, B, A — 2 s each at 120 bpm, so 6 s in all. It
+ * carries a sequence-scope automation lane on A, a live-erase arm on A's track, and a pad
+ * played into the MIDDLE entry. Three entries rather than two, because the per-pass flush
+ * fires as the scheduler crosses INTO the next segment: a take played in the last entry has
+ * no boundary left to be merged across, so it would prove nothing while the song still rolls.
+ *
+ * Before the fix `scheduleSong` emitted written notes and nothing else — the ramp count was
+ * 0, the erase never fired, and the take stayed uncommitted until the transport stopped, at
+ * a tick on the song timeline that its own one-bar pattern could never reach.
+ */
+async function songParityProof(engine: AudioEngine): Promise<SongParityResult> {
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  const seqA = crypto.randomUUID();
+  const seqB = crypto.randomUUID();
+  const trackA = crypto.randomUUID();
+  const trackB = crypto.randomUUID();
+  const rows = await createSequenceRows(
+    projectId,
+    [
+      { id: seqA, name: 'Song probe A' },
+      { id: seqB, name: 'Song probe B' },
+    ],
+    [
+      { id: trackA, sequenceId: seqA, name: 'Song probe A' },
+      { id: trackB, sequenceId: seqB, name: 'Song probe B' },
+    ],
+  );
+
+  const target = `mixer.track:${trackA}.level`;
+  const lane = automationLaneKey('sequence', seqA, target);
+  const erasedNote = 36;
+  useSequenceStore.getState().hydrate({
+    sequences: rows.sequences,
+    tracks: rows.tracks,
+    events: {
+      [trackA]: [0, 960, 1_920, 2_880].map((tickStart) => ({
+        id: crypto.randomUUID(),
+        tickStart,
+        durationTicks: 120,
+        note: erasedNote,
+        velocity: 100,
+        extra: null,
+      })),
+    },
+    automation: {
+      [lane]: [0, 3_840].map((tick, index) => ({
+        id: crypto.randomUUID(),
+        scope: 'sequence' as const,
+        ownerId: seqA,
+        targetPath: target,
+        tick,
+        value: index === 0 ? 0 : 1,
+        curve: 'linear' as const,
+      })),
+    },
+    songEntries: [
+      { id: crypto.randomUUID(), position: 0, sequenceId: seqA, repeats: 1 },
+      { id: crypto.randomUUID(), position: 1, sequenceId: seqB, repeats: 1 },
+      { id: crypto.randomUUID(), position: 2, sequenceId: seqA, repeats: 1 },
+    ],
+  });
+
+  const transport = useTransportStore.getState();
+  transport.setActiveSequenceId(seqA);
+  transport.setPlaybackMode('song');
+  transport.setSongLoopEnabled(false);
+  transport.setMetronomeEnabled(false);
+  transport.setCountInBars(0);
+  transport.setRecordMode('overdub');
+  commitTempo(120);
+  await delay(150);
+
+  const eventsBeforeErase = (useSequenceStore.getState().events[trackA] ?? []).length;
+  let flushedWhilePlaying = 0;
+  let flushedTick = -1;
+
+  const scheduled = await captureScheduled(engine, async () => {
+    useTransportStore.getState().setRecording(true);
+    // Armed BEFORE the transport rolls, or the first window is already scheduled and swept
+    // by the time the arm reaches the worker, leaving the note on tick 0 behind.
+    engine.scheduler.setLiveErase(trackA, erasedNote, true);
+    useTransportStore.getState().play();
+    // The pad is played into the MIDDLE entry (2–4 s), so the per-pass flush has the entry
+    // boundary at 4 s to merge it across while the transport is still rolling.
+    await delay(2_500);
+    engine.scheduler.sendLiveNote(40, 110, true, performance.now(), trackB);
+    await delay(200);
+    engine.scheduler.sendLiveNote(40, 110, false, performance.now(), trackB);
+    await delay(2_100); // past the 4 s boundary, still inside the 6 s song
+    const merged = useSequenceStore.getState().events[trackB] ?? [];
+    flushedWhilePlaying = merged.length;
+    flushedTick = merged[0]?.tickStart ?? -1;
+  });
+
+  useTransportStore.getState().stop();
+  useTransportStore.getState().setRecording(false);
+  engine.scheduler.setLiveErase(trackA, erasedNote, false);
+  await delay(250);
+
+  const ramps = scheduled.filter((e) => e.kind === 'automationRamp' && e.target === target);
+  return {
+    automationRamps: ramps.length,
+    firstAutomationValue: ramps[0]?.value ?? -1,
+    lastAutomationValue: ramps[ramps.length - 1]?.value ?? -1,
+    eventsBeforeErase,
+    eventsAfterErase: (useSequenceStore.getState().events[trackA] ?? []).length,
+    flushedWhilePlaying,
+    flushedTick,
+    patternLengthTicks: 3_840,
+  };
+}
+
+/**
+ * One pad held on two tracks (spec §7.3, issue #25), over the real worker, in both modes.
+ *
+ * §1.3.1 maps a pad index straight to a note number, so note 36 held on two tracks is two
+ * distinct held entries. Resolving a hit's owner by note number returned the first for both,
+ * so the second track sounded nothing and its part was recorded into the first. Song mode is
+ * the same test again, where note repeat and the arpeggiator never ran at all (issue #94).
+ */
+async function noteRepeatOwnerProof(engine: AudioEngine): Promise<NoteRepeatOwnerResult> {
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  const seqId = crypto.randomUUID();
+  const one = crypto.randomUUID();
+  const two = crypto.randomUUID();
+  const rows = await createSequenceRows(
+    projectId,
+    [{ id: seqId, name: 'Repeat probe' }],
+    [
+      { id: one, sequenceId: seqId, name: 'Repeat one' },
+      { id: two, sequenceId: seqId, name: 'Repeat two' },
+    ],
+  );
+  useSequenceStore.getState().hydrate({
+    sequences: rows.sequences,
+    tracks: rows.tracks,
+    events: {},
+    automation: {},
+    songEntries: [{ id: crypto.randomUUID(), position: 0, sequenceId: seqId, repeats: 1 }],
+  });
+
+  const transport = useTransportStore.getState();
+  transport.setActiveSequenceId(seqId);
+  transport.setMetronomeEnabled(false);
+  transport.setCountInBars(0);
+  transport.setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  commitTempo(120);
+
+  const note = 36;
+  const division = { value: 8, triplet: false } as const;
+  /** Hold the same note on both tracks and collect what the worker schedules for a bar. */
+  async function heldPass(mode: 'sequence' | 'song'): Promise<ScheduledEvent[]> {
+    useTransportStore.getState().setPlaybackMode(mode);
+    await delay(150);
+    const events = await captureScheduled(engine, async () => {
+      useTransportStore.getState().play();
+      await delay(100);
+      engine.scheduler.setNoteRepeat(true, division);
+      engine.scheduler.sendLiveNote(note, 100, true, performance.now(), one);
+      engine.scheduler.sendLiveNote(note, 60, true, performance.now(), two);
+      await delay(1_500);
+      engine.scheduler.sendLiveNote(note, 100, false, performance.now(), one);
+      engine.scheduler.sendLiveNote(note, 60, false, performance.now(), two);
+      useTransportStore.getState().stop();
+      await delay(200);
+    });
+    engine.scheduler.setNoteRepeat(false, division);
+    await delay(150);
+    return events;
+  }
+
+  const sequenceEvents = await heldPass('sequence');
+  const songEvents = await heldPass('song');
+
+  const arpConfig = { mode: 'up' as const, octaves: 1, gate: 0.5, division };
+  // A different two-note chord per track, so each track's arp is identifiable by pitch.
+  const chords: readonly (readonly [number, string])[] = [
+    [60, one],
+    [64, one],
+    [72, two],
+    [76, two],
+  ];
+  const songArpEvents = await captureScheduled(engine, async () => {
+    useTransportStore.getState().setPlaybackMode('song');
+    await delay(150);
+    useTransportStore.getState().play();
+    await delay(100);
+    engine.scheduler.setArpeggiator(true, arpConfig);
+    for (const [pitch, track] of chords) {
+      engine.scheduler.sendLiveNote(pitch, 100, true, performance.now(), track);
+    }
+    await delay(1_500);
+    for (const [pitch, track] of chords) {
+      engine.scheduler.sendLiveNote(pitch, 100, false, performance.now(), track);
+    }
+    useTransportStore.getState().stop();
+    await delay(200);
+  });
+  engine.scheduler.setArpeggiator(false, arpConfig);
+  await delay(150);
+
+  const hitsOn = (events: ScheduledEvent[], trackId: string) =>
+    events.filter((e) => e.kind === 'noteOn' && e.trackId === trackId && e.note === note);
+  const arpOn = (trackId: string) =>
+    [
+      ...new Set(
+        songArpEvents.filter((e) => e.kind === 'noteOn' && e.trackId === trackId).map((e) => e.note ?? -1),
+      ),
+    ].sort((a, b) => a - b);
+
+  return {
+    sequenceHits: { one: hitsOn(sequenceEvents, one).length, two: hitsOn(sequenceEvents, two).length },
+    sequenceVelocities: {
+      one: [...new Set(hitsOn(sequenceEvents, one).map((e) => e.velocity ?? -1))],
+      two: [...new Set(hitsOn(sequenceEvents, two).map((e) => e.velocity ?? -1))],
+    },
+    songHits: { one: hitsOn(songEvents, one).length, two: hitsOn(songEvents, two).length },
+    songArpNotes: { one: arpOn(one), two: arpOn(two) },
+  };
+}
+
+/**
+ * The §7.1.3 worker boundary (issue #96): the handshake carries a version, and the guard is
+ * no looser than the store it mirrors. Pure, but run here through the same module the real
+ * worker imports, so the check is against the shipped bundle rather than a Node build of it.
+ */
+function schedulerBoundaryProof(): SchedulerBoundaryResult {
+  const handshake = parseSchedulerRequest({
+    kind: 'init',
+    playheadSab: createPlayheadSab(),
+    protocolVersion: SCHEDULER_PROTOCOL_VERSION,
+  });
+  const refuses = (name: string, value: unknown) => ({
+    name,
+    refused: parseSchedulerRequest(value) === null,
+  });
+  return {
+    attachedVersion: (handshake?.kind === 'init' ? handshake.protocolVersion : null) ?? null,
+    acceptsInRangeTempo: parseSchedulerRequest({ kind: 'tempo', bpm: 128 }) !== null,
+    acceptsVersionlessHandshake:
+      parseSchedulerRequest({ kind: 'init', playheadSab: createPlayheadSab() }) !== null,
+    refusals: [
+      refuses('tempo bpm -1', { kind: 'tempo', bpm: -1 }),
+      refuses('swing amount 100', { kind: 'swing', amount: 100, division: 16 }),
+      refuses('sequenceMeta projectBpm -60', {
+        kind: 'sequenceMeta',
+        sequences: { a: { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: null } },
+        projectBpm: -60,
+        activeSequenceId: 'a',
+        playbackMode: 'sequence',
+      }),
+      refuses('trackId with a colon', { kind: 'liveErase', trackId: 'track:1', note: 36, active: true }),
+    ],
+  };
+}
+
+/**
+ * The §5.4 declick follows a pitch-modulated voice's real end (issue #87).
+ *
+ * A pitch envelope varies `source.detune` inside the AudioParam, and detune IS the playback
+ * rate, so the buffer runs out at a time no base-rate estimate predicts. Sweeping an octave
+ * DOWN halves the rate at note-on, so the swept voice must sound audibly longer than the flat
+ * one — and still land on near-silence rather than stepping to zero.
+ */
+async function declickContourProof(): Promise<DeclickContourResult> {
+  const build = (semitones: number) => {
+    const program = createDefaultDrumProgram('Declick probe');
+    const pad = createDefaultPad(0);
+    pad.layers = [layer({ sampleId: 'offline' })];
+    pad.pitchEnvSemitones = semitones;
+    pad.envelopes = {
+      ...pad.envelopes,
+      // Start a full octave flat and rise back to unity across the note.
+      pitch: { attack: 0, hold: 0, decay: 600, sustain: 0, release: 10, curve: 'linear' },
+      amp: { attack: 0, hold: 0, decay: 0, sustain: 1, release: 10, curve: 'linear' },
+    };
+    program.pads = [pad];
+    return program;
+  };
+  const options = { baseFrequency: 300, seconds: 0.9, sampleSeconds: 0.3 } as const;
+  const flat = await renderProgramNote(build(0), 0, 100, options);
+  const swept = await renderProgramNote(build(-12), 0, 100, options);
+  return {
+    flatSeconds: flat.soundingSeconds,
+    sweptSeconds: swept.soundingSeconds,
+    sweptFinalMagnitude: swept.finalMagnitude,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -1182,5 +1609,9 @@ export function installAudioProbe(engine: AudioEngine): void {
     tempoChangeProof: () => tempoChangeProof(engine),
     bounceReachProof,
     gestureRenderProof: () => gestureRenderProof(engine),
+    songParityProof: () => songParityProof(engine),
+    noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
+    schedulerBoundaryProof,
+    declickContourProof,
   };
 }

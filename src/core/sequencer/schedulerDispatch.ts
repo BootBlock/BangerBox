@@ -11,7 +11,7 @@
  * whole chain, and the exhaustive switch below means a new request kind cannot be added
  * without a handler.
  */
-import type { SchedulerRequest } from './messages';
+import { SCHEDULER_PROTOCOL_VERSION, type SchedulerRequest } from './messages';
 import type { SchedulerCore } from './schedulerCore';
 
 /** The worker-shell concerns dispatch cannot own: the SAB, the clock model, the wake loop. */
@@ -30,6 +30,20 @@ export function applySchedulerRequest(sink: SchedulerRequestSink, request: Sched
   const { core } = sink;
   switch (request.kind) {
     case 'init':
+      // spec §7.1.3 — the protocol is versioned, and this is where the two halves compare
+      // copies (issue #96). It reports rather than refuses: the Zod guard above already
+      // drops any message shape this build cannot read, so a mismatch costs those messages
+      // and no more, while refusing to start would cost the whole transport. Naming it is
+      // the point — the §11.4 smoke fails on a console error, so a skew fails the gate
+      // instead of presenting as a sequencer that quietly does nothing.
+      if (request.protocolVersion !== SCHEDULER_PROTOCOL_VERSION) {
+        console.error(
+          `[scheduler] protocol version mismatch: the main thread sent ` +
+            `${request.protocolVersion ?? 'no version'}, this worker speaks ` +
+            `${SCHEDULER_PROTOCOL_VERSION}. Messages either side does not recognise will ` +
+            `be dropped.`,
+        );
+      }
       sink.onInit(request.playheadSab);
       return;
     case 'clockSync':
