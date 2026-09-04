@@ -150,6 +150,8 @@ export interface AudioProbe {
   songEntryIndexProof: () => Promise<SongEntryIndexResult>;
   /** A slot's stored params are the ones the graph runs, fresh or reloaded (issue #131). */
   insertDefaultsProof: () => Promise<InsertDefaultsResult>;
+  /** Sequence mode plays ONE sequence, and erases in only that one (§7.7, §7.9, #132). */
+  sequenceFilterProof: () => Promise<SequenceFilterResult>;
 }
 
 /**
@@ -203,6 +205,24 @@ export interface SongEntryIndexResult {
   /** The playlist row §8.5.12 marked as playing while the repeated first entry ran. */
   readonly markedRowText: string;
   readonly markedRowIndex: number;
+}
+
+/** Outcome of the §7.9 sequence-filter proof (see {@link AudioProbe.sequenceFilterProof}). */
+export interface SequenceFilterResult {
+  /** The track on the sequence that is active when the transport rolls. */
+  readonly activeTrackId: string;
+  /** The track on the OTHER sequence — the one that must be silent and must not be erased. */
+  readonly otherTrackId: string;
+  /** Distinct track ids the worker scheduled notes for, before the active sequence changed. */
+  readonly scheduledBeforeSwitch: string[];
+  /** The same after switching the active sequence mid-transport, with no events re-sent. */
+  readonly scheduledAfterSwitch: string[];
+  /** Written ticks on each track before a live erase held over the pad both of them carry. */
+  readonly activeTicksBefore: number[];
+  readonly otherTicksBefore: number[];
+  /** What survived it. Only the active sequence's track may lose anything (spec §7.7). */
+  readonly activeTicksAfter: number[];
+  readonly otherTicksAfter: number[];
 }
 
 /** Outcome of the §8.2 announcer proof (see {@link announcementProof}). */
@@ -1664,6 +1684,127 @@ async function songEntryIndexProof(): Promise<SongEntryIndexResult> {
 }
 
 /**
+ * Sequence mode plays ONE sequence, over the real worker (spec §7.7, §7.9, issue #132).
+ *
+ * Two one-bar sequences, a track each, both carrying the SAME pad on the same four beats —
+ * the shape that makes the defect visible, since a pad held over Erase arms that pad on every
+ * track the UI offers it on. The unit tests drive `SchedulerCore` with an injected clock; what
+ * they cannot reach is the wire, and the defect lives on both sides of it: the sender forwards
+ * every track in the project and the schedule path chose none of them.
+ *
+ * Three things are read from one continuous session. What sounded before the active sequence
+ * changed; what sounded after it changed WITH NO EVENTS RE-SENT, which is the property that
+ * makes the worker-side filter the right one; and which track's notes a held erase took. Under
+ * the defect both tracks sound in the first window and both lose their notes in the third.
+ */
+async function sequenceFilterProof(engine: AudioEngine): Promise<SequenceFilterResult> {
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  const seqA = crypto.randomUUID();
+  const seqB = crypto.randomUUID();
+  const trackA = crypto.randomUUID();
+  const trackB = crypto.randomUUID();
+  const rows = await createSequenceRows(
+    projectId,
+    [
+      { id: seqA, name: 'Filter probe A' },
+      { id: seqB, name: 'Filter probe B' },
+    ],
+    [
+      { id: trackA, sequenceId: seqA, name: 'Filter probe A' },
+      { id: trackB, sequenceId: seqB, name: 'Filter probe B' },
+    ],
+  );
+  // §1.3.1 maps a pad index straight to a note number, so one pad on both tracks is note 36
+  // on both. One bar of 4/4 at 960 PPQN is 3840 ticks and, at 120 bpm, two seconds.
+  const pad = 36;
+  const ticks = [0, 960, 1_920, 2_880];
+  const beats = () =>
+    ticks.map((tickStart) => ({
+      id: crypto.randomUUID(),
+      tickStart,
+      durationTicks: 120,
+      note: pad,
+      velocity: 100,
+      extra: null,
+    }));
+  useSequenceStore.getState().hydrate({
+    sequences: rows.sequences,
+    tracks: rows.tracks,
+    events: { [trackA]: beats(), [trackB]: beats() },
+    automation: {},
+    songEntries: [],
+  });
+
+  const transport = () => useTransportStore.getState();
+  transport().setPlaybackMode('sequence');
+  transport().setMetronomeEnabled(false);
+  transport().setCountInBars(0);
+  transport().setRecording(false);
+  transport().setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  // Both sequences carry an explicit tempo, so switching between them mid-transport is not
+  // also a §7.2 tempo change: `createDefaultSequence` leaves `tempo` NULL, and a NULL follows
+  // `projects.bpm_default` (§9.3), which the §4.2 mirror would then re-derive at the switch.
+  transport().setActiveSequenceId(seqB);
+  commitTempo(120);
+  transport().setActiveSequenceId(seqA);
+  commitTempo(120);
+  await delay(150);
+
+  const distinctTracks = (events: ScheduledEvent[]): string[] =>
+    [...new Set(events.filter((e) => e.kind === 'noteOn').map((e) => e.trackId ?? ''))].sort();
+
+  transport().play();
+  const before = distinctTracks(
+    await captureScheduled(engine, async () => {
+      await delay(700); // beats 1 and 2 of sequence A's bar, plus the lookahead past them
+    }),
+  );
+  // The ONLY message a switch of active sequence sends is `sequenceMeta` (spec §7.1.3) — no
+  // `eventsDiff` follows it, because the worker already holds every track in the project.
+  transport().setActiveSequenceId(seqB);
+  await delay(250); // one LOOKAHEAD_MS plus wakes: the window already posted is not re-timed
+  const after = distinctTracks(
+    await captureScheduled(engine, async () => {
+      await delay(700);
+    }),
+  );
+  transport().stop();
+  await delay(200);
+
+  const ticksOf = (trackId: string): number[] =>
+    (useSequenceStore.getState().events[trackId] ?? []).map((e) => e.tickStart).sort((a, b) => a - b);
+  const activeTicksBefore = ticksOf(trackA);
+  const otherTicksBefore = ticksOf(trackB);
+
+  // A second roll for the erase, so the sweep is read against a known starting set rather than
+  // against whatever the switch above left behind. Sequence A is active again, and the pad is
+  // armed on BOTH tracks — what the §8.5.7 gesture does when one pad sits on two sequences.
+  transport().setActiveSequenceId(seqA);
+  await delay(150);
+  transport().play();
+  await delay(60); // past tick 0, so the arm lands before the beats it is meant to sweep
+  engine.scheduler.setLiveErase(trackA, pad, true);
+  engine.scheduler.setLiveErase(trackB, pad, true);
+  await delay(1_200); // most of the bar: beats 2, 3 and 4 pass under the held erase
+  engine.scheduler.setLiveErase(trackA, pad, false);
+  engine.scheduler.setLiveErase(trackB, pad, false);
+  await delay(250);
+  transport().stop();
+  await delay(200);
+
+  return {
+    activeTrackId: trackA,
+    otherTrackId: trackB,
+    scheduledBeforeSwitch: before,
+    scheduledAfterSwitch: after,
+    activeTicksBefore,
+    otherTicksBefore,
+    activeTicksAfter: ticksOf(trackA),
+    otherTicksAfter: ticksOf(trackB),
+  };
+}
+
+/**
  * One pad held on two tracks (spec §7.3, issue #25), over the real worker, in both modes.
  *
  * §1.3.1 maps a pad index straight to a note number, so note 36 held on two tracks is two
@@ -2070,6 +2211,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     liveEraseWrapProof: () => liveEraseWrapProof(engine),
     songEntryIndexProof: () => songEntryIndexProof(),
     insertDefaultsProof: () => insertDefaultsProof(),
+    sequenceFilterProof: () => sequenceFilterProof(engine),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,

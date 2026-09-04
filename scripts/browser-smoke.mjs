@@ -696,6 +696,46 @@ async function assertShellAndSelfTest(page, label) {
     await page.getByTestId('mode-tab-main').click();
   });
 
+  // §7.9 makes song mode the way to play several sequences in order, which only means
+  // something if sequence mode plays ONE. The unit tests drive the core with an injected
+  // clock; the wire is what they cannot reach, and the defect lived on both sides of it —
+  // the sender forwards every track in the project and the schedule path chose none of them.
+  // The middle assertion is the one that says the fix is on the right side: an active-sequence
+  // switch mid-transport sends `sequenceMeta` and no events, and the next window is right.
+  await step(`${label}: sequence mode plays one sequence and erases in it alone (#132)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.sequenceFilterProof());
+    if (r.activeTicksBefore.join(',') !== '0,960,1920,2880') {
+      throw new Error(`the probe wrote ticks [${r.activeTicksBefore.join(', ')}] — expected four beats`);
+    }
+    if (r.otherTicksBefore.join(',') !== '0,960,1920,2880') {
+      throw new Error(`the second sequence lost notes before the erase: [${r.otherTicksBefore.join(', ')}]`);
+    }
+    if (r.scheduledBeforeSwitch.join(',') !== r.activeTrackId) {
+      throw new Error(
+        `${r.scheduledBeforeSwitch.length} tracks sounded in sequence mode — only the active sequence's may`,
+      );
+    }
+    if (r.scheduledAfterSwitch.join(',') !== r.otherTrackId) {
+      throw new Error(
+        `switching the active sequence mid-transport scheduled [${r.scheduledAfterSwitch.join(', ')}] — expected the new sequence's track alone`,
+      );
+    }
+    const takenFromActive = r.activeTicksBefore.filter((tick) => !r.activeTicksAfter.includes(tick));
+    if (takenFromActive.length === 0) {
+      throw new Error('the held erase took nothing at all — the sweep reached no notes');
+    }
+    // The data-loss half: a pad held over Erase must not delete the same pad's notes out of a
+    // sequence that is not playing, and `result.erased` reaches the store, so it would persist.
+    if (r.otherTicksAfter.join(',') !== r.otherTicksBefore.join(',')) {
+      throw new Error(
+        `the erase deleted ticks [${r.otherTicksBefore.filter((t) => !r.otherTicksAfter.includes(t)).join(', ')}] from the sequence that was not playing`,
+      );
+    }
+    console.log(
+      `       sequence filter: scheduled 1 of 2 tracks, followed the switch, swept [${takenFromActive.join(', ')}] and left the other bar whole`,
+    );
+  });
+
   // Grid scroll and zoom are held outside React (spec §3.3, §8.4, issue #28). Driven through
   // real wheel events on the real canvas, with the frame time measured across them — §11.5's
   // budget is 60 fps, and a mode re-rendering per wheel event is what used to threaten it.

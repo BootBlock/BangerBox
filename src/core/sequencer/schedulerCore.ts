@@ -605,6 +605,33 @@ export class SchedulerCore {
     }
   }
 
+  /**
+   * Whether a track belongs to the pattern sequence mode is playing (spec §7.9, issue #132).
+   *
+   * The SCHEDULE path selects the sequence, and the sender ships the whole project. Both
+   * halves are deliberate. The worker has to hold every track because song mode selects a
+   * DIFFERENT one per segment ({@link emitSongPass}), so a filter in `sequencerSync` would
+   * empty song mode; and §7.1.3 makes `eventsDiff` "incremental — never full re-sends during
+   * playback", which a sender-side filter would breach at every switch of active sequence.
+   * The two filters are then one rule stated twice — each mode selects the sequence it is
+   * playing — rather than two rules that can disagree, which is how this defect survived.
+   *
+   * Because the map holds the project, a track whose sequence becomes active LATER is already
+   * correct at the moment the transport reaches it: the switch changes this one field and the
+   * next wake schedules the new pattern. A sender-side filter would instead leave a window
+   * between the switch and the arrival of that sequence's diffs in which the worker holds no
+   * events for the pattern it has just been told to play, and would schedule silence.
+   *
+   * A `null` active sequence matches nothing, so nothing sounds. §7.1.4 does not say, and the
+   * permissive reading is what made every track sound; `tracksOfSequence` already answers the
+   * same question with the empty list for the §8.5.1 track panel. It also matters more than a
+   * display default, because §7.7's live erase deletes what it sweeps: the safe reading of
+   * "no sequence selected" is that no track is armed, not that every track is.
+   */
+  private playsInSequenceMode(track: TrackEvents): boolean {
+    return track.sequenceId === this.activeSequenceId;
+  }
+
   // --- sequence-mode content (spec §7.1.4, §7.4, §7.1.5) ---
   private scheduleSequence(horizon: number, result: SchedulerTickResult): void {
     const from = this.nextScheduleTick;
@@ -625,6 +652,7 @@ export class SchedulerCore {
     if (to <= from) return;
 
     for (const [trackId, track] of this.tracks) {
+      if (!this.playsInSequenceMode(track)) continue;
       for (const windowed of eventsInWindow(track.events, (e) => e.tickStart, from, to, this.loop)) {
         this.emitNote(result, trackId, windowed.item, windowed.tick, windowed.linearTick);
       }
