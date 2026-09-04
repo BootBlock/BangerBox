@@ -5,7 +5,10 @@
  * `automationRamp` events the dispatcher applies as AudioParam ramps (spec §7.8, §7.1.3).
  * Dependency-free (spec §7.1.5) so the curve maths is exhaustively unit-testable.
  */
-import type { AutomationPoint } from '@/core/project/schemas';
+import { parseAutomationLaneKey, type AutomationPoint } from '@/core/project/schemas';
+
+/** A lane keyed as §7.8's `${scope}:${ownerId}:${targetPath}`, as both consumers hold it. */
+export type AutomationLanes = Iterable<readonly [string, readonly AutomationPoint[]]>;
 
 /** Interpolate between two values by the segment's curve at fraction `t` (0..1). */
 function interpolate(v0: number, v1: number, t: number, curve: AutomationPoint['curve']): number {
@@ -40,12 +43,50 @@ export function automationValueAt(points: readonly AutomationPoint[], tick: numb
  * Effective points for a target (spec §7.8): the track-scope lane overrides the
  * sequence-scope lane entirely while it has any points; otherwise the sequence lane plays.
  */
-export function resolveEffectivePoints(
+function resolveEffectivePoints(
   trackPoints: readonly AutomationPoint[] | undefined,
   sequencePoints: readonly AutomationPoint[] | undefined,
 ): readonly AutomationPoint[] {
   if (trackPoints && trackPoints.length > 0) return trackPoints;
   return sequencePoints ?? [];
+}
+
+/** Distinct automatable target paths across every lane (spec §7.8). */
+export function automatedTargets(lanes: AutomationLanes): Set<string> {
+  const targets = new Set<string>();
+  for (const [key] of lanes) {
+    const parts = parseAutomationLaneKey(key);
+    if (parts) targets.add(parts.targetPath);
+  }
+  return targets;
+}
+
+/**
+ * The lane that governs a target, and which scope it came from (spec §7.8).
+ *
+ * Track scope wins over sequence scope while both hold points. A sequence lane plays only
+ * while its own sequence is the pattern playing: the active sequence in sequence mode, the
+ * SEGMENT's sequence in song mode (spec §7.9), and the segment's own in a §9.5 render —
+ * resolving song mode against the transport's `activeSequenceId` would silence every other
+ * sequence's lane for the whole song. The scope comes back with the points because it decides
+ * which tick the value is sampled at, which is the one place §7.8's two scopes differ.
+ */
+export function laneForTarget(
+  lanes: AutomationLanes,
+  targetPath: string,
+  sequenceId: string | null,
+): { points: readonly AutomationPoint[]; scope: AutomationPoint['scope'] | null } {
+  let trackPoints: readonly AutomationPoint[] | undefined;
+  let sequencePoints: readonly AutomationPoint[] | undefined;
+  for (const [key, points] of lanes) {
+    const parts = parseAutomationLaneKey(key);
+    if (!parts || parts.targetPath !== targetPath) continue;
+    if (parts.scope === 'track') trackPoints = points;
+    else if (parts.ownerId === sequenceId) sequencePoints = points;
+  }
+  const points = resolveEffectivePoints(trackPoints, sequencePoints);
+  const scope = points.length === 0 ? null : points === trackPoints ? 'track' : 'sequence';
+  return { points, scope };
 }
 
 /** An automation ramp scheduled for the dispatcher (spec §7.1.3 `automationRamp`). */

@@ -64,7 +64,8 @@ describe('ramp helpers refuse a non-finite value or time (spec §4.3, issue #97)
   it('still schedules an ordinary in-range move', () => {
     const { gain, calls } = param();
     rampParamLinear(gain, 0.25, 1);
-    expect(calls.map((call) => call.method)).toEqual(['setValueAtTime', 'linearRampToValueAtTime']);
+    // The anchor is the timeline's own value at the ramp start, not a clock read (issue #134).
+    expect(calls.map((call) => call.method)).toEqual(['cancelAndHoldAtTime', 'linearRampToValueAtTime']);
     expect(calls[1]!.args[0]).toBe(0.25);
   });
 

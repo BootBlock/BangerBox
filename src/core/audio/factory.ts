@@ -35,9 +35,21 @@ export interface ChannelHandle {
   setMuted: (muted: boolean, when: number) => void;
   /** Send tap gain 0..1 for return index (spec §4.2 sendLevels). */
   setSendGain: (index: number, gain: number, when: number, dezipper?: boolean) => void;
-  /** Replace the serial insert chain (spec §5.7); disposes the previous chain. */
-  setInserts: (inserts: readonly InsertHandle[]) => void;
-  /** Set a live insert slot parameter (spec §5.7) — used by automation dispatch (§7.8). */
+  /**
+   * Replace the insert chain (spec §5.7); disposes the previous one.
+   *
+   * One entry per §4.2 slot, `null` where the slot holds no effect — the SAME shape as
+   * `ChannelStrip.inserts`, so a §7.8 `slotN` address means the same thing to the graph as
+   * it does to the store. Only the non-null entries are wired, in order.
+   */
+  setInserts: (inserts: readonly (InsertHandle | null)[]) => void;
+  /**
+   * Set a live insert slot parameter (spec §5.7) — used by automation dispatch (§7.8).
+   *
+   * `slot` is the §7.8 grammar's own 1-based slot number (`insert:<channel>:slot2.mix`), not
+   * an index into the wired chain: `InsertPanel` builds that address from the store's slot
+   * position, so an empty slot ahead of an effect must not shift the effect's address.
+   */
   setInsertParam: (slot: number, name: string, value: number, when: number) => void;
   /** Retune every insert's tempo-synced parameter after a tempo change (spec §5.7, §7.2). */
   setInsertTempo: (bpm: number, when: number) => void;
@@ -79,22 +91,26 @@ function createChannelStrip(context: BaseAudioContext, { id, sendCount }: StripO
     sends.push(send);
   }
 
-  let inserts: readonly InsertHandle[] = [];
+  /** One entry per §4.2 slot, `null` where the slot is empty — the store's own shape. */
+  let inserts: readonly (InsertHandle | null)[] = [];
 
-  const setInserts = (next: readonly InsertHandle[]): void => {
+  const setInserts = (next: readonly (InsertHandle | null)[]): void => {
     // Detach the current chain (or the direct passthrough) from `input` and `insertOut`.
     input.disconnect();
     for (const handle of inserts) {
+      if (handle === null) continue;
       handle.output.disconnect();
       handle.destroy();
     }
     inserts = next;
-    if (next.length === 0) {
+    // Empty slots hold their address but carry no signal, so the wiring skips them.
+    const chain = next.filter((handle): handle is InsertHandle => handle !== null);
+    if (chain.length === 0) {
       input.connect(insertOut);
     } else {
-      input.connect(next[0]!.input);
-      for (let i = 0; i < next.length - 1; i++) next[i]!.output.connect(next[i + 1]!.input);
-      next[next.length - 1]!.output.connect(insertOut);
+      input.connect(chain[0]!.input);
+      for (let i = 0; i < chain.length - 1; i++) chain[i]!.output.connect(chain[i + 1]!.input);
+      chain[chain.length - 1]!.output.connect(insertOut);
     }
   };
 
@@ -125,11 +141,12 @@ function createChannelStrip(context: BaseAudioContext, { id, sendCount }: StripO
       else setParamNow(send.gain, gain, when);
     },
     setInserts,
-    setInsertParam: (slot, name, value, when) => inserts[slot]?.setParam(name, value, when),
+    // spec §7.8 addresses a slot 1-based; an empty slot is still a slot (issue #134).
+    setInsertParam: (slot, name, value, when) => inserts[slot - 1]?.setParam(name, value, when),
     setInsertTempo: (bpm, when) => {
-      for (const handle of inserts) handle.setTempo(bpm, when);
+      for (const handle of inserts) handle?.setTempo(bpm, when);
     },
-    insertLatencySamples: () => inserts.reduce((total, h) => total + h.latencySamples, 0),
+    insertLatencySamples: () => inserts.reduce((total, h) => total + (h?.latencySamples ?? 0), 0),
 
     destroy: () => {
       setInserts([]); // disposes any live insert handles

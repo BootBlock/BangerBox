@@ -861,6 +861,88 @@ async function assertShellAndSelfTest(page, label) {
       }
     });
 
+    // A bounce is of the MIX, not of a dry sum of voices (issue #134). Each render below moves
+    // one §5.2 stage and is read back from the WAV it wrote, so every number is what the user
+    // would hear in the file. Un-fixed, all eight readings are the baseline.
+    await step(`${label}: a §9.5 bounce renders the §5.2 mixer (issue #134)`, async () => {
+      const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.bounceMixProof());
+      if (!(r.baseline.rms > 0.01)) {
+        throw new Error(`the baseline bounce rendered ${r.baseline.rms.toFixed(5)} RMS — nothing sounded`);
+      }
+      // Stage 5, the fader: 0.8 on the §8.5.6 law is −12 dB, so a quarter of the amplitude.
+      const levelRatio = r.levelled.rms / r.baseline.rms;
+      if (!(levelRatio > 0.18 && levelRatio < 0.33)) {
+        throw new Error(
+          `a −12 dB track fader rendered at ${levelRatio.toFixed(3)} of unity — expected about 0.25`,
+        );
+      }
+      // Stage 5, pan: hard right empties the left channel outright.
+      if (!(r.panned.leftRms < r.baseline.leftRms * 0.02)) {
+        throw new Error(
+          `a hard-right track left ${r.panned.leftRms.toFixed(5)} RMS in the left channel (baseline ${r.baseline.leftRms.toFixed(5)})`,
+        );
+      }
+      if (!(r.panned.rightRms > r.baseline.rightRms)) {
+        throw new Error('a hard-right track did not gain in the right channel');
+      }
+      // Stage 6, a track insert: a 100 Hz lowpass against a 1 kHz tone.
+      if (!(r.inserted.rms < r.baseline.rms * 0.2)) {
+        throw new Error(
+          `a 100 Hz lowpass insert left ${(r.inserted.rms / r.baseline.rms).toFixed(3)} of a 1 kHz tone`,
+        );
+      }
+      // Stages 7 and 8, a send and its return: the delayed copy lands where nothing else is.
+      if (!(r.baseline.gapRms < 0.001)) {
+        throw new Error(`the baseline is not silent between beats (${r.baseline.gapRms.toFixed(5)} RMS)`);
+      }
+      if (!(r.sent.gapRms > 0.01)) {
+        throw new Error(`an open send returned ${r.sent.gapRms.toFixed(5)} RMS into the beat gap`);
+      }
+      // Stage 9, a §7.8 lane on the master fader: near silence at the bar's start, unity at
+      // its end. The first beat must also be far below where the same beat sat unautomated.
+      if (!(r.automated.firstBeatRms < r.baseline.firstBeatRms * 0.1)) {
+        throw new Error(
+          `the automated first beat rendered at ${(r.automated.firstBeatRms / r.baseline.firstBeatRms).toFixed(3)} of unautomated — the lane did not ramp`,
+        );
+      }
+      if (!(r.automated.lastBeatRms > r.automated.firstBeatRms * 5)) {
+        throw new Error(
+          `the automation lane went ${r.automated.firstBeatRms.toFixed(5)} → ${r.automated.lastBeatRms.toFixed(5)} RMS across the bar`,
+        );
+      }
+      // The other half of the §7.8 grammar: a lane on the track insert's own cutoff. It
+      // addresses a slot 1-based over the §4.2 slot array, which is what the graph's chain
+      // used to disagree with.
+      if (!(r.insertAutomated.lastBeatRms > r.insertAutomated.firstBeatRms * 5)) {
+        throw new Error(
+          `an insert cutoff lane went ${r.insertAutomated.firstBeatRms.toFixed(5)} → ${r.insertAutomated.lastBeatRms.toFixed(5)} RMS — the §7.8 slot address reached no effect`,
+        );
+      }
+      // §9.5's stem is post-insert, pre-master: the master strip is cut to −42 dB AND
+      // lowpassed, so a full mix collapses where the stem of the same project does not.
+      if (!(r.masteredMix.rms < r.sent.rms * 0.1)) {
+        throw new Error(
+          `the master strip left ${(r.masteredMix.rms / r.sent.rms).toFixed(3)} of the mix — stage 9 did not render`,
+        );
+      }
+      const stemRatio = r.stem.rms / r.sent.rms;
+      if (!(stemRatio > 0.9 && stemRatio < 1.1)) {
+        throw new Error(
+          `the stem rendered at ${stemRatio.toFixed(3)} of the pre-master mix — it is not pre-master`,
+        );
+      }
+      // And the stem carries the return its own sends drove, or a stem set cannot sum to the mix.
+      if (!(r.stem.gapRms > 0.01)) {
+        throw new Error(`the stem dropped its send return (${r.stem.gapRms.toFixed(5)} RMS in the gap)`);
+      }
+      console.log(
+        `       bounce mix: level ×${levelRatio.toFixed(3)}, insert ×${(r.inserted.rms / r.baseline.rms).toFixed(3)}, ` +
+          `send gap ${r.sent.gapRms.toFixed(4)}, master lane ${r.automated.firstBeatRms.toFixed(4)} → ${r.automated.lastBeatRms.toFixed(4)}, ` +
+          `insert lane ${r.insertAutomated.firstBeatRms.toFixed(4)} → ${r.insertAutomated.lastBeatRms.toFixed(4)}, ` +
+          `stem ×${stemRatio.toFixed(3)} vs mastered ×${(r.masteredMix.rms / r.sent.rms).toFixed(4)}`,
+      );
+    });
+
     await step(`${label}: .mpcweb export/import round-trips a project (spec §12 exit)`, async () => {
       const result = await page.evaluate(() => globalThis.__bangerboxAudioProbe.packRoundTrip());
       if (!result.imported) throw new Error('import did not open a fresh project');

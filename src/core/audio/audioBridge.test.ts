@@ -15,7 +15,8 @@ function recordingChannel(id: string) {
     setPan: (...a: unknown[]) => calls.push(['setPan', ...a]),
     setMuted: (...a: unknown[]) => calls.push(['setMuted', ...a]),
     setSendGain: (...a: unknown[]) => calls.push(['setSendGain', ...a]),
-    setInserts: (inserts: unknown[]) => calls.push(['setInserts', inserts.length]),
+    // The shape matters, not just the count: `null` marks a slot that holds no effect.
+    setInserts: (inserts: unknown[]) => calls.push(['setInserts', inserts.map((i) => i !== null)]),
     insertLatencySamples: () => 0,
   } as unknown as ChannelHandle;
   return { handle, calls };
@@ -66,15 +67,18 @@ describe('audio bridge (spec §4.3, §5.2)', () => {
     expect(mutedOf(master)).toBe(false); // master unaffected by solo
   });
 
-  it('rebuilds a channel insert chain from enabled slot state (spec §5.7)', () => {
+  // One handle per §4.2 slot, `null` where the slot is empty, so a §7.8 `slotN` address
+  // means the same thing to the graph as it does to the store (issue #134).
+  it('rebuilds a channel insert chain, one entry per slot (spec §5.7, §7.8)', () => {
     const t1 = recordingChannel('track:t1');
     const { context } = createFakeAudioContext();
     const bridge = createAudioBridge({ graph: fakeGraph({ 'track:t1': t1 }), context });
     bridge.setChannelInserts('track:t1', [
       { id: 'a', effectType: 'filter', enabled: true, params: {} },
-      { id: 'b', effectType: null, enabled: false, params: {} }, // empty slot skipped
+      { id: 'b', effectType: null, enabled: false, params: {} }, // empty slot, still a slot
+      { id: 'c', effectType: 'delay', enabled: true, params: {} },
     ]);
-    expect(t1.calls).toEqual([['setInserts', 1]]);
+    expect(t1.calls).toEqual([['setInserts', [true, false, true]]]);
   });
 
   it('resyncAll flushes existing strips into the graph without throwing', () => {

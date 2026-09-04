@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { AutomationPoint } from '@/core/project/schemas';
+import { automationLaneKey, type AutomationPoint } from '@/core/project/schemas';
 import {
+  automatedTargets,
   automationRampForWindow,
   automationValueAt,
+  laneForTarget,
   mergeRecordedPoint,
-  resolveEffectivePoints,
   shouldRecordSample,
 } from './automation';
 
@@ -62,18 +63,55 @@ describe('automationValueAt (spec §7.8)', () => {
   });
 });
 
-describe('resolveEffectivePoints (spec §7.8 track wins)', () => {
+// The lane-selection rule, driven the way both callers hold it — a keyed map. `SchedulerCore`
+// and the §9.5 bounce read this one function, so the override, the ownership and the reported
+// scope are pinned once rather than restated on either side.
+describe('laneForTarget (spec §7.8 track wins, sequence lanes are owned)', () => {
+  const TARGET = 'mixer.master.level';
   const trackPts = [point(0, 1, 'linear', 'track')];
   const seqPts = [point(0, 0.5, 'linear', 'sequence')];
+  const trackKey = automationLaneKey('track', 't1', TARGET);
+  const seqKey = automationLaneKey('sequence', 'o', TARGET);
 
-  it('prefers track scope when it has points', () => {
-    expect(resolveEffectivePoints(trackPts, seqPts)).toBe(trackPts);
+  it('prefers track scope when it has points, and says so', () => {
+    const lanes = Object.entries({ [trackKey]: trackPts, [seqKey]: seqPts });
+    expect(laneForTarget(lanes, TARGET, 'o')).toEqual({ points: trackPts, scope: 'track' });
   });
 
-  it('falls back to sequence scope when track is empty or absent', () => {
-    expect(resolveEffectivePoints([], seqPts)).toBe(seqPts);
-    expect(resolveEffectivePoints(undefined, seqPts)).toBe(seqPts);
-    expect(resolveEffectivePoints(undefined, undefined)).toEqual([]);
+  it('falls back to sequence scope when the track lane is empty or absent', () => {
+    expect(laneForTarget(Object.entries({ [seqKey]: seqPts }), TARGET, 'o')).toEqual({
+      points: seqPts,
+      scope: 'sequence',
+    });
+    const empty = Object.entries({ [trackKey]: [], [seqKey]: seqPts });
+    expect(laneForTarget(empty, TARGET, 'o')).toEqual({ points: seqPts, scope: 'sequence' });
+  });
+
+  // A sequence lane plays only while its OWN sequence is the pattern playing (spec §7.9).
+  it('ignores a sequence lane belonging to another sequence', () => {
+    const lanes = Object.entries({ [seqKey]: seqPts });
+    expect(laneForTarget(lanes, TARGET, 'other')).toEqual({ points: [], scope: null });
+  });
+
+  it('reports no lane at all for an unautomated target', () => {
+    expect(laneForTarget([], TARGET, 'o')).toEqual({ points: [], scope: null });
+    const elsewhere = Object.entries({ [automationLaneKey('sequence', 'o', 'mixer.master.pan')]: seqPts });
+    expect(laneForTarget(elsewhere, TARGET, 'o')).toEqual({ points: [], scope: null });
+  });
+});
+
+describe('automatedTargets (spec §7.8)', () => {
+  it('collects each addressed target once, whatever scope reached it', () => {
+    const lanes = Object.entries({
+      [automationLaneKey('sequence', 'o', 'mixer.master.level')]: [],
+      [automationLaneKey('track', 't1', 'mixer.master.level')]: [],
+      [automationLaneKey('track', 't1', 'mixer.master.pan')]: [],
+    });
+    expect([...automatedTargets(lanes)].sort()).toEqual(['mixer.master.level', 'mixer.master.pan']);
+  });
+
+  it('skips a key that is not a §7.8 lane key', () => {
+    expect([...automatedTargets(Object.entries({ nonsense: [] }))]).toEqual([]);
   });
 });
 

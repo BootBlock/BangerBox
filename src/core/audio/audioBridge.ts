@@ -32,7 +32,18 @@ interface BridgeTarget {
 
 /** A bridge that can also flush the full current mixer state to the graph (start-up). */
 export type AudioBridge = SyncBridge & {
-  resyncAll: () => void;
+  /**
+   * Flush every §4.2 strip onto the channels the graph already holds (start-up, and the
+   * §9.5 bounce's one pass over the offline graph).
+   *
+   * `includeChannel` exists for the §9.5 stem, which §9.5 places "post-insert, pre-master":
+   * the render leaves the master strip out and the master bus keeps the unity pass-through
+   * `createChannelStrip` builds. Excluding it by not applying it, rather than by rewiring the
+   * graph, keeps §5.2's topology identical in every render — `bouncePlan` owns the rule, and
+   * the §7.8 automation pass reads the same predicate so a lane cannot ride a fader the
+   * static pass deliberately left alone.
+   */
+  resyncAll: (includeChannel?: (channelId: string) => boolean) => void;
   /** Apply a scheduled automation ramp to a registered target (spec §7.8). */
   applyAutomation: (targetPath: string, value: number, when: number, rampEnd: number) => void;
 };
@@ -45,22 +56,33 @@ function applyInserts(
   // A freshly built insert starts at the tempo the transport is already at, so a synced
   // delay (spec §5.7) is in time from its first repeat rather than from the next tempo edit.
   const bpm = useTransportStore.getState().bpm;
-  const handles = inserts
-    .filter((slot) => slot.effectType !== null)
-    .map((slot) => {
-      const handle = createInsert(context, slot.effectType!, slot.params, bpm);
-      handle.setEnabled(slot.enabled);
-      return handle;
-    });
+  // One handle per §4.2 slot, `null` for an empty one, so the graph's slot list is the
+  // store's slot list and a §7.8 `slotN` address means the same thing on both sides. The
+  // chain used to be compacted, which shifted every effect behind an empty slot out from
+  // under its own address (issue #134).
+  const handles = inserts.map((slot) => {
+    if (slot.effectType === null) return null;
+    const handle = createInsert(context, slot.effectType, slot.params, bpm);
+    handle.setEnabled(slot.enabled);
+    return handle;
+  });
   channel.setInserts(handles);
 }
 
 export function createAudioBridge({ graph, context, voicePool = () => null }: BridgeTarget): AudioBridge {
-  /** Re-evaluate solo-in-place and apply the resulting mutes to every graph channel. */
-  const applyEffectiveMutes = (): void => {
+  /**
+   * Re-evaluate solo-in-place and apply the resulting mutes to every graph channel.
+   *
+   * The solo evaluation always sees the WHOLE mixer, even when `includeChannel` narrows what
+   * is written: solo-in-place is a statement about the other strips, so judging it on a subset
+   * would make a §9.5 stem of a soloed track silence itself.
+   */
+  const applyEffectiveMutes = (includeChannel: (channelId: string) => boolean = () => true): void => {
     const mutes = computeEffectiveMutes(useMixerStore.getState().channels);
     const now = context.currentTime;
-    for (const [id, muted] of Object.entries(mutes)) graph.getChannel(id)?.setMuted(muted, now);
+    for (const [id, muted] of Object.entries(mutes)) {
+      if (includeChannel(id)) graph.getChannel(id)?.setMuted(muted, now);
+    }
   };
 
   const bridge: AudioBridge = {
@@ -100,6 +122,20 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
       bridge.applyAutomation(targetPath, value, now, now);
     },
 
+    /**
+     * The §7.1.3 `rampEnd` is deliberately NOT consumed, and the parameter stays in the
+     * signature because the protocol carries it (spec §7.1.3, §7.8).
+     *
+     * Every write below goes through the §4.3 dezipper, which settles over `PARAM_RAMP_MS`.
+     * Gliding across the whole window instead is not expressible for half the targets: pan
+     * and every §5.7 effect core ramp with `setTargetAtTime`, which has no arrival time at
+     * all — its shape is a settle, not a ramp. Making the automation window the one writer
+     * to these params with a different §4.3 shape, for half of them only, would be worse than
+     * arriving early: `PARAM_RAMP_MS` (10 ms) is shorter than `SCHEDULER_INTERVAL_MS` (25 ms),
+     * so the param holds the window's OWN value for the remainder rather than lagging it.
+     * The §9.5 bounce emits the same windows through the same helpers, so what it renders is
+     * what live playback sounds like (issue #134).
+     */
     applyAutomation: (targetPath, value, when) => {
       const target = parseParamTarget(targetPath);
       if (!target) return;
@@ -148,10 +184,11 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
       }
     },
 
-    resyncAll: () => {
+    resyncAll: (includeChannel = () => true) => {
       const channels = useMixerStore.getState().channels;
       const now = context.currentTime;
       for (const [id, strip] of Object.entries(channels)) {
+        if (!includeChannel(id)) continue;
         const channel = graph.getChannel(id);
         if (!channel) continue; // track/pad channels are built lazily on first use
         channel.setLevel(strip.level, now, false);
@@ -159,7 +196,7 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
         strip.sendLevels.forEach((level, i) => channel.setSendGain(i, level, now, false));
         applyInserts(context, channel, strip.inserts);
       }
-      applyEffectiveMutes();
+      applyEffectiveMutes(includeChannel);
     },
   };
 
