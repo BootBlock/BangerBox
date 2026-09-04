@@ -6,8 +6,8 @@ reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the accessibility work merged to `main` (`--no-ff`). All eight §12 phases were already
 complete; this was a defect closure against §2.1/§8.2/§9.7, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1812 unit tests**, `test:e2e` real-browser smoke
-(dev + offline, **55/55 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+`config.phase` remains **"8"**. Suite: **1815 unit tests**, `test:e2e` real-browser smoke
+(dev + offline, **59/59 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
 **The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
@@ -86,6 +86,16 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
     is not an improvement.
   - **§9.7's warning is readable, dismissible text in every mode**, never a `title`: a `title`
     is unreachable by keyboard and, on the §1.1 tablet, unreachable at all.
+  - **A toast is announced by `ToastViewport` and by NOTHING else.** Eleven call sites used to
+    `announce(message)` right after `pushToast(message, …)`; at `warning` tone that put the
+    identical sentence in the polite AND the assertive region at once. A call site that raises
+    a toast says nothing itself. `announce` direct is for a message with NO toast — the Grid's
+    automation refusal and the §8.5.7 arm-for-pad-grid message are the only two left.
+  - **A domain token is never suffixed onto a value with no reading.** "— pan" reads as a
+    measurement in pans. Non-finite falls through to the unit-less em dash or infinity symbol.
+  - **A shell notice announces what the DEVICE raises, not what is still on screen**, so a
+    dismissal does not re-read the survivor.
+  - **A §11.4 probe restores what it found, and a probe with no smoke caller guards nothing.**
 
 - **(am) — the sequencer-correctness closure (§7.1.3, §7.3, §7.7, §7.8, §7.9).** The ⚑ items
   below are settled policy a new session should treat as binding, not as spec text:
@@ -749,8 +759,10 @@ replaced by `SOFT_CAPABILITY_NOTICES`, which real UI reads. Nothing was added to
   needed. `role="toolbar"` now appears nowhere in the codebase.
 - **Every regression test was proven against the unfixed code**: 13 mutations, 29 failing
   assertions, none of the 13 unnoticed.
-- **Measured in a real browser**: 27/27 driver checks at port 5342 and 55/55 smoke steps at
-  5343/5344, no console errors. The announcer existed while the start gate was up; the running
+- **Measured in a real browser**: 27/27 driver checks at port 5342 and 59/59 smoke steps at
+  5343/5344, no console errors. Two of those steps are new and permanent: the announcer's two
+  channels under real toasts, and the §9.7 warning's text, its Dismiss name and its place in the
+  tab order. The announcer existed while the start gate was up; the running
   application held exactly two live regions with three toasts on screen; the skip link was the
   first tab stop and reached the panel in one press where the bar is 14 stops deep; focus was
   already on the panel when the shell appeared; the Tempo knob stepped 120 → 121 on an arrow key;
@@ -873,6 +885,6 @@ replaced by `SOFT_CAPABILITY_NOTICES`, which real UI reads. Nothing was added to
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1812**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **55/55 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1815**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **59/59 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.

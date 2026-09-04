@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateCapabilities } from '@/core/platform/capabilities';
 import type { SoftCapabilities } from '@/core/platform/capabilities';
 import { useUIStore } from '@/store';
+import { LiveRegion } from '@/ui/primitives';
 import { PlatformNotices } from './PlatformNotices';
 
 const ALL_HARD = {
@@ -101,6 +102,28 @@ describe('PlatformNotices (spec §2.1, §9.7, issue #51)', () => {
     // Looper each already do exactly that. A shell strip would repeat it in eleven modes
     // where nothing can be done about it.
     expect(screen.queryByTestId('platform-notices')).not.toBeInTheDocument();
+  });
+
+  it('does not re-announce a surviving notice when its neighbour is dismissed', async () => {
+    const user = userEvent.setup();
+    setCapabilities({ wakeLock: false });
+    useUIStore.getState().setStoragePersisted(false);
+    render(
+      <>
+        <LiveRegion />
+        <PlatformNotices />
+      </>,
+    );
+
+    const announced = () => screen.getByTestId('live-region').textContent ?? '';
+    const first = announced();
+    // Both conditions are named once, when the DEVICE raises them.
+    expect(first).toMatch(/deleted to reclaim space/i);
+    expect(first).toMatch(/screen may dim/i);
+
+    await user.click(screen.getByRole('button', { name: /^Dismiss Your work/ }));
+    // Dismissing is a UI act; the device has not changed, so nothing is said again.
+    expect(announced()).toBe(first);
   });
 
   it('carries no live region of its own (spec §8.2, issue #34)', () => {

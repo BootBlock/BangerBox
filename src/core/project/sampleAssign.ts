@@ -5,9 +5,10 @@
  * at the Browser, Program Edit and Sample Edit call sites.
  *
  * The single-sample entry points are thin over the {@link useProgramStore} actions, which own
- * the §6 validation. What lives here instead is the announcement — an assignment is a change
- * the user cannot see if their focus is on the sample list rather than the pad grid, so it is
- * spoken through the app's single `LiveRegion` (spec §8.2) as well as shown as a toast.
+ * the §6 validation. What lives here instead is the reporting — an assignment is a change the
+ * user cannot see if their focus is on the sample list rather than the pad grid, so it raises a
+ * toast, and `ToastViewport` announces that toast through the single §8.2 announcer. Announcing
+ * here as well said it twice, in two regions at once (issue #34).
  *
  * The chop entry points are the reason this module exists rather than the UI calling the store
  * directly: a chop lands dozens of samples, and §4.5 gives the user one Ctrl+Z for the one
@@ -24,28 +25,22 @@ import {
 } from '@/core/project/schemas';
 import { commitAsOne } from '@/store/commit';
 import { useProgramStore, useUIStore, type AssignResult } from '@/store';
-// The module, not the `@/ui/primitives` barrel: importing the barrel would pull React, motion
-// and the whole primitive graph into every consumer of `@/core/project`. `engine.ts` reaches
-// for `meterScope` the same way, and for the same reason.
-import { announce } from '@/ui/primitives/LiveRegion';
 
 /** Where a single sample is being assigned (spec §6 — a program has pads or zones, never both). */
 export type AssignTarget = { readonly kind: 'pad'; readonly padIndex: number } | { readonly kind: 'zone' };
 
 /**
- * Report an assignment to the user: a toast they can read and, because the pad grid they just
- * changed may be off screen or unfocused, a polite announcement through the single §8.2
- * LiveRegion. Refusals carry the store's own sentence, which names the §6 rule that refused.
+ * Report an assignment to the user as a toast, which the §8.2 announcer then speaks — because
+ * the pad grid they just changed may be off screen or unfocused. Refusals carry the store's own
+ * sentence, which names the §6 rule that refused.
  */
 function report(result: AssignResult, success: string): boolean {
   const { pushToast } = useUIStore.getState();
   if (!result.ok) {
     pushToast(result.reason, 'warning');
-    announce(result.reason);
     return false;
   }
   pushToast(success, 'success');
-  announce(success);
   return true;
 }
 
@@ -91,7 +86,6 @@ export function assignSlicesToPads(
   if (program?.type !== 'drum') {
     const reason = 'Chop slices need a drum program to land on.';
     useUIStore.getState().pushToast(reason, 'warning');
-    announce(reason);
     return 0;
   }
   const start = Math.max(PAD_INDEX_RANGE[0], Math.trunc(firstPadIndex));
@@ -118,7 +112,6 @@ export function assignSlicesToPads(
       ? `${placed.length} slices assigned from pad ${start + 1}.`
       : `${placed.length} of ${slices.length} slices assigned from pad ${start + 1}; the rest ran past pad 128.`;
   useUIStore.getState().pushToast(message, placed.length === slices.length ? 'success' : 'warning');
-  announce(message);
   return placed.length;
 }
 
@@ -143,6 +136,5 @@ export function createProgramFromSlices(name: string, slices: readonly SampleRow
   store.setActivePad(0);
   const message = `${placed.length} slices assigned to a new program, ${name}.`;
   useUIStore.getState().pushToast(message, 'success');
-  announce(message);
   return program.id;
 }

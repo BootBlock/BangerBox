@@ -51,7 +51,11 @@ export function PlatformNotices() {
 
   // Announced through the one §8.2 announcer rather than by giving the strip a live role of
   // its own, which is the competing-region defect issue #34 is about.
-  useAnnounce(visible.length > 0 ? visible.map((notice) => notice.title).join('. ') : null);
+  //
+  // Built from every notice the DEVICE raises, not from the visible ones: this says what the
+  // device is doing, and dismissing a notice does not change that. Filtering first re-read
+  // the surviving notice every time the user dismissed its neighbour.
+  useAnnounce(notices.length > 0 ? notices.map((notice) => notice.title).join('. ') : null);
 
   if (visible.length === 0) return null;
 

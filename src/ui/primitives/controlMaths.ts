@@ -44,6 +44,13 @@ export function quantiseToStep(value: number, range: ControlRange, step: number)
 /** en-GB minus sign (U+2212) — typographically correct, and what `Intl` emits (spec §1.3.1). */
 const MINUS = '−';
 
+/**
+ * The tokens below that name a DOMAIN rather than a unit. They are the ones a non-finite
+ * value cannot be suffixed with, since "— pan" reads as a measurement in pans. `faderLevel`
+ * is absent deliberately: the §8.5.6 law answers for its own non-finite position.
+ */
+const DOMAINS: ReadonlySet<string> = new Set(['pan', 'fraction', 'ratio']);
+
 function withSign(text: string, negative: boolean): string {
   return negative ? `${MINUS}${text}` : text;
 }
@@ -74,10 +81,14 @@ function withSign(text: string, negative: boolean): string {
  * has to read the same way on a Mixer knob and on an XYFX axis (spec §3.6).
  */
 export function formatValueText(value: number, unit: string): string {
-  // First, because the fader law owns what a non-finite POSITION means — true silence,
-  // not the em dash a bare number would take (§8.5.6, issue #97). It is read, never
-  // restated here.
+  // The fader law owns what a non-finite POSITION means — true silence, not the em dash a
+  // bare number takes (§8.5.6, issue #97). It is read here, never restated.
   if (unit === 'faderLevel') return formatValueText(faderLevelToDb(value), 'dB');
+
+  // A domain token is not a unit, so it must not be appended like one: "— pan" and
+  // "∞ fraction" are not readings of anything. A value with no reading falls through to the
+  // unit-less em dash or infinity symbol (issue #97).
+  if (!Number.isFinite(value) && DOMAINS.has(unit)) return formatValueText(value, '');
 
   if (Number.isNaN(value)) return unit ? `— ${unit}` : '—';
   if (!Number.isFinite(value)) {

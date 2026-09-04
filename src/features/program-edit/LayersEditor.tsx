@@ -25,7 +25,7 @@ import {
   type VelocityLayer,
 } from '@/core/project/schemas';
 import { useProgramStore, useUIStore } from '@/store';
-import { announce, Button, EmptyState } from '@/ui/primitives';
+import { Button, EmptyState } from '@/ui/primitives';
 import { IconRemove } from '@/ui/icons';
 import { NumberField, ToggleField } from './controls';
 import { SamplePicker } from './SamplePicker';
@@ -66,7 +66,6 @@ export function LayersEditor({
     // that decides which deletions get a dialog instead.
     const message = result.ok ? `Removed layer ${index + 1}. Undo with Ctrl+Z.` : result.reason;
     useUIStore.getState().pushToast(message, result.ok ? 'success' : 'warning');
-    announce(message);
   };
 
   /** Apply the picked sample to whichever target opened the picker, and report either way. */
@@ -82,7 +81,6 @@ export function LayersEditor({
         : `Layer ${picking.layerIndex + 1} now plays ${sample.name}.`
       : result.reason;
     useUIStore.getState().pushToast(message, result.ok ? 'success' : 'warning');
-    announce(message);
     // A refusal leaves the picker open so the user can choose again or read why not.
     if (result.ok) setPicking(null);
   };

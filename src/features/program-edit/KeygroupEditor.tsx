@@ -30,7 +30,7 @@ import {
   type KeygroupZone,
 } from '@/core/project/schemas';
 import { useProgramStore, useUIStore } from '@/store';
-import { announce, Button, EmptyState } from '@/ui/primitives';
+import { Button, EmptyState } from '@/ui/primitives';
 import { IconRemove } from '@/ui/icons';
 import { ControlGroup, NumberField } from './controls';
 import { EnvelopeEditor, FilterEditor } from './soundDesign';
@@ -54,7 +54,6 @@ export function KeygroupEditor({ program }: { program: KeygroupProgram }) {
   /** Report an assignment both on screen and through the shell's single live region (§8.2). */
   const report = (ok: boolean, message: string) => {
     useUIStore.getState().pushToast(message, ok ? 'success' : 'warning');
-    announce(message);
   };
 
   /** Apply the picked sample to whichever target opened the picker (spec §6). */

@@ -1636,6 +1636,10 @@ function regionText(testId: string): string {
  * Spec §8.2 requires ONE announcer. This drives the real toast queue and reads the real
  * DOM back, because the defect issue #34 reports — several regions competing, announcements
  * dropped — is invisible to anything that inspects a component in isolation (spec §13.5).
+ *
+ * Every message it raises begins with "Probe ", because the severity split it demonstrates
+ * needs a real error and a real warning toast, and §11.4 fails the smoke on either. The
+ * smoke step that calls this takes its own traffic back out of the toast log.
  */
 async function announcementProof(): Promise<AnnouncementResult> {
   const ui = useUIStore.getState();
@@ -1679,6 +1683,10 @@ async function announcementProof(): Promise<AnnouncementResult> {
  * keyboard (issue #51).
  */
 async function platformNoticeProof(): Promise<PlatformNoticeResult> {
+  // Restored at the end: a probe that leaves a FABRICATED refusal behind would have every
+  // later step of a smoke run reading a warning the browser never gave.
+  const granted = useUIStore.getState().storagePersisted;
+
   useUIStore.getState().setStoragePersisted(true);
   await settle();
   const noticesWhileGranted = document.querySelectorAll('[data-testid^="platform-notice-"]').length;
@@ -1697,11 +1705,12 @@ async function platformNoticeProof(): Promise<PlatformNoticeResult> {
 
   if (dismiss instanceof HTMLElement) dismiss.click();
   await settle();
-  return {
-    ...result,
-    noticesAfterDismiss: document.querySelectorAll('[data-testid="platform-notice-persistentStorage"]')
-      .length,
-  };
+  const noticesAfterDismiss = document.querySelectorAll(
+    '[data-testid="platform-notice-persistentStorage"]',
+  ).length;
+
+  if (granted !== null) useUIStore.getState().setStoragePersisted(granted);
+  return { ...result, noticesAfterDismiss };
 }
 
 export function installAudioProbe(engine: AudioEngine): void {

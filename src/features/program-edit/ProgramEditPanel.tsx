@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import { createDefaultDrumProgram, createDefaultKeygroupProgram } from '@/core/project/schemas';
 import { useProgramStore, useUIStore } from '@/store';
-import { announce, Button, ConfirmDialog } from '@/ui/primitives';
+import { Button, ConfirmDialog } from '@/ui/primitives';
 import { describeProgramContents } from './destructive';
 import { ArpControl } from './ArpControl';
 import { KeygroupEditor } from './KeygroupEditor';
@@ -49,7 +49,6 @@ export function ProgramEditPanel() {
     setConfirmingDelete(false);
     const message = `Deleted ${active.name}. Undo with Ctrl+Z.`;
     useUIStore.getState().pushToast(message, 'success');
-    announce(message);
   };
 
   const createProgram = (type: 'drum' | 'keygroup') => {

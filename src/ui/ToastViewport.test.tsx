@@ -72,6 +72,40 @@ describe('ToastViewport announcement routing (spec §8.2, issue #34)', () => {
     expect(assertive()).toBe(first);
   });
 
+  it('is the ONLY announcer of a toast, driven through a real reporting path', async () => {
+    // Eleven call sites used to `announce(message)` right after `pushToast(message, …)`. At
+    // `warning` tone the direct call wrote the polite region while the queue wrote the
+    // assertive one, so the same sentence sat in both regions at once (issue #34). Driven
+    // through §8.5.4 sample assignment, which is one of the eleven.
+    const { assignSlicesToPads } = await import('@/core/project/sampleAssign');
+    const { useProgramStore } = await import('@/store');
+    const { createDefaultDrumProgram } = await import('@/core/project/schemas');
+    useProgramStore.getState().setPrograms({ kit: createDefaultDrumProgram('Kit', 'kit') });
+
+    renderQueue();
+    assignSlicesToPads('kit', 0, [
+      {
+        id: 's1',
+        project_id: 'p1',
+        name: 'Chop 1',
+        opfs_path: '/projects/p1/samples/s1.wav',
+        frames: 4_800,
+        sample_rate: 48_000,
+        channels: 1,
+        root_note: 60,
+        created_at: 0,
+      },
+    ]);
+    const expected = '1 slices assigned from pad 1.';
+    await screen.findByText(expected);
+
+    // EXACTLY equal, not merely containing: a second `announce` of the same text on the same
+    // channel appends a zero-width space to force a re-read, so an extra caller shows up as a
+    // trailing character rather than as a second region.
+    expect(polite()).toBe(expected);
+    expect(assertive()).not.toContain('assigned from pad');
+  });
+
   it('names the notification region only while there is something in it', async () => {
     renderQueue();
     expect(screen.queryByRole('region', { name: 'Notifications' })).not.toBeInTheDocument();

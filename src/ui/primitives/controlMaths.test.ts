@@ -138,6 +138,16 @@ describe('formatValueText — the four domain tokens (spec §8.2, issue #35)', (
     expect(formatValueText(1, 'ratio')).toBe('1.0:1');
   });
 
+  it('never suffixes a domain token onto a value that has no reading', () => {
+    // A domain token is not a unit, so "— pan" and "∞ fraction" would read as measurements
+    // in pans and in fractions. A value with no reading falls back to the unit-less form.
+    expect(formatValueText(Number.NaN, 'pan')).toBe('—');
+    expect(formatValueText(Number.NaN, 'fraction')).toBe('—');
+    expect(formatValueText(Number.NaN, 'ratio')).toBe('—');
+    expect(formatValueText(Number.POSITIVE_INFINITY, 'fraction')).toBe('∞');
+    expect(formatValueText(Number.NEGATIVE_INFINITY, 'pan')).toBe('−∞');
+  });
+
   it('keeps dBFS distinct from dB (spec §5.7 limiter ceiling)', () => {
     expect(formatValueText(-0.3, 'dBFS')).toBe('−0.3 dBFS');
     expect(formatValueText(-0.3, 'dB')).toBe('−0.3 dB');
