@@ -1,12 +1,12 @@
-# BangerBox — Phase Handover (after the reachability & performance closure)
+# BangerBox — Phase Handover (after the sequencer-correctness closure)
 
-Generated at the close of the reachability and performance work per Protocol Alpha (spec §13.1). A
+Generated at the close of the sequencer-correctness work per Protocol Alpha (spec §13.1). A
 new session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code,
 and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the reachability work merged to `main` (`--no-ff`). All eight §12 phases were already
-complete; this was a defect closure against §9.5/§9.6/§3.3/§4.1/§8.1, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1712 unit tests**, `test:e2e` real-browser
+**State:** the sequencer work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §7.1/§7.3/§7.7/§7.8/§7.9, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1761 unit tests**, `test:e2e` real-browser
 smoke (dev + offline, **55/55 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
@@ -42,6 +42,33 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(am) — the sequencer-correctness closure (§7.1.3, §7.3, §7.7, §7.8, §7.9).** The ⚑ items
+  below are settled policy a new session should treat as binding, not as spec text:
+  - **A song's equivalent of a loop pass is one SEGMENT** — one play of one sequence — and that
+    is where §7.7 merges a take. `lastSegmentOrdinal` counts `pass × segments + index`, so a
+    one-entry song with looping on still flushes at every wrap.
+  - **A capture measures its LENGTH on a monotonic cursor and anchors its START to the pattern.**
+    `capturePositionAt` returns both domains at once. Folding the note-on and the note-off
+    separately puts them in different segments across a song entry boundary, and behind each
+    other across a loop wrap; either way the subtraction goes negative and a held note collapses
+    to `captureAt`'s 1-tick floor. A position past the last segment is clamped INTO it, because
+    §7.9 closes open notes exactly there.
+  - **The note-repeat and arp grids are enumerated in SONG ticks**, then each hit is timed at its
+    own segment's tempo. A grid re-phased per segment would stutter at every entry boundary.
+  - **A sequence-scope automation lane belongs to the sequence PLAYING**, not to
+    `activeSequenceId`, so `effectivePoints` takes the sequence as an argument.
+  - **A track lane is sampled at the ABSOLUTE SONG TICK, a sequence lane at the segment's
+    sequence tick.** §7.8's two scopes first differ observably in song mode. Sequence mode is
+    unchanged and samples both at the wrapped sequence tick: there the pattern IS the arrangement.
+  - **A protocol-version mismatch is REPORTED and initialisation continues.** Refusing to start
+    would turn a partial disagreement into a dead transport, and the §1.3 #11 guards already drop
+    what a skewed build cannot read. The value is the NAME: §11.4 fails on a console error.
+  - **`init.protocolVersion` is OPTIONAL — the only optional field in the request protocol.**
+    Required, the guard dropped the handshake of the very build the version exists to name.
+  - **Ids are colon-free, and `messages.ts` is the one place that is checked**, which is what
+    lets the composite-key splits be arithmetic. A §7.8 `targetPath` is exempt: colons are its
+    grammar.
 
 - **(al) — the reachability & performance closure (§9.5, §9.6, §3.3, §4.1, §8.1).** The ⚑ items
   below are settled policy a new session should treat as binding, not as spec text:
@@ -204,8 +231,41 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 ## 4. Established patterns (reuse, do not reinvent)
 
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
-automation seam, the (ai) voice-source/scheduler/tempo seams and the (ak) guard layer still
-stand. New this work:
+automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
+transient channel still stand. New this work:
+
+**Song mode and capture (spec §7.7, §7.9):**
+
+- **`emitSongPass` is where song mode does everything sequence mode does.** Note repeat, the
+  arpeggiator, automation and live erase all run from it or from the slice loop inside it. A new
+  schedule-time feature is added to BOTH `scheduleSequence` and `emitSongPass`, or it is silently
+  sequence-only — which is the whole of issue #94.
+- **`capturePositionAt` is the only place a capture position is computed**, and it returns
+  `{ patternTick, monotonicTick }` because a captured note needs both: the start belongs in the
+  pattern (`midi_events.tick_start`, §9.3) and the length belongs on a cursor that only moves
+  forward. `positionTickAt` still answers where the PLAYHEAD is, which in song mode is genuinely
+  a song tick — the two are separate functions rather than one with a flag.
+- **`emitSongHit` places a live-generated hit on the song timeline.** Both note repeat and the
+  arpeggiator go through it, so neither can drift from the other on swing, tempo or tick domain.
+- **`reportErased` applies a sweep AFTER the read that found it**, never during: it replaces
+  `track.events`.
+
+**The worker boundary (spec §7.1.3, §1.3 #11):**
+
+- **`schedulerIdSchema` in `messages.ts` is where the colon-free id invariant is checked.** Every
+  id field crossing into the worker takes it. Nothing downstream restates the assumption.
+- **`parseAutomationLaneKey` is the only place a lane key is split**, beside the
+  `automationLaneKey` that builds it. It replaced four open-coded copies, one of which cast the
+  scope to its union without checking it.
+- **`automationRampForWindow` is the only implementation of the §7.8 emission rule**, and its
+  value tick is passed separately from its two times because the two are in different domains
+  wherever the transport wraps. Do not add a second.
+- **A guard field takes the range the store clamps to.** `ranged(BPM_RANGE)` / `ranged(SWING_RANGE)`
+  rather than a bare `z.number()`: the guard IS the worker's validation contract, so it may not be
+  the looser of the two.
+- **`AudioEngine.watchScheduledEvents` is how a browser proof reads the worker's output.** The
+  scheduled batch is its only observable output and nothing downstream distinguishes a note from
+  a click from a ramp. Empty in production.
 
 **The transient channel (spec §4.1, §3.3):**
 
@@ -414,8 +474,15 @@ own defaults and needs no migration.
 
 ## 7. Worker / worklet / message protocol versions
 
-`SCHEDULER_PROTOCOL_VERSION` is still 1 and still inert (issue #96). **Nothing was added to the
-§7.1.3 SCHEDULER protocol this work.** The **pack worker's** protocol did change, and completely:
+`SCHEDULER_PROTOCOL_VERSION` is still **1** and is no longer inert (issue #96): the `init` request
+carries it and `applySchedulerRequest` compares it with the worker's own copy, reporting a
+mismatch — or a handshake with no version at all — through `console.error`, which §11.4 fails the
+smoke on. It stays 1: adding a request or response kind does not bump it (the extend-by-adding-kinds
+rule). **`init.protocolVersion` is the one OPTIONAL field in the request union**, so a skewed
+peer's handshake reaches the report instead of being dropped by the guard. No request or response
+KIND was added this work.
+
+From the previous work, and unchanged: the **pack worker's** protocol changed completely:
 the single `pack` request is replaced by a session — `packBegin` / `packSample` / `packEnd` /
 `packAbort`, each carrying a `session` id beside the `id` that correlates its reply, plus a
 `packChunk` response that belongs to a session rather than to any request (issue #99). `unpack`
@@ -532,22 +599,42 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#104, #99, #27, #28 and #54 are CLOSED by this work.** The reachability cluster is done, and
-the two `bounceService` entries have left the `check:orphans` allowlist.
+**#94, #25, #96 and #87 are CLOSED by this work.** The sequencer cluster is done, and four
+entries have left the `check:orphans` allowlist (`SCHEDULER_PROTOCOL_VERSION`,
+`automationRampForWindow`, `segmentAtSongTick`, `songTotalTicks`) with one added
+(`automationValueAt`, now internal to `automationRampForWindow`).
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **#94** song mode omits automation, note repeat, arp, live erase and the per-pass recording
-  flush. Untouched, and the largest remaining behavioural gap in §7.9.
+- **Accessibility (#34, #35, #46, #58, #51)** — several live regions compete with the single §8.2
+  announcer; continuous controls announce bare numbers rather than human units; there is no skip
+  link, focus is lost on start, and a toolbar role has no arrow navigation; every insert bypass
+  toggle shares the accessible name "Enabled"; the §2.1 soft capabilities are unhandled and the
+  §9.7 eviction warning is only a tooltip in one mode. Together they say Phase 7's §3.5 lens-1
+  sweep missed things it claimed. `SOFT_CAPABILITY_LABELS` is allowlisted awaiting #51.
 - **#16** live erase deletes across a loop boundary in one pass rather than the notes it swept.
-- **#96** `SCHEDULER_PROTOCOL_VERSION` is still inert, and `automationRampForWindow` is still the
-  dead duplicate of `schedulerCore`'s hand-rolled automation scheduling. Both are still in the
-  `check:orphans` allowlist for exactly that reason.
-- **#51** the §2.1 soft capabilities are unhandled and the eviction warning is only a tooltip in
-  one mode. `SOFT_CAPABILITY_LABELS` is allowlisted awaiting it.
+- **#130** `songAdvanced { entryIndex }` addresses the FLATTENED playlist rather than §7.9's
+  position-sorted entries, because `sequencerSync.flattenSong` expands `repeats` before the ids
+  reach the worker. Latent: `onSongAdvanced` has no production caller yet. Filed while closing
+  #94; fixing it means carrying repeats on the `songSequence` request.
 - **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
 
 **Honest scope notes for this work:**
+
+- **A held note's recorded duration is now its REAL length, in both modes.** Measuring the span
+  before folding it fixed song mode's entry boundary and, with it, the same latent defect in
+  sequence mode, where a note held across a loop wrap used to be recorded a tick long. No cap is
+  imposed on the result: §7.7 states none, and choosing one would be inventing a rule. A note
+  held for several passes therefore records longer than its own pattern.
+- **A protocol skew is only ever REPORTED.** Nothing refuses to run on one, and nothing surfaces
+  it to the user — it is a console error the §11.4 smoke fails on. The two halves come from one
+  Vite build, so it is a tripwire rather than a live risk.
+- **Song mode's live erase and note repeat were verified with the transport rolling, not the
+  entry index.** `songAdvanced`'s own numbering is issue #130 and is untouched.
+- **Issue #87 needed no code.** §14 (v)/(w)/(x) had already integrated the whole detune contour;
+  what was missing was a real-browser measurement, which `declickContourProof` now supplies.
+
+**Honest scope notes from the reachability work:**
 
 - **A §10.3 turn moves an on-screen control only where the call site passes `livePath`.** The five
   Mixer controls and Main's master fader do; Program Edit's plain number fields do not, and update
@@ -559,8 +646,18 @@ the two `bounceService` entries have left the `check:orphans` allowlist.
   at roughly the archive's uncompressed size. Only the export side was made streaming.
 - **A Grid mode unmount resets the viewport**, exactly as the `useState` viewport did before it.
   The store is created per mount.
-- **Measured in a real browser**, not inferred: 15 driver checks and 55/55 smoke steps at ports
-  5342/5343/5344, no console errors. Sixty transient samples woke 0 store subscribers and the
+- **Measured in a real browser** for the sequencer work: 21/21 driver checks at port 5350 and
+  55/55 smoke steps at 5342/5343, no console errors. Song mode emitted 114 automation ramps
+  climbing 0.05 → 0.44 across a three-entry song where the unfixed build emitted none; live erase
+  removed all four notes it swept; a take played into the middle entry was merged into the track
+  while the transport was still rolling, at tick 961 of a 3840-tick pattern where the unfixed
+  build wrote 4800 at the stop; one pad held on two tracks produced 6 repeats on each at their own
+  velocities where the unfixed build produced 12 on the first; the arpeggiator kept [60, 64] on
+  one track and [72, 76] on the other; the handshake carried version 1, the guard refused four
+  out-of-contract messages and still admitted a versionless handshake; and a voice swept an octave
+  down sounded 0.4552 s against a flat 0.2995 s, ending on 0.00102 rather than a step.
+- **Measured in a real browser** for the reachability work: 15 driver checks and 55/55 smoke steps
+  at ports 5342/5343/5344, no console errors. Sixty transient samples woke 0 store subscribers and the
   commit woke exactly 1, while the master peak followed the fader 0.4018 → 0.0024 → 0.4018; a
   60-sample pointer drag on a real Mixer fader held a 4.17 ms median frame; 120 wheel events over
   the Grid canvas zoomed 1.00× → 2.31× at a 4.16 ms median (16.7 ms is the §11.5 60 fps budget);
@@ -635,7 +732,7 @@ the two `bounceService` entries have left the `check:orphans` allowlist.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1712**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**1761**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **55/55 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory` (byte-identical across rebuilds, re-checked after the packer
 change).
