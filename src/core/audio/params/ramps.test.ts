@@ -24,6 +24,10 @@ function fakeParam(initial = 0) {
       calls.push({ method: 'cancelScheduledValues', args: [when] });
       return this;
     },
+    cancelAndHoldAtTime(when: number) {
+      calls.push({ method: 'cancelAndHoldAtTime', args: [when] });
+      return this;
+    },
   };
   return { param: param as unknown as AudioParam, calls };
 }
@@ -39,14 +43,26 @@ describe('ramp helpers (spec §4.3 dezipper)', () => {
     expect(rampTimeConstantSeconds(PARAM_RAMP_MS)).toBeLessThan(PARAM_RAMP_MS / 1000);
   });
 
-  it('anchors the current value then linearly ramps to the target (no clicks)', () => {
+  // The anchor asks the TIMELINE what the contour holds at `ctxTime`, never the clock
+  // (issue #134). `param.value` reads the value now, and `ctxTime` is routinely in the future
+  // — §7.8 schedules up to `LOOKAHEAD_MS` ahead, and an offline render schedules the whole
+  // bounce before a single frame is computed, where every read would return the same number.
+  it('holds the contour at the ramp start, then linearly ramps to the target (no clicks)', () => {
     const { param, calls } = fakeParam(0.2);
     rampParamLinear(param, 0.8, 5, PARAM_RAMP_MS);
-    expect(calls[0]).toEqual({ method: 'setValueAtTime', args: [0.2, 5] });
+    expect(calls[0]).toEqual({ method: 'cancelAndHoldAtTime', args: [5] });
     expect(calls[1]).toEqual({
       method: 'linearRampToValueAtTime',
       args: [0.8, rampEndTime(5, PARAM_RAMP_MS)],
     });
+  });
+
+  it('reads nothing from the param, so a ramp scheduled ahead of the playhead is not stale', () => {
+    // `param.value` is deliberately wrong here: a helper that consulted it would anchor a
+    // ramp starting at t=5 on the value standing at t=0.
+    const { param, calls } = fakeParam(Number.NaN);
+    rampParamLinear(param, 0.8, 5, PARAM_RAMP_MS);
+    expect(calls.map((call) => call.method)).toEqual(['cancelAndHoldAtTime', 'linearRampToValueAtTime']);
   });
 
   it('sets a value immediately for pre-playback initialisation', () => {

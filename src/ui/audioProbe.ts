@@ -23,19 +23,30 @@ import { importDecodedSample } from '@/core/audio/sampleImport';
 import { chopSampleToNewSamples, stretchSampleToNewSample } from '@/core/audio/sampleEditService';
 import { sampleEditContext } from '@/features/sample-edit';
 import {
+  createDefaultChannelStrip,
   createDefaultDrumProgram,
   createDefaultKeygroupProgram,
   createDefaultPad,
   createDefaultSequence,
   createDefaultTrack,
+  type AutomationPoint,
+  type ChannelStrip,
   type EffectType,
+  type InsertSlotState,
   automationLaneKey,
   type KeygroupZone,
   type Sequence,
   type Track,
   type VelocityLayer,
 } from '@/core/project/schemas';
-import { useMixerStore, useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
+import {
+  useMixerStore,
+  useProgramStore,
+  useProjectStore,
+  useSequenceStore,
+  useTransportStore,
+  useUIStore,
+} from '@/store';
 import { commitTempo } from '@/store/tempo';
 import { decodeWav, encodeWav } from '@/core/audio/wav';
 import {
@@ -130,6 +141,8 @@ export interface AudioProbe {
   tempoChangeProof: () => Promise<TempoChangeResult>;
   /** Every §9.5 bounce produces a file the user can actually get back (issue #104). */
   bounceReachProof: () => Promise<BounceReachResult>;
+  /** A §9.5 bounce renders the §5.2 mixer, not a dry sum of voices (issue #134). */
+  bounceMixProof: () => Promise<BounceMixResult>;
   /** A gesture moves the graph and re-renders nothing (spec §3.3, §4.1, issue #27). */
   gestureRenderProof: () => Promise<GestureRenderResult>;
   /** Song mode schedules everything sequence mode does (spec §7.9, issue #94). */
@@ -447,6 +460,46 @@ export interface BounceReachResult {
   readonly resampledBytes: number;
   /** True when the resampled row is listed by the library query the Browser runs. */
   readonly resampledIsBrowsable: boolean;
+}
+
+/**
+ * What one §9.5 render actually contains, measured on the WAV it wrote (issue #134).
+ *
+ * Every field is read back from `/bounces/` over real OPFS and decoded, so these are the
+ * numbers in the file the user gets rather than anything about the graph that made it.
+ */
+export interface BounceMixSlice {
+  readonly rms: number;
+  readonly leftRms: number;
+  readonly rightRms: number;
+  /**
+   * RMS of the gap between the first two beats. The hits are shorter than the gap, so this
+   * is silence in every render EXCEPT one whose §5.2 sends reach a return that delays them.
+   */
+  readonly gapRms: number;
+  /** RMS of the first and last beats — how a §7.8 lane riding the master fader shows itself. */
+  readonly firstBeatRms: number;
+  readonly lastBeatRms: number;
+}
+
+/** One §9.5 render per §5.2 stage under test (issue #134). */
+export interface BounceMixResult {
+  /** Neutral strips: the reference every other render is read against. */
+  readonly baseline: BounceMixSlice;
+  /** The track fader at −12 dB (spec §8.5.6 law) — stage 5. */
+  readonly levelled: BounceMixSlice;
+  /** The track panned hard right — stage 5. */
+  readonly panned: BounceMixSlice;
+  /** A lowpass insert on the track, an octave and a half below the tone — stage 6. */
+  readonly inserted: BounceMixSlice;
+  /** Send 0 open into a return carrying a 300 ms delay — stages 7 and 8. */
+  readonly sent: BounceMixSlice;
+  /** A §7.8 sequence lane ramping the master fader across the bar — stage 9. */
+  readonly automated: BounceMixSlice;
+  /** The §9.5 stem of the one track: sends open, master strip cut and filtered. */
+  readonly stem: BounceMixSlice;
+  /** The same project as a full mix, so the master strip's absence from the stem is visible. */
+  readonly masteredMix: BounceMixSlice;
 }
 
 /** What a continuous gesture costs React and what it moves in the graph (issue #27). */
@@ -1271,6 +1324,226 @@ async function bounceReachProof(): Promise<BounceReachResult> {
     resampledBytes,
     resampledIsBrowsable: listed.rows.some((row) => row.id === resampled.id),
   };
+}
+
+/** RMS of a rendered channel between two times, in seconds. */
+function rmsBetween(data: Float32Array, sampleRate: number, from: number, to: number): number {
+  const start = Math.max(0, Math.floor(from * sampleRate));
+  const end = Math.min(data.length, Math.ceil(to * sampleRate));
+  if (end <= start) return 0;
+  let sum = 0;
+  for (let i = start; i < end; i += 1) sum += data[i]! * data[i]!;
+  return Math.sqrt(sum / (end - start));
+}
+
+/**
+ * Every §5.2 stage from the channel strip outward, measured in the WAV a §9.5 bounce wrote
+ * (issue #134, spec §11.2, §13.5).
+ *
+ * `renderSegments` used to connect every voice straight to a bare master gain, so a bounce
+ * was a DRY mix: no level, no pan, no send, no insert and no §7.8 mixer automation reached
+ * any bounced file, while `bounceTrack`'s "post-insert, pre-master" described a channel the
+ * offline context did not have. Voice-level §6 sound design DID render, which is why nothing
+ * about the file looked wrong — it just was not the mix.
+ *
+ * One bar of 4/4 at 120 bpm carries four hits of a 1 kHz tone, one per beat, each a quarter
+ * of a second long. That shape is what makes each claim separable: the hits are shorter than
+ * the gaps between them, so a send returning through a 300 ms delay lands in silence; and the
+ * bar is long enough for a §7.8 lane to be read at its two ends.
+ *
+ * The probe restores the project it found — `installAudioProbe` runs in production builds, so
+ * it may not leave a mixer it rewrote behind. Nothing it changes is ever committed: the
+ * strips, programs and events go in through the hydration actions, which mark nothing dirty,
+ * and the final `loadProject` puts every store back on the §9.3 rows.
+ */
+async function bounceMixProof(engine: AudioEngine): Promise<BounceMixResult> {
+  const { bounceActiveSequence, bounceTrack } = await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+  const { channelLevelPath } = await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe that hydrated its own arrangement into the middle of that load would have it
+  // replaced the moment the load finished.
+  await projectService.loadProject(projectId);
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A quarter-second 1 kHz tone: short enough to leave the beat gaps silent, and high enough
+  // above the lowpass under test that the insert's effect is unmistakable rather than subtle.
+  const HIT_SECONDS = 0.25;
+  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * HIT_SECONDS), sampleRate);
+  const toneData = tone.getChannelData(0);
+  for (let i = 0; i < toneData.length; i += 1) {
+    toneData[i] = 0.6 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+  }
+  const sample = await importDecodedSample(tone, 'bounce mix probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  // A pad that plays the tone flat: no envelope shaping, so what the render measures is the
+  // §5.2 strip and nothing else.
+  const program = createDefaultDrumProgram('Bounce mix probe');
+  const pad = createDefaultPad(0);
+  pad.playbackMode = 'oneShot';
+  pad.layers = [layer({ sampleId: sample.id })];
+  pad.envelopes = {
+    ...pad.envelopes,
+    amp: { ...pad.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+  };
+  program.pads = [pad];
+  useProgramStore.getState().setPrograms({ [program.id]: program });
+
+  const seqId = crypto.randomUUID();
+  const trackId = crypto.randomUUID();
+  const sequence = { ...createDefaultSequence(projectId, 0, 'Bounce mix probe', seqId), lengthBars: 1 };
+  const track = createDefaultTrack(seqId, program.id, 0, 'Bounce mix probe', 'drum', trackId);
+  const beats = [0, 960, 1_920, 2_880].map((tickStart) => ({
+    id: crypto.randomUUID(),
+    tickStart,
+    durationTicks: 120,
+    note: 0,
+    velocity: 100,
+    extra: null,
+  }));
+  const channelId = `track:${trackId}`;
+
+  /** Re-hydrate the arrangement, optionally with one §7.8 lane on it. */
+  const hydrate = (automation: Record<string, AutomationPoint[]> = {}): void => {
+    useSequenceStore.getState().hydrate({
+      sequences: { [seqId]: sequence },
+      tracks: { [trackId]: track },
+      events: { [trackId]: beats },
+      automation,
+      songEntries: [],
+    });
+  };
+  hydrate();
+  const transport = useTransportStore.getState();
+  transport.setActiveSequenceId(seqId);
+  transport.setPlaybackMode('sequence');
+  transport.setBpm(120);
+
+  /** Every strip back to its §4.2 default, so each render starts from the same place. */
+  const neutral = (): void => {
+    useMixerStore.getState().setChannels({
+      master: createDefaultChannelStrip('master'),
+      'return:0': createDefaultChannelStrip('return:0'),
+      'return:1': createDefaultChannelStrip('return:1'),
+      'return:2': createDefaultChannelStrip('return:2'),
+      'return:3': createDefaultChannelStrip('return:3'),
+      [channelId]: createDefaultChannelStrip(channelId),
+    });
+  };
+
+  const setStrip = (id: string, over: Partial<ChannelStrip>): void => {
+    const current = useMixerStore.getState().channels[id] ?? createDefaultChannelStrip(id);
+    useMixerStore.getState().upsertChannel({ ...current, ...over, id });
+  };
+
+  /** One effect in slot 1 of a strip, the other three slots left empty (spec §1.3.1). */
+  const withEffect = (
+    id: string,
+    effectType: EffectType,
+    params: Record<string, number>,
+  ): InsertSlotState[] => {
+    const slots = (useMixerStore.getState().channels[id] ?? createDefaultChannelStrip(id)).inserts;
+    return slots.map((slot, index) => (index === 0 ? { ...slot, effectType, enabled: true, params } : slot));
+  };
+
+  /** Render, read the WAV back over real OPFS, and measure what is in it. */
+  const measure = async (render: () => Promise<string>): Promise<BounceMixSlice> => {
+    const bytes = new Uint8Array(await (await readFile(await render())).arrayBuffer());
+    const decoded = decodeWav(bytes);
+    const left = decoded.channels[0]!;
+    const right = decoded.channels[1] ?? left;
+    const sr = decoded.sampleRate;
+    const mono = new Float32Array(left.length);
+    for (let i = 0; i < mono.length; i += 1) mono[i] = (left[i]! + right[i]!) / 2;
+    // Beat windows start 20 ms in: the §4.3 dezipper takes `PARAM_RAMP_MS` to reach the first
+    // automated value, and that run-in is the graph settling rather than the mix.
+    const beat = (index: number): number => rmsBetween(mono, sr, index * 0.5 + 0.02, index * 0.5 + 0.24);
+    return {
+      rms: rmsBetween(mono, sr, 0, 2),
+      leftRms: rmsBetween(left, sr, 0, 2),
+      rightRms: rmsBetween(right, sr, 0, 2),
+      // Between the first hit's end (0.25 s) and the second hit's start (0.5 s).
+      gapRms: rmsBetween(mono, sr, 0.28, 0.48),
+      firstBeatRms: beat(0),
+      lastBeatRms: beat(3),
+    };
+  };
+
+  const bounce = (): Promise<string> => bounceActiveSequence('probe-mix', ctx);
+
+  neutral();
+  const baseline = await measure(bounce);
+
+  // Stage 5 — the track fader. 0.8 on the §8.5.6 law is −12 dB, a quarter of the amplitude.
+  neutral();
+  setStrip(channelId, { level: 0.8 });
+  const levelled = await measure(bounce);
+
+  // Stage 5 — pan. Hard right empties the left channel outright.
+  neutral();
+  setStrip(channelId, { pan: 1 });
+  const panned = await measure(bounce);
+
+  // Stage 6 — a track insert. A lowpass at 100 Hz against a 1 kHz tone is ~40 dB down.
+  neutral();
+  setStrip(channelId, {
+    inserts: withEffect(channelId, 'filter', { type: 0, cutoff: 100, resonance: 1, mix: 1 }),
+  });
+  const inserted = await measure(bounce);
+
+  /** Send 0 wide open into a return whose delay is longer than a hit and shorter than a beat. */
+  const openSend = (): void => {
+    setStrip('return:0', {
+      inserts: withEffect('return:0', 'delay', { sync: 0, time: 300, feedback: 0, tone: 18_000, mix: 1 }),
+    });
+    setStrip(channelId, { sendLevels: [1, 0, 0, 0] });
+  };
+
+  // Stages 7 and 8 — a send tap, its return channel, and both merging at the master bus.
+  neutral();
+  openSend();
+  const sent = await measure(bounce);
+
+  // Stage 9 — a §7.8 sequence lane riding the master fader from near silence to unity.
+  neutral();
+  const masterLevel = channelLevelPath('master');
+  const lane = (tick: number, value: number): AutomationPoint => ({
+    id: crypto.randomUUID(),
+    scope: 'sequence',
+    ownerId: seqId,
+    targetPath: masterLevel,
+    tick,
+    value,
+    curve: 'linear',
+  });
+  hydrate({ [automationLaneKey('sequence', seqId, masterLevel)]: [lane(0, 0.3), lane(3_840, 1)] });
+  const automated = await measure(bounce);
+  hydrate();
+
+  // §9.5's stem, and the same project as a full mix. The master strip is cut to −42 dB AND
+  // filtered, so a stem that carried stage 9 could not possibly be mistaken for one that did
+  // not — while the sends stay open, which is what makes the return's presence in the stem
+  // measurable in the same render.
+  neutral();
+  openSend();
+  setStrip('master', {
+    level: 0.3,
+    inserts: withEffect('master', 'filter', { type: 0, cutoff: 100, resonance: 1, mix: 1 }),
+  });
+  const stem = await measure(() => bounceTrack(trackId, 'probe-stem-mix', ctx));
+  const masteredMix = await measure(bounce);
+
+  // Put the project back: the stores return to the §9.3 rows, taking the probe's arrangement,
+  // program and strips with them.
+  await projectService.loadProject(projectId);
+
+  return { baseline, levelled, panned, inserted, sent, automated, stem, masteredMix };
 }
 
 /**
@@ -2206,6 +2479,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     sequencerGuardProof: () => sequencerGuardProof(engine),
     tempoChangeProof: () => tempoChangeProof(engine),
     bounceReachProof,
+    bounceMixProof: () => bounceMixProof(engine),
     gestureRenderProof: () => gestureRenderProof(engine),
     songParityProof: () => songParityProof(engine),
     liveEraseWrapProof: () => liveEraseWrapProof(engine),

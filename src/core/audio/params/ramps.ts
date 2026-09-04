@@ -42,9 +42,24 @@ export function rampTimeConstantSeconds(ms: number = PARAM_RAMP_MS): number {
 }
 
 /**
- * Linearly ramp `param` to `target`, anchoring the current value at `ctxTime` first so
+ * Linearly ramp `param` to `target`, anchoring the contour's own value at `ctxTime` first so
  * the segment starts where the signal actually is (no discontinuity). Preferred for
  * bounded controls (level, pan, send) where a predictable end time matters.
+ *
+ * The anchor is `cancelAndHoldAtTime`, not `setValueAtTime(param.value, …)` (issue #134).
+ * `param.value` reports the value NOW; `ctxTime` is routinely in the future, because §7.8
+ * automation is scheduled up to `LOOKAHEAD_MS` ahead of the playhead — so anchoring on it
+ * pinned each ramp to a stale reading and flattened the run-up between windows. Offline it is
+ * worse than stale: an `OfflineAudioContext` renders only once `startRendering()` is called,
+ * so every ramp a §9.5 bounce schedules would have read the SAME pre-render value and each
+ * window would have jumped the param back to it. `cancelAndHoldAtTime` asks the timeline
+ * instead of the clock, which is what the anchor always meant; it is the method
+ * `voiceEnvelope.ts` already uses for a param that keeps sounding, and Firefox's missing
+ * implementation is supplied by the §14 (issue #109) polyfill installed at context creation.
+ *
+ * Cancelling from `ctxTime` is the other half, and it is deliberate: a later write to the
+ * same param supersedes whatever was queued beyond it, so a live gesture wins over automation
+ * already scheduled ahead of the playhead rather than being overwritten by it a moment later.
  */
 export function rampParamLinear(
   param: AudioParam,
@@ -53,7 +68,7 @@ export function rampParamLinear(
   ms: number = PARAM_RAMP_MS,
 ): void {
   if (!schedulable(target, ctxTime, ms)) return; // refuse rather than poison (issue #97)
-  param.setValueAtTime(param.value, ctxTime);
+  param.cancelAndHoldAtTime(ctxTime);
   param.linearRampToValueAtTime(target, rampEndTime(ctxTime, ms));
 }
 

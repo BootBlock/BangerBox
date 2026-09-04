@@ -32,7 +32,18 @@ interface BridgeTarget {
 
 /** A bridge that can also flush the full current mixer state to the graph (start-up). */
 export type AudioBridge = SyncBridge & {
-  resyncAll: () => void;
+  /**
+   * Flush every §4.2 strip onto the channels the graph already holds (start-up, and the
+   * §9.5 bounce's one pass over the offline graph).
+   *
+   * `includeChannel` exists for the §9.5 stem, which §9.5 places "post-insert, pre-master":
+   * the render leaves the master strip out and the master bus keeps the unity pass-through
+   * `createChannelStrip` builds. Excluding it by not applying it, rather than by rewiring the
+   * graph, keeps §5.2's topology identical in every render — `bouncePlan` owns the rule, and
+   * the §7.8 automation pass reads the same predicate so a lane cannot ride a fader the
+   * static pass deliberately left alone.
+   */
+  resyncAll: (includeChannel?: (channelId: string) => boolean) => void;
   /** Apply a scheduled automation ramp to a registered target (spec §7.8). */
   applyAutomation: (targetPath: string, value: number, when: number, rampEnd: number) => void;
 };
@@ -56,11 +67,19 @@ function applyInserts(
 }
 
 export function createAudioBridge({ graph, context, voicePool = () => null }: BridgeTarget): AudioBridge {
-  /** Re-evaluate solo-in-place and apply the resulting mutes to every graph channel. */
-  const applyEffectiveMutes = (): void => {
+  /**
+   * Re-evaluate solo-in-place and apply the resulting mutes to every graph channel.
+   *
+   * The solo evaluation always sees the WHOLE mixer, even when `includeChannel` narrows what
+   * is written: solo-in-place is a statement about the other strips, so judging it on a subset
+   * would make a §9.5 stem of a soloed track silence itself.
+   */
+  const applyEffectiveMutes = (includeChannel: (channelId: string) => boolean = () => true): void => {
     const mutes = computeEffectiveMutes(useMixerStore.getState().channels);
     const now = context.currentTime;
-    for (const [id, muted] of Object.entries(mutes)) graph.getChannel(id)?.setMuted(muted, now);
+    for (const [id, muted] of Object.entries(mutes)) {
+      if (includeChannel(id)) graph.getChannel(id)?.setMuted(muted, now);
+    }
   };
 
   const bridge: AudioBridge = {
@@ -148,10 +167,11 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
       }
     },
 
-    resyncAll: () => {
+    resyncAll: (includeChannel = () => true) => {
       const channels = useMixerStore.getState().channels;
       const now = context.currentTime;
       for (const [id, strip] of Object.entries(channels)) {
+        if (!includeChannel(id)) continue;
         const channel = graph.getChannel(id);
         if (!channel) continue; // track/pad channels are built lazily on first use
         channel.setLevel(strip.level, now, false);
@@ -159,7 +179,7 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
         strip.sendLevels.forEach((level, i) => channel.setSendGain(i, level, now, false));
         applyInserts(context, channel, strip.inserts);
       }
-      applyEffectiveMutes();
+      applyEffectiveMutes(includeChannel);
     },
   };
 

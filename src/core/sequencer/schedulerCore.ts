@@ -14,14 +14,13 @@
 import { LOOKAHEAD_MS } from '@/core/constants';
 import {
   automationLaneKey,
-  parseAutomationLaneKey,
   type AutomationPoint,
   type MidiEvent,
   type TimeSignature,
 } from '@/core/project/schemas';
 import type { SwingDivision } from '@/store/useTransportStore';
 import { arpeggiatorHits, type ArpConfig, type ArpHeldNote } from './arpeggiator';
-import { automationRampForWindow, resolveEffectivePoints } from './automation';
+import { automatedTargets, automationRampForWindow, laneForTarget } from './automation';
 import {
   eventsInWindow,
   loopActive,
@@ -810,8 +809,8 @@ export class SchedulerCore {
     const when = this.anchorContext + ticksToSeconds(from - this.originTick, this.bpm);
     const rampEnd = this.anchorContext + ticksToSeconds(to - this.originTick, this.bpm);
     const seqTo = sequenceTickAt(to, this.loop);
-    for (const targetPath of this.automatedTargets()) {
-      const { points } = this.effectivePoints(targetPath, this.activeSequenceId);
+    for (const targetPath of automatedTargets(this.automation)) {
+      const { points } = laneForTarget(this.automation, targetPath, this.activeSequenceId);
       const ramp = automationRampForWindow(targetPath, points, seqTo, when, rampEnd);
       if (ramp) this.pushRamp(result, ramp, seqTo);
     }
@@ -831,43 +830,6 @@ export class SchedulerCore {
       value: ramp.value,
       rampEnd: ramp.rampEnd,
     });
-  }
-
-  /** Distinct automatable target paths across all lanes (spec §7.8). */
-  private automatedTargets(): Set<string> {
-    const targets = new Set<string>();
-    for (const key of this.automation.keys()) {
-      const parts = parseAutomationLaneKey(key);
-      if (parts) targets.add(parts.targetPath);
-    }
-    return targets;
-  }
-
-  /**
-   * The lane that governs a target, and which scope it came from (spec §7.8).
-   *
-   * Track scope wins over sequence scope while both hold points. A sequence lane plays only
-   * while its own sequence is the pattern playing: the active sequence in sequence mode, and
-   * the SEGMENT's sequence in song mode (spec §7.9) — resolving song mode against the
-   * transport's `activeSequenceId` would silence every other sequence's lane for the whole
-   * song. The scope comes back with the points because it decides which tick the value is
-   * sampled at; see {@link scheduleSongAutomation}.
-   */
-  private effectivePoints(
-    targetPath: string,
-    sequenceId: string | null,
-  ): { points: readonly AutomationPoint[]; scope: AutomationPoint['scope'] | null } {
-    let trackPoints: AutomationPoint[] | undefined;
-    let sequencePoints: AutomationPoint[] | undefined;
-    for (const [key, points] of this.automation) {
-      const parts = parseAutomationLaneKey(key);
-      if (!parts || parts.targetPath !== targetPath) continue;
-      if (parts.scope === 'track') trackPoints = points;
-      else if (parts.ownerId === sequenceId) sequencePoints = points;
-    }
-    const points = resolveEffectivePoints(trackPoints, sequencePoints);
-    const scope = points.length === 0 ? null : points === trackPoints ? 'track' : 'sequence';
-    return { points, scope };
   }
 
   // --- live erase (spec §7.7) ---
@@ -1098,8 +1060,8 @@ export class SchedulerCore {
     const toSongTick = segment.startTick + slice.seqTo;
     const when = passOrigin + songTickToSeconds(this.songMap, fromSongTick);
     const rampEnd = passOrigin + songTickToSeconds(this.songMap, toSongTick);
-    for (const targetPath of this.automatedTargets()) {
-      const { points, scope } = this.effectivePoints(targetPath, segment.sequenceId);
+    for (const targetPath of automatedTargets(this.automation)) {
+      const { points, scope } = laneForTarget(this.automation, targetPath, segment.sequenceId);
       const valueTick = scope === 'track' ? toSongTick : slice.seqTo;
       const ramp = automationRampForWindow(targetPath, points, valueTick, when, rampEnd);
       if (ramp) this.pushRamp(result, ramp, valueTick);
