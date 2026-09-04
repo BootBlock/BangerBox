@@ -118,6 +118,16 @@ export interface DelayEchoOptions {
   /** Seconds to wait before the impulse, so any dezipper ramp has settled. */
   readonly impulseAt?: number;
   readonly seconds?: number;
+  /**
+   * Build the delay from this params record VERBATIM, ignoring `division` and `time`.
+   *
+   * It is the proof seam for issue #131: the record is the one `applyInserts` hands
+   * `createInsert` for a slot in the store (spec §4.3), so the echo it produces is the time
+   * the GRAPH runs while the §8.5.6 panel reads the store's own value for the same slot. The
+   * TEMPO is still this function's own, not the live transport's, so a caller measuring a
+   * §5.7 synced division has to pass `bpm` as well.
+   */
+  readonly params?: Record<string, number>;
 }
 
 /**
@@ -135,6 +145,7 @@ export async function renderDelayEchoOffline({
   retuneToBpm,
   impulseAt = 0.05,
   seconds = 3,
+  params,
 }: DelayEchoOptions = {}): Promise<DelayEchoResult> {
   const sampleRate = 48_000;
   const context = new OfflineAudioContext(1, Math.floor(sampleRate * seconds), sampleRate);
@@ -148,7 +159,7 @@ export async function renderDelayEchoOffline({
   // cannot drift out of step with the order of the list (spec §5.7).
   const modes = EFFECT_PARAM_CHOICES.delay?.sync ?? [];
   const sync = division === undefined ? 0 : Math.max(0, modes.indexOf(division));
-  const insert = createInsert(context, 'delay', { sync, time, feedback: 0, mix: 1 }, bpm);
+  const insert = createInsert(context, 'delay', params ?? { sync, time, feedback: 0, mix: 1 }, bpm);
   insert.setEnabled(true);
   source.connect(insert.input);
   insert.output.connect(context.destination);

@@ -249,6 +249,10 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                           key={param}
                           label={effectParamLabel(effectType, param)}
                           accessibleName={`${effectParamLabel(effectType, param)}, ${slotName}`}
+                          // An occupied slot carries every parameter its effect declares
+                          // (`useMixerStore`'s `withCompleteInserts`), so the range floor is
+                          // the type's last resort rather than what a fresh insert draws.
+                          // Drawing it was issue #131: a new delay read 1 ms and ran at 350.
                           value={slot.params[param] ?? range[0]}
                           range={range}
                           unit={unit}

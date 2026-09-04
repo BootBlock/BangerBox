@@ -27,6 +27,7 @@ import {
   parseParamTarget,
   targetRange,
 } from '@/core/audio/params/registry';
+import { completeInsertParams, defaultEffectParams } from '@/core/audio/inserts/effectParams';
 import { recordParamGesture } from './automationRecord';
 import { publishTransient, settleTransient } from './transientChannel';
 import { commit } from './commit';
@@ -223,7 +224,10 @@ function readScalar(channels: Record<string, ChannelStrip>, parsed: ParsedPath):
   if (parsed.field.kind === 'send') return strip.sendLevels[parsed.field.index] ?? null;
   const slot = strip.inserts[parsed.field.slotIndex];
   if (slot === undefined) return null;
-  // An unset param reads as the bottom of its range so the first move has an origin.
+  // An occupied slot's params are complete (see `withCompleteInserts`), so the fallback is
+  // the type's last resort rather than a value anything reads. It used to be what an undo of
+  // the first touch of a fresh insert reverted to — the range floor, never a value the
+  // parameter had held (issue #131).
   return slot.params[parsed.field.param] ?? parsed.range[0];
 }
 
@@ -243,6 +247,31 @@ function writeScalar(strip: ChannelStrip, field: ScalarField, value: number): Ch
   return { ...strip, inserts };
 }
 
+/**
+ * The strip with every occupied insert slot's params complete for its effect (issue #131).
+ *
+ * §3.4 requires that "the store value reflects the actual node state", and `createInsert`
+ * merges the §5.7 defaults over whatever the slot holds — so a slot carrying `params: {}`
+ * SOUNDS at 350 ms and READS as the 1 ms range floor, in the panel, in the §4.1 gesture
+ * origin, on an XYFX axis and in a §7.8 automation lane alike.
+ *
+ * This runs wherever a strip ENTERS the store, which is the one thing a project saved before
+ * the fix and a slot the user just added have in common: both must be complete by the time
+ * anything reads them, and neither can be corrected downstream without leaving the store
+ * itself wrong. It hands back the same strip when nothing was missing, so the §4.3
+ * `inserts`-identity diff does not fire on a hydrate.
+ */
+function withCompleteInserts(strip: ChannelStrip): ChannelStrip {
+  let changed = false;
+  const inserts = strip.inserts.map((slot) => {
+    const params = completeInsertParams(slot.effectType, slot.params);
+    if (params === slot.params) return slot;
+    changed = true;
+    return { ...slot, params };
+  });
+  return changed ? { ...strip, inserts } : strip;
+}
+
 /** Map a channel id to the entity whose persistence owns its strip (spec §5.2, §9.3). */
 function mixerChannelDirtyKey(channelId: string): string {
   if (channelId.startsWith('track:')) return dirtyKey.track(channelId.slice('track:'.length));
@@ -255,8 +284,14 @@ export const useMixerStore = create<MixerState>()(
   subscribeWithSelector((set, get) => ({
     channels: {},
 
-    setChannels: (channels) => set({ channels: { ...channels } }),
-    upsertChannel: (strip) => set((state) => ({ channels: { ...state.channels, [strip.id]: strip } })),
+    setChannels: (channels) =>
+      set({
+        channels: Object.fromEntries(
+          Object.entries(channels).map(([id, strip]) => [id, withCompleteInserts(strip)]),
+        ),
+      }),
+    upsertChannel: (strip) =>
+      set((state) => ({ channels: { ...state.channels, [strip.id]: withCompleteInserts(strip) } })),
     removeChannel: (channelId) =>
       set((state) => {
         if (!(channelId in state.channels)) return {};
@@ -374,7 +409,14 @@ export const useMixerStore = create<MixerState>()(
     addInsert: (channelId, effectType) => {
       const prev = get().channels[channelId];
       if (prev === undefined) return;
-      const slot: InsertSlotState = { ...createEmptyInsertSlot(), effectType, enabled: true };
+      // The §5.7 defaults, not an empty record: `createInsert` merges them on the graph side,
+      // so a slot without them sounds at one value and reads as its range floor (issue #131).
+      const slot: InsertSlotState = {
+        ...createEmptyInsertSlot(),
+        effectType,
+        enabled: true,
+        params: defaultEffectParams(effectType),
+      };
       const write = (inserts: InsertSlotState[]) =>
         set((state) => ({
           channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } },
@@ -406,10 +448,13 @@ export const useMixerStore = create<MixerState>()(
           ? {
               ...slot,
               effectType,
-              // Params start empty, exactly as `addInsert` leaves a fresh slot: each effect owns
+              // The INCOMING effect's own §5.7 defaults, exactly as `addInsert` seeds a fresh
+              // slot. The rule this replaced an empty record for is unchanged: each effect owns
               // its own parameter set (spec §5.7), so the outgoing values have no meaning here —
-              // and a name two effects happen to share would import the old effect's taste unseen.
-              params: {},
+              // and a name two effects happen to share would import the old effect's taste
+              // unseen. What an empty record additionally cost was agreement with the node
+              // `createInsert` builds, which merges those same defaults (issue #131).
+              params: defaultEffectParams(effectType),
               // Bypass belongs to the slot's place in the chain, not to the effect, so a slot the
               // user muted stays muted. Filling a previously empty slot is an add in disguise and
               // comes up enabled, or picking an effect there would do nothing audible.

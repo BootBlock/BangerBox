@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { AutosaveQueue } from '@/core/project/autosave';
 import { insertParamPath } from '@/core/audio/params/registry';
+import { defaultEffectParams } from '@/core/audio/inserts/effectParams';
 import { registerAutosave, unregisterAutosave } from '@/core/project/dirty';
 import {
   createDefaultChannelStrip,
@@ -166,7 +167,13 @@ describe('useMixerStore transient/commit channel (spec §4.1, §3.3)', () => {
     const slot = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
     useMixerStore.getState().commit(insertParamPath('track:1', lastSlotNumber('track:1'), 'feedback'), 0.6);
     useMixerStore.getState().replaceInsert('track:1', slot.id, 'reverb');
-    expect(useMixerStore.getState().channels['track:1']!.inserts.at(-1)!.params).toEqual({});
+    // "As a fresh slot would have them" is the §5.7 defaults of the INCOMING effect, not an
+    // empty record: an empty one left the store reading the range floor of an effect the
+    // graph was already running at its defaults (issue #131). The outgoing effect's own
+    // values are still discarded — `feedback` is not a reverb parameter at all.
+    const params = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!.params;
+    expect(params).toEqual(defaultEffectParams('reverb'));
+    expect(params.feedback).toBeUndefined();
   });
 
   it('keeps a bypassed slot bypassed but enables one that was empty', () => {

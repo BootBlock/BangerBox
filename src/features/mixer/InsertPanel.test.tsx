@@ -8,7 +8,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultChannelStrip, EFFECT_TYPES, type EffectType } from '@/core/project/schemas';
-import { EFFECT_PARAM_CHOICES } from '@/core/audio/inserts/effectParams';
+import { defaultEffectParams, EFFECT_PARAM_CHOICES } from '@/core/audio/inserts/effectParams';
 import { useMixerStore, useUIStore } from '@/store';
 import { InsertPanel } from './InsertPanel';
 
@@ -60,7 +60,11 @@ describe('InsertPanel replace (spec §8.5.6)', () => {
 
     await user.selectOptions(screen.getByLabelText('Replace insert 1'), 'reverb');
 
-    expect(stripNow().inserts[0]!.params).toEqual({});
+    // The incoming effect's own §5.7 defaults, which is what a slot the user just added
+    // carries too (issue #131). What must not survive is the OUTGOING effect's taste:
+    // `feedback` is a delay parameter and means nothing to a reverb.
+    expect(stripNow().inserts[0]!.params).toEqual(defaultEffectParams('reverb'));
+    expect(stripNow().inserts[0]!.params.feedback).toBeUndefined();
   });
 
   it('keeps the Q-Link binding on the same slot, now naming the new effect (spec §10.3)', async () => {
@@ -167,22 +171,25 @@ describe('parameter knobs read as words and units (spec §8.2, issue #35)', () =
 
   it('announces each parameter in the unit its §5.7 range is stated in', () => {
     renderPanel();
+    // The seeded value, which the completion leaves alone.
     expect(screen.getByRole('slider', { name: 'Feedback, insert 1, Delay' })).toHaveAttribute(
       'aria-valuetext',
       '60 %',
     );
+    // The §5.7 defaults, which is what the graph is running — these read as the range FLOOR
+    // ("1 ms", "200 Hz", "−6.0 dBFS") until issue #131, while the delay echoed at 350 ms.
     expect(screen.getByRole('slider', { name: 'Time, insert 1, Delay' })).toHaveAttribute(
       'aria-valuetext',
-      '1 ms',
+      '350 ms',
     );
     expect(screen.getByRole('slider', { name: 'Tone, insert 1, Delay' })).toHaveAttribute(
       'aria-valuetext',
-      '200 Hz',
+      '6.0 kHz',
     );
     // §5.7 states the limiter's ceiling against full scale, and the readout keeps that.
     expect(screen.getByRole('slider', { name: 'Ceiling, insert 2, Limiter' })).toHaveAttribute(
       'aria-valuetext',
-      '−6.0 dBFS',
+      '−0.3 dBFS',
     );
   });
 });

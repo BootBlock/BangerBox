@@ -148,6 +148,39 @@ export interface AudioProbe {
   liveEraseWrapProof: () => Promise<LiveEraseWrapResult>;
   /** `songAdvanced` indexes §7.9's position-sorted entries, repeats and all (issue #130). */
   songEntryIndexProof: () => Promise<SongEntryIndexResult>;
+  /** A slot's stored params are the ones the graph runs, fresh or reloaded (issue #131). */
+  insertDefaultsProof: () => Promise<InsertDefaultsResult>;
+}
+
+/**
+ * What the store SAYS about one insert parameter, and what the graph DOES with it — the two
+ * numbers issue #131 is the disagreement between (spec §3.4).
+ */
+export interface InsertAgreement {
+  /** What a reader of the store gets: the stored value, or the §7.8 range floor if absent. */
+  readonly storeTimeMs: number;
+  /** Whether the slot carries the parameter at all, or the number above is that fallback. */
+  readonly stored: boolean;
+  /** Where the echo lands for a delay built from those very params, in ms (spec §11.2). */
+  readonly graphTimeMs: number;
+  /** Peak of that echo, so a silent render is distinguishable from a mistimed one. */
+  readonly echoPeak: number;
+}
+
+/** Outcome of the §5.7 insert-defaults proof (see {@link AudioProbe.insertDefaultsProof}). */
+export interface InsertDefaultsResult {
+  /** The §7.8 address the proof drives, so a failure names the slot it drove. */
+  readonly path: string;
+  /** A slot the user just added, through the real §8.5.6 store action. */
+  readonly added: InsertAgreement;
+  /** The same slot after a save and a real §4.4 project reload. */
+  readonly reloaded: InsertAgreement;
+  /** The slot as a project written BEFORE the fix holds it: `params: {}` in the §9.3 column. */
+  readonly legacy: InsertAgreement;
+  /** Where that first touch put the parameter, so a failed undo is told from a failed touch. */
+  readonly touchedToMs: number;
+  /** What an undo of the first touch of a fresh insert returns the parameter to, in ms. */
+  readonly undoneToMs: number;
 }
 
 /** Outcome of the §7.7 loop-boundary erase proof (see {@link liveEraseWrapProof}). */
@@ -1905,6 +1938,100 @@ async function platformNoticeProof(): Promise<PlatformNoticeResult> {
   return { ...result, noticesAfterDismiss };
 }
 
+/**
+ * A slot's params are the ones the graph runs, however the slot got there (issue #131).
+ *
+ * §3.4 requires that "the store value reflects the actual node state", and the two halves are
+ * measured separately here because that is the only way the disagreement is visible: the
+ * store number is taken through the same fallback every reader uses, and the graph number is
+ * an offline render of a delay built from the slot's params VERBATIM — the record
+ * `applyInserts` hands `createInsert` (spec §4.3, §11.2).
+ *
+ * Three slots, because a fix at the creating action alone leaves the third one wrong: one
+ * just added, one after a real save and reload, and one written into the §9.3 `tracks.mixer`
+ * column the way a build before this fix wrote it.
+ */
+async function insertDefaultsProof(): Promise<InsertDefaultsResult> {
+  const { insertParamPath } = await import('@/core/audio/params/registry');
+  const { EFFECT_PARAM_RANGES } = await import('@/core/audio/inserts/effectParams');
+  const { undo } = await import('@/store/undo').then((m) => m.useUndoStore.getState());
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load the project fresh, so the strips come off the §9.3 rows rather than from whatever an
+  // earlier probe left in the stores.
+  await projectService.loadProject(projectId);
+  // The MASTER strip, because every project has exactly one and no mode can hide it: a track
+  // strip belongs to a sequence, and §8.5.6's Tracks tab shows only the active sequence's.
+  // It persists in `projects.payload` (spec §9.3), which is the column the legacy case below
+  // rewrites.
+  const channelId = 'master';
+  const timeFloorMs = EFFECT_PARAM_RANGES.delay.time![0];
+
+  /** The slot's delay time as the store holds it, or the §7.8 floor a reader falls back to. */
+  const storedTime = (): { value: number; stored: boolean } => {
+    const slot = useMixerStore.getState().channels[channelId]?.inserts.find((s) => s.id === slotId);
+    // Exactly what `InsertPanel` draws and what `readScalar` takes as a gesture origin.
+    return { value: slot?.params.time ?? timeFloorMs, stored: slot?.params.time !== undefined };
+  };
+
+  /** Both halves for that slot, as they stand right now. */
+  const agreementNow = async (): Promise<InsertAgreement> => {
+    const slot = useMixerStore.getState().channels[channelId]?.inserts.find((s) => s.id === slotId);
+    const echo = await renderDelayEchoOffline({ params: slot?.params ?? {} });
+    const { value, stored } = storedTime();
+    return { storeTimeMs: value, stored, graphTimeMs: echo.echoSeconds * 1000, echoPeak: echo.echoPeak };
+  };
+
+  // The row as it stands before any of this, restored at the end. The proof SAVES a slot and
+  // then rewrites the payload to demonstrate the legacy case, and `installAudioProbe` runs in
+  // production builds — so a probe that did not put this back would replace a real master
+  // chain's tuning with the §5.7 defaults, and grow the chain by a delay on every run.
+  const repos = getActiveRepositories();
+  const rowBefore = await repos.projects.getById(projectId);
+  if (rowBefore === undefined) throw new Error('insertDefaultsProof: the active project has no row.');
+  const payloadBefore = rowBefore.payload;
+
+  // 1 — a slot the user just added, through the action the §8.5.6 slot picker calls. It is
+  // tracked by ID from here on: `replaceInsert` keeps a slot's id and a reload preserves it,
+  // so the id is the one handle that survives every step below.
+  useMixerStore.getState().addInsert(channelId, 'delay');
+  const inserts = useMixerStore.getState().channels[channelId]!.inserts;
+  const slotId = inserts.at(-1)!.id;
+  // Slots are addressed 1-based in the §7.8 grammar (`slot2`).
+  const path = insertParamPath(channelId, inserts.length, 'time');
+  const added = await agreementNow();
+
+  // 2 — saved and loaded back through the real §4.4 path, not re-derived in memory.
+  await projectService.saveNow();
+  await projectService.loadProject(projectId);
+  const reloaded = await agreementNow();
+
+  // 3 — the §9.3 column as a build BEFORE this fix wrote it: an effect, and no parameters.
+  const saved = await repos.projects.getById(projectId);
+  if (saved === undefined) throw new Error('insertDefaultsProof: the active project has no row.');
+  const payload = JSON.parse(saved.payload) as { master?: { inserts?: { params: unknown }[] } };
+  for (const slot of payload.master?.inserts ?? []) slot.params = {};
+  await repos.projects.update(projectId, { payload: JSON.stringify(payload) });
+  await projectService.loadProject(projectId);
+  const legacy = await agreementNow();
+
+  // 4 — the first touch of that knob, undone. The pre-gesture origin is read from the store,
+  // so an absent parameter used to send the delay to its range floor on the very first undo.
+  // Last, because it is the only step that puts an undo entry on the stack: an undo landing
+  // on the wrong entry would take the slot itself back out from under the steps above.
+  useMixerStore.getState().commit(path, 600);
+  const touchedToMs = storedTime().value;
+  undo();
+  const undoneToMs = storedTime().value;
+
+  // Put the project back. The final `loadProject` is what returns the STORE to the row as
+  // well, so neither the added slot nor its undo entries outlive the proof.
+  await repos.projects.update(projectId, { payload: payloadBefore });
+  await projectService.loadProject(projectId);
+
+  return { path, added, reloaded, legacy, touchedToMs, undoneToMs };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -1942,6 +2069,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     songParityProof: () => songParityProof(engine),
     liveEraseWrapProof: () => liveEraseWrapProof(engine),
     songEntryIndexProof: () => songEntryIndexProof(),
+    insertDefaultsProof: () => insertDefaultsProof(),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,
