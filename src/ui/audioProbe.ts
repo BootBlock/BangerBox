@@ -2664,7 +2664,17 @@ async function padStripProof(engine: AudioEngine): Promise<PadStripResult> {
 
   const defaultRms = await measure();
 
-  // 2 — the audible half. 0.8 on the §8.5.6 fader law is −12 dB, a quarter of the amplitude.
+  // 2 — §5.2 solo-in-place, with the pad strips this work made permanent. A pad channel feeds
+  // its TRACK's input (stage 5), so a solo evaluated across ONE group would mute every pad of
+  // the soloed track and render it silent. Measured rather than inspected (spec §11.2), and
+  // measured HERE so the strips are still at their §4.2 defaults: the render above is the
+  // same one with the solo off, which makes the solo the only variable between the two.
+  const soloTrack = useMixerStore.getState().channels[`track:${trackId}`];
+  useMixerStore.getState().setSolo(`track:${trackId}`, true);
+  const soloedTrackRms = await measure();
+  if (soloTrack !== undefined) useMixerStore.getState().setSolo(`track:${trackId}`, soloTrack.solo);
+
+  // 3 — the audible half. 0.8 on the §8.5.6 fader law is −12 dB, a quarter of the amplitude.
   useMixerStore.getState().commit(channelLevelPath(padChannel), 0.8);
   const committedLevel = useMixerStore.getState().channels[padChannel]?.level ?? -1;
   await projectService.saveNow();
@@ -2672,7 +2682,7 @@ async function padStripProof(engine: AudioEngine): Promise<PadStripResult> {
   const reloadedLevel = useMixerStore.getState().channels[padChannel]?.level ?? -1;
   const reloadedRms = await measure();
 
-  // 3 — the other three fields, into the §9.3 column and back onto the strip.
+  // 4 — the other three fields, into the §9.3 column and back onto the strip.
   const mixer = useMixerStore.getState();
   mixer.commit(channelPanPath(padChannel), -0.5);
   mixer.commit(channelSendPath(padChannel, 1), 0.6);
@@ -2689,19 +2699,6 @@ async function padStripProof(engine: AudioEngine): Promise<PadStripResult> {
   await reload();
   const strip = useMixerStore.getState().channels[padChannel];
   const afterReload = padStripReading(strip, strip?.inserts);
-
-  // 4 — §5.2 solo-in-place, with the pad strips this work made permanent. A pad channel
-  // feeds its TRACK's input (stage 5), so a solo evaluated across one group would mute every
-  // pad of the soloed track and render silence. Measured rather than inspected (spec §11.2):
-  // the strip levels are put back to their defaults first, so the only variable is the solo.
-  await reload();
-  const soloTrack = useMixerStore.getState().channels[`track:${trackId}`];
-  if (soloTrack !== undefined) useMixerStore.getState().setSolo(soloTrack.id, true);
-  const soloedTrackRms = await measure();
-  // `setSolo` marks the track dirty, and §14 (aj) makes `loadProject` REFUSE over unsaved
-  // work — so the restore below would throw rather than restore. The write goes to the
-  // probe's own track row, which the removal takes with it.
-  await projectService.saveNow();
 
   // Put the project back: the probe's own rows go, and the load takes its stores with them.
   // The sequence cascades to the track and the track to its events (spec §9.3).

@@ -136,7 +136,7 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
     its TRACK's input (stage 5), so a solo judged across one group mutes every pad of the
     soloed track and silences it. Pre-existing and hard to reach — no pad strip existed on a
     fresh load — and permanent strips would have made it the state of every session. §8.5.3's
-    two lists and §8.5.6's two tabs are the same reading. Measured: 0.00308 RMS against
+    two lists and §8.5.6's two tabs are the same reading. Measured: 0.00973 RMS against
     0.10244 unsoloed, on the one-group build.
   - **`applyPadStripEdit` marks the program dirty ITSELF.** `commit` runs `apply()` — and so
     the mirror's write — before it marks anything, and §8.5.6's insert reorder reaches the

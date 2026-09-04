@@ -754,7 +754,7 @@ async function assertShellAndSelfTest(page, label) {
       );
     }
     console.log(
-      `       pad strip: bounce ${r.defaultRms.toFixed(5)} → ${r.reloadedRms.toFixed(5)} RMS (×${ratio.toFixed(4)}) after a save and reload; disk and strip both read 0.8 / −0.5 / 0.6 / delay ${DELAY_DEFAULT_MS} ms`,
+      `       pad strip: bounce ${r.defaultRms.toFixed(5)} → ${r.reloadedRms.toFixed(5)} RMS (×${ratio.toFixed(4)}) after a save and reload; disk and strip both read 0.8 / −0.5 / 0.6 / delay ${DELAY_DEFAULT_MS} ms; soloed track ${r.soloedTrackRms.toFixed(5)} RMS`,
     );
   });
 
