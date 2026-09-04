@@ -136,6 +136,66 @@ describe('subscribeSequencerSync — incremental forwarding (spec §4.3)', () =>
     ]);
   });
 
+  /**
+   * spec §7.1.3, §7.9, issue #132: the sender ships the WHOLE project and the worker's
+   * schedule path selects the sequence it is playing. Narrowing here instead would empty song
+   * mode, which selects a different sequence per segment, and would turn every switch of
+   * active sequence into the full re-send §7.1.3 forbids during playback. This is the guard
+   * against fixing #132 on the wrong side of the wire.
+   */
+  it('forwards an events diff for a track outside the active sequence', () => {
+    const other = createDefaultSequence('proj', 1, 'Other', 'O');
+    const otherTrack = createDefaultTrack('O', 'prog', 0, 'Other track', 'drum', 't2');
+    useSequenceStore.getState().hydrate({
+      sequences: { S: SEQ, O: other },
+      tracks: { t1: TRACK, t2: otherTrack },
+      events: {},
+      automation: {},
+      songEntries: [],
+    });
+    useTransportStore.setState({ activeSequenceId: 'S', playbackMode: 'sequence' });
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+    scheduler.sendEventsDiff.mockClear();
+
+    useSequenceStore.getState().addEvents('t2', [event('n1', 0)]);
+    expect(scheduler.sendEventsDiff).toHaveBeenCalledWith('t2', 'O', [event('n1', 0)], []);
+  });
+
+  /**
+   * spec §7.1.4: with no user brace the loop IS the active sequence's own length, so anything
+   * that changes which sequence is active — or that sequence's length — changes the loop too.
+   * Found reviewing issue #132: while every sequence played at once the wrong loop length was
+   * one symptom among many, and with one sequence playing it is the whole of what is heard.
+   */
+  it('re-derives the implicit loop when the active sequence changes', () => {
+    const long = { ...createDefaultSequence('proj', 1, 'Long', 'L'), lengthBars: 4 };
+    useSequenceStore.getState().hydrate({
+      sequences: { S: SEQ, L: long },
+      tracks: { t1: TRACK },
+      events: {},
+      automation: {},
+      songEntries: [],
+    });
+    useTransportStore.setState({ activeSequenceId: 'S', playbackMode: 'sequence', loopEnabled: false });
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+    expect(scheduler.setLoop).toHaveBeenLastCalledWith(true, 0, 7680); // 2 bars of 4/4
+
+    useTransportStore.getState().setActiveSequenceId('L');
+    expect(scheduler.setLoop).toHaveBeenLastCalledWith(true, 0, 15360); // 4 bars of 4/4
+  });
+
+  it('re-derives the implicit loop when the active sequence is made longer', () => {
+    seed();
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+    scheduler.setLoop.mockClear();
+
+    useSequenceStore.getState().updateSequence('S', { lengthBars: 4 });
+    expect(scheduler.setLoop).toHaveBeenLastCalledWith(true, 0, 15360);
+  });
+
   it('stops forwarding after dispose', () => {
     seed();
     const scheduler = fakeScheduler();
