@@ -12,6 +12,7 @@ import type { SwingDivision } from '@/store/useTransportStore';
 import type { WorkerLike } from '@/core/storage/rpc';
 import {
   parseSchedulerResponse,
+  SCHEDULER_PROTOCOL_VERSION,
   type ScheduledEvent,
   type SchedulerRequest,
   type SchedulerSequenceMeta,
@@ -58,9 +59,18 @@ export class SchedulerClient {
     this.#worker.addEventListener('message', this.#handleMessage);
   }
 
-  /** Initialise the worker with the playhead SAB and begin clock syncing (spec §7.1.2). */
+  /**
+   * Initialise the worker with the playhead SAB and begin clock syncing (spec §7.1.2).
+   *
+   * The handshake carries this build's {@link SCHEDULER_PROTOCOL_VERSION} so the worker can
+   * name a skew rather than silently dropping messages it does not understand (issue #96).
+   */
   start(): void {
-    this.#send({ kind: 'init', playheadSab: this.#options.playheadSab });
+    this.#send({
+      kind: 'init',
+      playheadSab: this.#options.playheadSab,
+      protocolVersion: SCHEDULER_PROTOCOL_VERSION,
+    });
     this.sendClockSync();
     this.#clockTimer = setInterval(() => this.sendClockSync(), CLOCK_SYNC_INTERVAL_MS);
   }

@@ -14,13 +14,14 @@
 import { LOOKAHEAD_MS } from '@/core/constants';
 import {
   automationLaneKey,
+  parseAutomationLaneKey,
   type AutomationPoint,
   type MidiEvent,
   type TimeSignature,
 } from '@/core/project/schemas';
 import type { SwingDivision } from '@/store/useTransportStore';
 import { arpeggiatorHits, type ArpConfig, type ArpHeldNote } from './arpeggiator';
-import { automationValueAt, resolveEffectivePoints } from './automation';
+import { automationRampForWindow, resolveEffectivePoints } from './automation';
 import {
   eventsInWindow,
   loopActive,
@@ -34,11 +35,13 @@ import { noteRepeatHits, type HeldNote, type NoteRepeatDivision } from './noteRe
 import { secondsToTicks, ticksPerBar, ticksPerBeat, ticksToSeconds } from './ppqn';
 import {
   buildSongMap,
+  segmentAtSongTick,
   songSecondsToTick,
   songTickToSeconds,
   songTotalSeconds,
   songWindowSlices,
   type SongSegment,
+  type SongWindowSlice,
 } from './songMap';
 import { clamp } from '@/core/math';
 import { swingOffsetTicks } from './swing';
@@ -60,7 +63,17 @@ interface TrackEvents {
   events: MidiEvent[];
 }
 
+/**
+ * A note-on awaiting its note-off during a recording pass (spec §7.7).
+ *
+ * It carries its own `trackId` and `note` rather than leaving them to be recovered from the
+ * map key. The key is `${trackId}:${note}`, and splitting one back apart is an assumption
+ * about ids restated at a call site — the same shape of defect as note repeat's owner
+ * lookup (issue #25, issue #96).
+ */
 interface OpenNote {
+  readonly trackId: string;
+  readonly note: number;
   readonly startTick: number;
   readonly velocity: number;
 }
@@ -149,6 +162,12 @@ export class SchedulerCore {
   private lastLoopPass = 0;
   private lastEntryIndex = -1;
   private lastSongPass = 0;
+  /**
+   * The song segment the scheduler last emitted for, counted across passes so a one-entry
+   * song that loops still changes it at every wrap. Song mode's equivalent of a loop pass
+   * (spec §7.7, §7.9), and so where a recording flushes (issue #94).
+   */
+  private lastSegmentOrdinal = -1;
   private pendingStart = false;
   private stopRequested = false;
   /** A tempo set while playing, applied at the next wake with a re-anchor (issue #74). */
@@ -292,14 +311,14 @@ export class SchedulerCore {
     if (on) {
       this.heldNotes.set(key, { note, velocity, trackId });
       if (this.recording && this.contentStarted(when)) {
-        this.openNotes.set(key, { startTick: this.positionTickAt(when), velocity });
+        this.openNotes.set(key, { trackId, note, startTick: this.captureTickAt(when), velocity });
       }
     } else {
       this.heldNotes.delete(key);
       const open = this.openNotes.get(key);
       if (open && this.recording) {
         this.openNotes.delete(key);
-        this.captureNote(trackId, note, open, this.positionTickAt(when));
+        this.captureNote(trackId, note, open, this.captureTickAt(when));
       }
     }
   }
@@ -387,6 +406,7 @@ export class SchedulerCore {
     this.lastLoopPass = loopPassAt(this.originTick, this.loop);
     this.lastEntryIndex = -1;
     this.lastSongPass = 0;
+    this.lastSegmentOrdinal = -1;
   }
 
   private resetPlayback(): void {
@@ -495,6 +515,26 @@ export class SchedulerCore {
       return songSecondsToTick(this.songMap, within);
     }
     return sequenceTickAt(this.originTick + secondsToTicks(elapsed, this.bpm), this.loop);
+  }
+
+  /**
+   * The tick a capture is written at (spec §7.7) — always a position inside the PATTERN,
+   * never on the transport's own timeline.
+   *
+   * {@link positionTickAt} answers where the playhead is, which in song mode is an absolute
+   * song tick spanning the whole arrangement (spec §7.9). A captured event lands in
+   * `midi_events.tick_start` (spec §9.3), which is a tick inside the track's own sequence,
+   * so a take played during the third bar of a song was written at ~4800 on a 3840-tick
+   * pattern — past its end, where it could never sound again. Song mode folds the song
+   * position onto the sequence tick of the segment under the playhead (issue #94).
+   *
+   * Sequence mode already returned a sequence tick, so nothing there changes.
+   */
+  private captureTickAt(when: number): number {
+    const tick = this.positionTickAt(when);
+    if (this.playbackMode !== 'song') return tick;
+    const segment = segmentAtSongTick(this.songMap, tick);
+    return segment ? tick - segment.startTick : tick;
   }
 
   // --- metronome + count-in (spec §7.7) ---
@@ -623,7 +663,10 @@ export class SchedulerCore {
     if (!this.noteRepeatEnabled || this.heldNotes.size === 0) return;
     const held: (HeldNote & { trackId: string })[] = [...this.heldNotes.values()];
     for (const hit of noteRepeatHits(held, this.noteRepeatDivision, from, to)) {
-      const owner = held.find((h) => h.note === hit.note)!;
+      // The owner comes back ON the hit. Looking it up by note number returned the first
+      // held entry for every track sharing that note, so holding one pad on two tracks
+      // fired both hits on the first and recorded both takes there (issue #25).
+      const { trackId } = hit.pad;
       const seqTick = sequenceTickAt(hit.tick, this.loop);
       const swung = hit.tick + swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision);
       const when = this.anchorContext + ticksToSeconds(swung - this.originTick, this.bpm);
@@ -631,27 +674,31 @@ export class SchedulerCore {
         kind: 'noteOn',
         when,
         tick: seqTick,
-        trackId: owner.trackId,
+        trackId,
         note: hit.note,
         velocity: hit.velocity,
         durationSec: 0,
         bpm: this.bpm,
       });
-      if (this.recording) this.captureAt(owner.trackId, hit.note, hit.velocity, seqTick, seqTick + 1);
+      if (this.recording) this.captureAt(trackId, hit.note, hit.velocity, seqTick, seqTick + 1);
     }
   }
 
-  // --- arpeggiator (spec §7.3) ---
-  private scheduleArpeggiator(result: SchedulerTickResult, from: number, to: number): void {
-    if (!this.arpEnabled || this.heldNotes.size === 0) return;
-    // Arpeggiate each track's held chord independently (keygroup tracks, spec §7.3).
+  /** Held pads grouped by owning track — the arpeggiator runs each track's chord (spec §7.3). */
+  private heldByTrack(): Map<string, ArpHeldNote[]> {
     const byTrack = new Map<string, ArpHeldNote[]>();
     for (const held of this.heldNotes.values()) {
       const list = byTrack.get(held.trackId) ?? [];
       list.push({ note: held.note, velocity: held.velocity });
       byTrack.set(held.trackId, list);
     }
-    for (const [trackId, chord] of byTrack) {
+    return byTrack;
+  }
+
+  // --- arpeggiator (spec §7.3) ---
+  private scheduleArpeggiator(result: SchedulerTickResult, from: number, to: number): void {
+    if (!this.arpEnabled || this.heldNotes.size === 0) return;
+    for (const [trackId, chord] of this.heldByTrack()) {
       for (const hit of arpeggiatorHits(chord, this.arpConfig, from, to)) {
         const seqTick = sequenceTickAt(hit.tick, this.loop);
         const swung = hit.tick + swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision);
@@ -680,39 +727,63 @@ export class SchedulerCore {
     const rampEnd = this.anchorContext + ticksToSeconds(to - this.originTick, this.bpm);
     const seqTo = sequenceTickAt(to, this.loop);
     for (const targetPath of this.automatedTargets()) {
-      const points = this.effectivePoints(targetPath);
-      const value = automationValueAt(points, seqTo);
-      if (value === null) continue;
-      result.batch.push({ kind: 'automationRamp', when, tick: seqTo, target: targetPath, value, rampEnd });
+      const { points } = this.effectivePoints(targetPath, this.activeSequenceId);
+      const ramp = automationRampForWindow(targetPath, points, seqTo, when, rampEnd);
+      if (ramp) this.pushRamp(result, ramp, seqTo);
     }
+  }
+
+  /** Turn one resolved lane ramp into a §7.1.3 `automationRamp` event. */
+  private pushRamp(
+    result: SchedulerTickResult,
+    ramp: { targetPath: string; value: number; when: number; rampEnd: number },
+    tick: number,
+  ): void {
+    result.batch.push({
+      kind: 'automationRamp',
+      when: ramp.when,
+      tick,
+      target: ramp.targetPath,
+      value: ramp.value,
+      rampEnd: ramp.rampEnd,
+    });
   }
 
   /** Distinct automatable target paths across all lanes (spec §7.8). */
   private automatedTargets(): Set<string> {
     const targets = new Set<string>();
     for (const key of this.automation.keys()) {
-      // key = `${scope}:${ownerId}:${targetPath}`
-      const secondColon = key.indexOf(':', key.indexOf(':') + 1);
-      targets.add(key.slice(secondColon + 1));
+      const parts = parseAutomationLaneKey(key);
+      if (parts) targets.add(parts.targetPath);
     }
     return targets;
   }
 
-  /** Track-scope wins over sequence-scope for a target (spec §7.8). Sequence lane only for the active sequence. */
-  private effectivePoints(targetPath: string): readonly AutomationPoint[] {
+  /**
+   * The lane that governs a target, and which scope it came from (spec §7.8).
+   *
+   * Track scope wins over sequence scope while both hold points. A sequence lane plays only
+   * while its own sequence is the pattern playing: the active sequence in sequence mode, and
+   * the SEGMENT's sequence in song mode (spec §7.9) — resolving song mode against the
+   * transport's `activeSequenceId` would silence every other sequence's lane for the whole
+   * song. The scope comes back with the points because it decides which tick the value is
+   * sampled at; see {@link scheduleSongAutomation}.
+   */
+  private effectivePoints(
+    targetPath: string,
+    sequenceId: string | null,
+  ): { points: readonly AutomationPoint[]; scope: AutomationPoint['scope'] | null } {
     let trackPoints: AutomationPoint[] | undefined;
     let sequencePoints: AutomationPoint[] | undefined;
     for (const [key, points] of this.automation) {
-      const firstColon = key.indexOf(':');
-      const secondColon = key.indexOf(':', firstColon + 1);
-      const scope = key.slice(0, firstColon);
-      const ownerId = key.slice(firstColon + 1, secondColon);
-      const path = key.slice(secondColon + 1);
-      if (path !== targetPath) continue;
-      if (scope === 'track') trackPoints = points;
-      else if (scope === 'sequence' && ownerId === this.activeSequenceId) sequencePoints = points;
+      const parts = parseAutomationLaneKey(key);
+      if (!parts || parts.targetPath !== targetPath) continue;
+      if (parts.scope === 'track') trackPoints = points;
+      else if (parts.ownerId === sequenceId) sequencePoints = points;
     }
-    return resolveEffectivePoints(trackPoints, sequencePoints);
+    const points = resolveEffectivePoints(trackPoints, sequencePoints);
+    const scope = points.length === 0 ? null : points === trackPoints ? 'track' : 'sequence';
+    return { points, scope };
   }
 
   // --- live erase (spec §7.7) ---
@@ -731,10 +802,19 @@ export class SchedulerCore {
       if (!this.eraseNotes.has(`${trackId}:${windowed.item.note}`)) continue;
       ids.add(windowed.item.id);
     }
-    if (ids.size > 0) {
-      track.events = track.events.filter((e) => !ids.has(e.id));
-      result.erased.push({ trackId, eventIds: [...ids] });
-    }
+    this.reportErased(result, trackId, track, ids);
+  }
+
+  /** Apply and report the deletions a window swept (spec §7.7). Shared by both modes. */
+  private reportErased(
+    result: SchedulerTickResult,
+    trackId: string,
+    track: TrackEvents,
+    ids: ReadonlySet<string>,
+  ): void {
+    if (ids.size === 0) return;
+    track.events = track.events.filter((e) => !ids.has(e.id));
+    result.erased.push({ trackId, eventIds: [...ids] });
   }
 
   // --- song mode (spec §7.9) ---
@@ -808,6 +888,11 @@ export class SchedulerCore {
    * Emit one pass's slice of the window, given in song seconds within that pass. Each pass
    * re-announces its entries (spec §7.9: a wrap "resets its last-entry cursor so
    * `songAdvanced` fires again for the first entry").
+   *
+   * Song mode does everything sequence mode does (issue #94). It used to emit written notes
+   * and nothing else — no live erase (§7.7), no automation (§7.8), no note repeat or
+   * arpeggiator (§7.3), and no capture flush until the transport stopped. None of the five
+   * was scoped to sequence mode by the spec; they were simply never called.
    */
   private emitSongPass(
     result: SchedulerTickResult,
@@ -826,6 +911,7 @@ export class SchedulerCore {
     }
     // Wall-clock time of this pass's song tick 0.
     const passOrigin = this.anchorContext + pass * total - origin;
+    const erasing = this.eraseNotes.size > 0;
 
     for (const slice of songWindowSlices(this.songMap, from, to)) {
       const { segment } = slice;
@@ -833,10 +919,13 @@ export class SchedulerCore {
         result.songAdvanced.push(segment.entryIndex);
         this.lastEntryIndex = segment.entryIndex;
       }
+      this.flushOnSegmentChange(result, pass, segment);
       for (const [trackId, track] of this.tracks) {
         if (track.sequenceId !== segment.sequenceId) continue;
+        const erased = new Set<string>();
         for (const event of track.events) {
           if (event.tickStart < slice.seqFrom || event.tickStart >= slice.seqTo) continue;
+          if (erasing && this.eraseNotes.has(`${trackId}:${event.note}`)) erased.add(event.id);
           const songTick = segment.startTick + event.tickStart;
           // Swing (§7.4) and groove (§7.5) are "applied at schedule time" with no song-mode
           // exemption, so the offset is added here too. It is added in *seconds at the
@@ -860,7 +949,128 @@ export class SchedulerCore {
             bpm: segment.bpm,
           });
         }
+        // After the read above, never during it: `reportErased` replaces `track.events`.
+        this.reportErased(result, trackId, track, erased);
       }
+      this.scheduleSongAutomation(result, slice, passOrigin);
+    }
+    this.scheduleSongNoteRepeat(result, from, to, passOrigin);
+    this.scheduleSongArpeggiator(result, from, to, passOrigin);
+  }
+
+  /**
+   * Merge the take as each song segment passes (spec §7.7, §7.9, issue #94).
+   *
+   * §7.7 merges an overdub into the track "each loop pass", and a song's equivalent of a
+   * pass is one segment — one play of one sequence. Flushing only at stop meant a crash or
+   * a tab kill mid-song lost the entire take, which is the only one of song mode's five
+   * omissions that costs the user data rather than sound.
+   *
+   * The ordinal counts passes as well as segments, so a one-entry song with looping on
+   * still changes it at every wrap instead of looking like the same segment for ever.
+   */
+  private flushOnSegmentChange(result: SchedulerTickResult, pass: number, segment: SongSegment): void {
+    const ordinal = pass * this.songMap.length + this.songMap.indexOf(segment);
+    if (ordinal === this.lastSegmentOrdinal) return;
+    this.lastSegmentOrdinal = ordinal;
+    this.flushRecording(result);
+  }
+
+  /**
+   * Schedule the automation ramps covering one song slice (spec §7.8, §7.9).
+   *
+   * Times come from absolute song seconds, so a segment carrying its own tempo ramps over
+   * its own duration. The VALUE tick depends on the scope, and this is the one place §7.8's
+   * two scopes are observably different: a sequence lane "loops with the pattern", so it is
+   * sampled at the segment's own sequence tick and restarts with every repeat of that
+   * sequence; a track lane "spans the song arrangement", so it is sampled at the absolute
+   * song tick and keeps climbing across an entry boundary. Sequence mode has no arrangement
+   * to span — the pattern IS the arrangement there — so it samples both at the wrapped
+   * sequence tick, exactly as before.
+   */
+  private scheduleSongAutomation(
+    result: SchedulerTickResult,
+    slice: SongWindowSlice,
+    passOrigin: number,
+  ): void {
+    const { segment } = slice;
+    const fromSongTick = segment.startTick + slice.seqFrom;
+    const toSongTick = segment.startTick + slice.seqTo;
+    const when = passOrigin + songTickToSeconds(this.songMap, fromSongTick);
+    const rampEnd = passOrigin + songTickToSeconds(this.songMap, toSongTick);
+    for (const targetPath of this.automatedTargets()) {
+      const { points, scope } = this.effectivePoints(targetPath, segment.sequenceId);
+      const valueTick = scope === 'track' ? toSongTick : slice.seqTo;
+      const ramp = automationRampForWindow(targetPath, points, valueTick, when, rampEnd);
+      if (ramp) this.pushRamp(result, ramp, valueTick);
+    }
+  }
+
+  /** Note repeat on the song timeline (spec §7.3, §7.9). */
+  private scheduleSongNoteRepeat(
+    result: SchedulerTickResult,
+    from: number,
+    to: number,
+    passOrigin: number,
+  ): void {
+    if (!this.noteRepeatEnabled || this.heldNotes.size === 0) return;
+    const held: (HeldNote & { trackId: string })[] = [...this.heldNotes.values()];
+    for (const hit of noteRepeatHits(held, this.noteRepeatDivision, from, to)) {
+      this.emitSongHit(result, passOrigin, hit.tick, hit.pad.trackId, hit.note, hit.velocity, 0);
+    }
+  }
+
+  /** The arpeggiator on the song timeline (spec §7.3, §7.9). */
+  private scheduleSongArpeggiator(
+    result: SchedulerTickResult,
+    from: number,
+    to: number,
+    passOrigin: number,
+  ): void {
+    if (!this.arpEnabled || this.heldNotes.size === 0) return;
+    for (const [trackId, chord] of this.heldByTrack()) {
+      for (const hit of arpeggiatorHits(chord, this.arpConfig, from, to)) {
+        this.emitSongHit(result, passOrigin, hit.tick, trackId, hit.note, hit.velocity, hit.durationTicks);
+      }
+    }
+  }
+
+  /**
+   * Place one live-generated hit — a §7.3 note repeat or arp step — on the song timeline.
+   *
+   * The grid is enumerated in SONG ticks, so a repeat stays locked to the song's own bar
+   * line across an entry boundary rather than re-phasing at every segment. Swing and the
+   * note's duration are then converted at the tempo of the segment the hit lands in, and
+   * the emitted `tick` is that segment's sequence tick — the same domain a written note
+   * carries, and the one a capture has to be recorded in (spec §9.3).
+   */
+  private emitSongHit(
+    result: SchedulerTickResult,
+    passOrigin: number,
+    songTick: number,
+    trackId: string,
+    note: number,
+    velocity: number,
+    durationTicks: number,
+  ): void {
+    const segment = segmentAtSongTick(this.songMap, songTick);
+    if (!segment) return;
+    const seqTick = songTick - segment.startTick;
+    const offsetTicks = swingOffsetTicks(seqTick, this.swingAmount, this.swingDivision);
+    const when =
+      passOrigin + songTickToSeconds(this.songMap, songTick) + ticksToSeconds(offsetTicks, segment.bpm);
+    result.batch.push({
+      kind: 'noteOn',
+      when,
+      tick: seqTick,
+      trackId,
+      note,
+      velocity,
+      durationSec: ticksToSeconds(durationTicks, segment.bpm),
+      bpm: segment.bpm,
+    });
+    if (this.recording) {
+      this.captureAt(trackId, note, velocity, seqTick, seqTick + Math.max(1, durationTicks));
     }
   }
 
@@ -933,10 +1143,12 @@ export class SchedulerCore {
   }
 
   private closeOpenNotes(now: number, _result: SchedulerTickResult): void {
-    const endTick = this.positionTickAt(now);
-    for (const [key, open] of this.openNotes) {
-      const [trackId, note] = key.split(':');
-      this.captureNote(trackId!, Number(note), open, endTick);
+    // The track and note come off the record, not off the map key it is filed under
+    // (issue #96): splitting `${trackId}:${note}` restated an assumption about ids at a
+    // call site, which is exactly the class of defect issue #25 was.
+    const endTick = this.captureTickAt(now);
+    for (const open of this.openNotes.values()) {
+      this.captureNote(open.trackId, open.note, open, endTick);
     }
     this.openNotes.clear();
   }

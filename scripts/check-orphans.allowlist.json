@@ -248,18 +248,13 @@
     },
     {
       "file": "src/core/sequencer/automation.ts",
-      "export": "automationRampForWindow",
-      "reason": "Issue #96 — named there as the dead duplicate of schedulerCore's hand-rolled automation scheduling, to be reconciled in that issue rather than deleted here."
+      "export": "automationValueAt",
+      "reason": "Internal caller: automationRampForWindow, which is now the single implementation of the §7.8 lookahead emission that both transport modes drive (issue #96). Exported so the curve maths — step/linear/exp interpolation and the hold at either end of a lane — is asserted per tick rather than inferred from a scheduled ramp."
     },
     {
       "file": "src/core/sequencer/clockSync.ts",
       "export": "DRIFT_SNAP_SECONDS",
       "reason": "Internal caller: ClockModel.applySync. Exported so the drift threshold is pinned by test."
-    },
-    {
-      "file": "src/core/sequencer/messages.ts",
-      "export": "SCHEDULER_PROTOCOL_VERSION",
-      "reason": "Issue #96 — requires this be attached and checked on the worker handshake, or deleted; #101 depends on it staying 1. Resolve there, not by removing it here."
     },
     {
       "file": "src/core/sequencer/quantise.ts",
@@ -275,11 +270,6 @@
       "file": "src/core/sequencer/songMap.ts",
       "export": "songTotalTicks",
       "reason": "Internal caller: songSecondsToTick."
-    },
-    {
-      "file": "src/core/sequencer/songMap.ts",
-      "export": "segmentAtSongTick",
-      "reason": "Internal caller: songTickToSeconds. Exported so §7.9 segment lookup is testable across tempo changes."
     },
     {
       "file": "src/core/sequencer/swing.ts",

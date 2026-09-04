@@ -83,6 +83,60 @@ describe('SchedulerCore — sequence playback (spec §7.1.4)', () => {
   });
 });
 
+describe('SchedulerCore — applyEventsDiff ordering (spec §7.1.3)', () => {
+  // A diff may carry a delete and an upsert for the same id — an edit the store expresses
+  // as "remove the old row, write the new one". Deletes are therefore applied FIRST, so the
+  // upsert wins; the other order would drop an edited note entirely (issue #96).
+  it('applies deletes before upserts, so an id in both survives with its new value', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    core.applyEventsDiff('t1', 'S', [note('a', 0, 36)], []);
+    core.applyEventsDiff('t1', 'S', [note('a', 960, 38)], ['a']);
+    core.setTransport(true, false, 0);
+
+    const scheduled = notes(run(core, steps(1.2)));
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0]!.note).toBe(38);
+    expect(scheduled[0]!.tick).toBe(960);
+  });
+
+  it('deletes an id the same message does not re-upsert', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    core.applyEventsDiff('t1', 'S', [note('a', 0, 36), note('b', 960, 38)], []);
+    core.applyEventsDiff('t1', 'S', [], ['a']);
+    core.setTransport(true, false, 0);
+
+    expect(notes(run(core, steps(1.2))).map((e) => e.note)).toEqual([38]);
+  });
+});
+
+describe('SchedulerCore — the count-in boundary (spec §7.7)', () => {
+  it('drops a note played during the count-in rather than capturing it at the start tick', () => {
+    // §7.7 starts playback after `countInBars` of metronome, so a pad struck during the
+    // count-in is a rehearsal, not part of the take. Deliberate, and now verified (#96).
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    core.setMetronome(true, 1); // one bar = 2 s at 120 bpm
+    core.setTransport(true, true, 0);
+    core.tick(0);
+
+    core.pushLiveNote(36, 100, true, 0.5, 't1'); // inside the count-in
+    core.pushLiveNote(36, 100, false, 0.9, 't1');
+    core.pushLiveNote(38, 100, true, 2.5, 't1'); // after it
+    core.pushLiveNote(38, 100, false, 2.9, 't1');
+    core.setTransport(false, false, 0);
+
+    const captured = core.tick(3.0).recorded.flatMap((f) => f.events);
+    expect(captured.map((e) => e.note)).toEqual([38]);
+  });
+});
+
 describe('SchedulerCore — loop boundary (spec §7.1.5)', () => {
   it('re-schedules the pattern each pass exactly once and emits loopWrapped', () => {
     const core = new SchedulerCore();

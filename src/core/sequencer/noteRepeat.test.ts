@@ -40,16 +40,18 @@ describe('noteRepeatHits (spec §7.3)', () => {
 
   it('emits every held pad on each grid line at held velocity', () => {
     const hits = noteRepeatHits(held, { value: 8, triplet: false }, 0, 960);
+    // Each hit carries the held entry it came from, so a caller never matches one back by
+    // note number — which is what collapsed two tracks holding one pad into one (issue #25).
     expect(hits).toEqual([
-      { note: 36, velocity: 100, tick: 0 },
-      { note: 38, velocity: 80, tick: 0 },
-      { note: 36, velocity: 100, tick: 480 },
-      { note: 38, velocity: 80, tick: 480 },
+      { note: 36, velocity: 100, tick: 0, pad: held[0] },
+      { note: 38, velocity: 80, tick: 0, pad: held[1] },
+      { note: 36, velocity: 100, tick: 480, pad: held[0] },
+      { note: 38, velocity: 80, tick: 480, pad: held[1] },
     ]);
   });
 
-  it('applies a fixed velocity when provided', () => {
+  it('applies a fixed velocity when provided, leaving the pad’s own velocity on the pad', () => {
     const hits = noteRepeatHits([held[0]!], { value: 8, triplet: false }, 0, 480, 64);
-    expect(hits).toEqual([{ note: 36, velocity: 64, tick: 0 }]);
+    expect(hits).toEqual([{ note: 36, velocity: 64, tick: 0, pad: held[0] }]);
   });
 });

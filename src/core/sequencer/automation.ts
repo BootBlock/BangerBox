@@ -59,22 +59,30 @@ export interface AutomationRamp {
 }
 
 /**
- * Emit the automation ramp for one lane over a lookahead window (spec §7.8). The param is
+ * The automation ramp for one lane over a lookahead window (spec §7.8). The param is
  * ramped toward the lane's value at the window's trailing edge, so as windows advance the
  * param tracks the automation curve at scheduler resolution. No points ⇒ no ramp (live
- * edits are left untouched). Ticks map to seconds through `tickToSeconds` (spec §7.2).
+ * edits are left untouched).
+ *
+ * The **value tick** is passed separately from the two **times**, rather than derived from
+ * them, because the two are in different domains wherever the transport wraps. Sequence
+ * mode times a ramp from the monotonic linear tick and samples the value at the wrapped
+ * sequence tick (§7.1.4); song mode times it from absolute song seconds and samples at the
+ * segment's own sequence tick (§7.9). One `tickToSeconds` callback could express neither
+ * without the caller re-deriving the other half, which is how this rule came to have a
+ * second, hand-rolled implementation inside `SchedulerCore` (issue #96). Both modes now
+ * call this.
  */
 export function automationRampForWindow(
   targetPath: string,
   points: readonly AutomationPoint[],
-  fromTick: number,
-  toTick: number,
-  tickToSeconds: (tick: number) => number,
+  valueTick: number,
+  when: number,
+  rampEnd: number,
 ): AutomationRamp | null {
-  if (points.length === 0 || toTick <= fromTick) return null;
-  const value = automationValueAt(points, toTick);
-  if (value === null) return null;
-  return { targetPath, value, when: tickToSeconds(fromTick), rampEnd: tickToSeconds(toTick) };
+  const value = automationValueAt(points, valueTick);
+  if (value === null || rampEnd <= when) return null;
+  return { targetPath, value, when, rampEnd };
 }
 
 // --- Recording live gestures into a lane (spec §7.8) -------------------------------

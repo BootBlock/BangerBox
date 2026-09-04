@@ -23,11 +23,21 @@ export interface HeldNote {
   readonly velocity: number;
 }
 
-/** One generated repeat trigger at a sequence tick (spec §7.3). */
-export interface NoteRepeatHit {
+/**
+ * One generated repeat trigger at a sequence tick (spec §7.3).
+ *
+ * The hit carries the held entry it came from rather than only its note number, so a
+ * caller never has to find the owner again. Matching a hit back to a pad on note number
+ * alone collapsed the same pad held on two tracks into one owner: both hits fired on the
+ * first track and, while recording, both captured notes were written there (issue #25).
+ * §1.3.1 maps a pad index straight to a note number, so two tracks sharing one is ordinary.
+ */
+export interface NoteRepeatHit<T extends HeldNote = HeldNote> {
   readonly note: number;
   readonly velocity: number;
   readonly tick: number;
+  /** The held pad that produced this hit, with whatever the caller held beside it. */
+  readonly pad: T;
 }
 
 /** Ticks between repeats for a division (spec §7.3). Triplets fit three in the space of two. */
@@ -53,19 +63,19 @@ export function repeatTicksInWindow(from: number, to: number, division: NoteRepe
  * given it overrides each held note's own velocity (the adjustable fixed-velocity option).
  * Hits are ordered by tick, then by the order pads were held.
  */
-export function noteRepeatHits(
-  held: readonly HeldNote[],
+export function noteRepeatHits<T extends HeldNote>(
+  held: readonly T[],
   division: NoteRepeatDivision,
   from: number,
   to: number,
   fixedVelocity?: number,
-): NoteRepeatHit[] {
+): NoteRepeatHit<T>[] {
   if (held.length === 0) return [];
   const ticks = repeatTicksInWindow(from, to, division);
-  const hits: NoteRepeatHit[] = [];
+  const hits: NoteRepeatHit<T>[] = [];
   for (const tick of ticks) {
     for (const pad of held) {
-      hits.push({ note: pad.note, velocity: fixedVelocity ?? pad.velocity, tick });
+      hits.push({ note: pad.note, velocity: fixedVelocity ?? pad.velocity, tick, pad });
     }
   }
   return hits;

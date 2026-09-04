@@ -78,11 +78,13 @@ describe('resolveEffectivePoints (spec §7.8 track wins)', () => {
 });
 
 describe('automationRampForWindow (spec §7.8 lookahead emission)', () => {
+  // The one implementation of the rule, now driven by both transport modes: `SchedulerCore`
+  // used to carry a hand-rolled copy inside `scheduleSequenceAutomation` while this one was
+  // reachable only from its own tests (issue #96).
   const points = [point(0, 0), point(960, 1, 'linear')];
-  const tickToSeconds = (tick: number) => tick / 960; // 1 s per quarter for the test
 
   it('ramps toward the value at the window trailing edge', () => {
-    const ramp = automationRampForWindow('mixer.master.level', points, 0, 480, tickToSeconds);
+    const ramp = automationRampForWindow('mixer.master.level', points, 480, 0, 0.5);
     expect(ramp).toEqual({
       targetPath: 'mixer.master.level',
       value: 0.5, // value at tick 480
@@ -91,9 +93,36 @@ describe('automationRampForWindow (spec §7.8 lookahead emission)', () => {
     });
   });
 
+  it('samples the value independently of the times, which are in another domain', () => {
+    // Song mode times a ramp from absolute song seconds and samples the value at the
+    // segment's own sequence tick (spec §7.9); the two cannot be derived from each other.
+    const ramp = automationRampForWindow('mixer.master.level', points, 240, 12.5, 12.75);
+    expect(ramp).toEqual({ targetPath: 'mixer.master.level', value: 0.25, when: 12.5, rampEnd: 12.75 });
+  });
+
   it('emits nothing for an empty lane or an empty window', () => {
-    expect(automationRampForWindow('t', [], 0, 480, tickToSeconds)).toBeNull();
-    expect(automationRampForWindow('t', points, 480, 480, tickToSeconds)).toBeNull();
+    expect(automationRampForWindow('t', [], 480, 0, 0.5)).toBeNull();
+    expect(automationRampForWindow('t', points, 480, 0.5, 0.5)).toBeNull();
+    expect(automationRampForWindow('t', points, 480, 0.5, 0.25)).toBeNull();
+  });
+
+  it('holds at the lane’s ends for a tick outside its span, and for a single-point lane', () => {
+    // `automationValueAt` documents both, but the emission path never negative-tested them.
+    expect(automationRampForWindow('t', points, -100, 0, 1)?.value).toBe(0);
+    expect(automationRampForWindow('t', points, 99_999, 0, 1)?.value).toBe(1);
+    expect(automationRampForWindow('t', [point(500, 0.4)], 0, 0, 1)?.value).toBe(0.4);
+    expect(automationRampForWindow('t', [point(500, 0.4)], 900, 0, 1)?.value).toBe(0.4);
+  });
+
+  it('takes the earlier of two points sharing a tick, and reads unsorted input as given', () => {
+    // Sorted input is a stated precondition of `automationValueAt`; these pin what the
+    // function actually does when it is broken rather than leaving it to be rediscovered.
+    // `applyAutomationDiff` sorts every lane, so neither case is reachable in production.
+    expect(automationRampForWindow('t', [point(0, 0.2), point(0, 0.9)], 0, 0, 1)?.value).toBe(0.2);
+    // A reversed lane is read as though its first element were its earliest point, so the
+    // whole lane holds at what should have been its end. Garbage in, garbage out — but
+    // stated, rather than left as a mystery for whoever next breaks the sort.
+    expect(automationRampForWindow('t', [point(960, 1), point(0, 0)], 480, 0, 1)?.value).toBe(1);
   });
 });
 

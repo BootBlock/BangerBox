@@ -223,6 +223,12 @@ export interface NoteRenderResult {
   /** Level of the first and second halves, which is how a reversed layer shows itself. */
   readonly firstHalfRms: number;
   readonly secondHalfRms: number;
+  /**
+   * Magnitude of the last audible frame (spec §5.4, issue #87). A voice that fades to true
+   * zero at its region's end leaves a small number here; one whose buffer simply ran out
+   * leaves whatever the waveform was doing, which is the step that clicks.
+   */
+  readonly finalMagnitude: number;
 }
 
 /** The synthesised test sample a render feeds the voice (spec §11.2 — no stored goldens). */
@@ -246,6 +252,14 @@ export interface NoteRenderOptions {
   readonly sampleSeconds?: number;
   /** Transport tempo a §6 tempo-synced LFO locks to (spec §7.2). */
   readonly bpm?: number;
+}
+
+/** Magnitude of the last frame above the noise floor — how a voice ENDED (spec §5.4). */
+function finalMagnitude(data: Float32Array): number {
+  for (let i = data.length - 1; i >= 0; i--) {
+    if (Math.abs(data[i]!) > 1e-3) return Math.abs(data[i]!);
+  }
+  return 0;
 }
 
 /** Seconds from 0 to the last frame above the noise floor. */
@@ -286,6 +300,7 @@ export async function renderProgramNote(
     soundingSeconds: 0,
     firstHalfRms: 0,
     secondHalfRms: 0,
+    finalMagnitude: 0,
   };
   if (!resolved) return empty;
   // A warp pad plays through the §5.7.9 worklet source, which needs its processor and the
@@ -324,6 +339,7 @@ export async function renderProgramNote(
     soundingSeconds: soundingSeconds(data, sampleRate),
     firstHalfRms: rms(data.subarray(0, half)),
     secondHalfRms: rms(data.subarray(half)),
+    finalMagnitude: finalMagnitude(data),
   };
 }
 

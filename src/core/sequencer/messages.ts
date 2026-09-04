@@ -23,7 +23,10 @@
 import { z } from 'zod';
 import {
   automationPointSchema,
+  BPM_RANGE,
   midiEventSchema,
+  ranged,
+  SWING_RANGE,
   type AutomationPoint,
   type MidiEvent,
 } from '@/core/project/schemas';
@@ -31,7 +34,23 @@ import type { NoteRepeatDivision } from './noteRepeat';
 import { grooveTemplateSchema, type GrooveTemplate } from './groove';
 import type { ArpMode } from './arpeggiator';
 
-/** Protocol version — bumped on any breaking change to the message shapes (spec §7.1.3). */
+/**
+ * Protocol version — bumped on any breaking change to the message shapes (spec §7.1.3).
+ *
+ * It rides the `init` handshake and the worker compares it against its own copy, which is
+ * the whole reason it exists: a version nothing attaches and nothing checks cannot detect
+ * the skew it is named for (issue #96). Adding a request or response kind does NOT bump it
+ * — the established rule is extend-by-adding-kinds, never repurpose one (spec §14
+ * 2026-07-17 (f), (g), (i)) — so a newer main thread and an older worker still agree about
+ * every kind they both know.
+ *
+ * A mismatch is REPORTED, not enforced. The two halves are emitted by one Vite build and
+ * loaded from one page, so skew is not reachable today; and refusing to start would turn a
+ * partial disagreement into a dead transport, where the §1.3 #11 Zod guards already drop
+ * exactly the messages the worker cannot understand. What the check buys is a NAME for
+ * that silence — the §11.4 smoke fails on any console error, so a skew would fail the gate
+ * rather than present as a sequencer that quietly does nothing (issue #71's shape).
+ */
 export const SCHEDULER_PROTOCOL_VERSION = 1;
 
 // --- Scheduled events (worker → main, spec §7.1.3) --------------------------------
@@ -76,7 +95,12 @@ export interface SchedulerSequenceMeta {
 // --- Main → worker requests (spec §7.1.3) -----------------------------------------
 
 export type SchedulerRequest =
-  | { readonly kind: 'init'; readonly playheadSab: SharedArrayBuffer }
+  | {
+      readonly kind: 'init';
+      readonly playheadSab: SharedArrayBuffer;
+      /** The sender's {@link SCHEDULER_PROTOCOL_VERSION}, checked by the worker. */
+      readonly protocolVersion: number;
+    }
   | { readonly kind: 'clockSync'; readonly contextTime: number; readonly performanceTime: number }
   | {
       readonly kind: 'transport';
@@ -148,11 +172,35 @@ const noteRepeatDivisionSchema = z.object({
   triplet: z.boolean(),
 });
 
+/**
+ * An entity id crossing into the worker (spec §1.3.1) — and the ONE place the colon-free
+ * invariant those ids rest on is checked (issue #96).
+ *
+ * `SchedulerCore` keys three of its maps `${trackId}:${note}` and its automation lanes
+ * `${scope}:${ownerId}:${targetPath}`, then splits them apart again. §7.8 target paths
+ * CONTAIN colons of their own (`mixer.pad:<prog>:<idx>.sendLevels.2`,
+ * `insert:track:<id>:slot2.mix`), so the splits count separators rather than searching for
+ * one, and that arithmetic is sound only while an id carries none. It does: §1.3.1 makes
+ * every id a `crypto.randomUUID()`, the §9.8 factory generator derives UUID-shaped ids, and
+ * `remapSnapshot` refuses a §9.6 import whose ids are not UUIDs. Stating it here, at the
+ * boundary §1.3 #11 already designates as the worker's validation contract, is what lets
+ * the three splitters be arithmetic with no assumption of their own.
+ *
+ * A §7.8 `targetPath` is deliberately NOT guarded this way — colons are its grammar.
+ */
+const schedulerIdSchema = z
+  .string()
+  .refine((value) => !value.includes(':'), { message: 'An id may not contain ":"' });
+
 const sequenceMetaSchema = z.object({
   lengthBars: z.number().int().min(1),
   timeSigNumerator: z.number().int().min(1),
   timeSigDenominator: z.union([z.literal(2), z.literal(4), z.literal(8), z.literal(16)]),
-  tempo: z.number().nullable(),
+  // The §4.2 range the store already clamps to, not a bare number. An in-app clamp makes an
+  // out-of-range tempo unreachable today; the guard is the contract, so it may not be the
+  // looser of the two (spec §1.3 #11, issue #96). A tempo of 0 divides by zero in the §7.2
+  // tick↔seconds conversion and a negative one runs the tempo map backwards.
+  tempo: ranged(BPM_RANGE).nullable(),
 });
 
 /**
@@ -172,7 +220,11 @@ const playheadSabSchema = z.custom<SharedArrayBuffer>(
 );
 
 const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('init'), playheadSab: playheadSabSchema }),
+  z.object({
+    kind: z.literal('init'),
+    playheadSab: playheadSabSchema,
+    protocolVersion: z.number().int(),
+  }),
   z.object({ kind: z.literal('clockSync'), contextTime: z.number(), performanceTime: z.number() }),
   z.object({
     kind: z.literal('transport'),
@@ -180,39 +232,43 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
     isRecording: z.boolean(),
     startTick: z.number(),
   }),
-  z.object({ kind: z.literal('tempo'), bpm: z.number() }),
+  // Bounded to the §4.2 ranges the store clamps to, not left as bare numbers (issue #96).
+  // With the guard bypassed, `bpm < 0` makes `beatSeconds` negative and the §7.7 click loop
+  // emits its whole structural guard — 4096 clicks — on every wake; a swing amount of 100
+  // shifts a 1/16 fully onto the next grid line.
+  z.object({ kind: z.literal('tempo'), bpm: ranged(BPM_RANGE) }),
   z.object({
     kind: z.literal('swing'),
-    amount: z.number(),
+    amount: ranged(SWING_RANGE),
     division: z.union([z.literal(8), z.literal(16)]),
   }),
   z.object({ kind: z.literal('loop'), enabled: z.boolean(), startTick: z.number(), endTick: z.number() }),
   z.object({
     kind: z.literal('groove'),
-    trackId: z.string(),
+    trackId: schedulerIdSchema,
     template: grooveTemplateSchema.nullable(),
   }),
   z.object({
     kind: z.literal('eventsDiff'),
-    trackId: z.string(),
-    sequenceId: z.string(),
+    trackId: schedulerIdSchema,
+    sequenceId: schedulerIdSchema,
     upserts: z.array(midiEventSchema),
     deletes: z.array(z.string()),
   }),
   z.object({
     kind: z.literal('automationDiff'),
     scope: z.enum(['sequence', 'track']),
-    ownerId: z.string(),
+    ownerId: schedulerIdSchema,
     targetPath: z.string(),
     points: z.array(automationPointSchema),
   }),
-  z.object({ kind: z.literal('songSequence'), orderedSequenceIds: z.array(z.string()) }),
+  z.object({ kind: z.literal('songSequence'), orderedSequenceIds: z.array(schedulerIdSchema) }),
   z.object({ kind: z.literal('songLoop'), enabled: z.boolean() }),
   z.object({
     kind: z.literal('sequenceMeta'),
-    sequences: z.record(z.string(), sequenceMetaSchema),
-    projectBpm: z.number(),
-    activeSequenceId: z.string().nullable(),
+    sequences: z.record(schedulerIdSchema, sequenceMetaSchema),
+    projectBpm: ranged(BPM_RANGE),
+    activeSequenceId: schedulerIdSchema.nullable(),
     playbackMode: z.enum(['sequence', 'song']),
   }),
   z.object({
@@ -221,7 +277,7 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
     velocity: z.number().int(),
     on: z.boolean(),
     timestamp: z.number(),
-    trackId: z.string(),
+    trackId: schedulerIdSchema,
   }),
   z.object({ kind: z.literal('noteRepeat'), enabled: z.boolean(), division: noteRepeatDivisionSchema }),
   z.object({
@@ -239,7 +295,7 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
   }),
   z.object({
     kind: z.literal('liveErase'),
-    trackId: z.string(),
+    trackId: schedulerIdSchema,
     note: z.number().int(),
     active: z.boolean(),
   }),
