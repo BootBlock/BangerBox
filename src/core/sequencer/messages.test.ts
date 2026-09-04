@@ -19,7 +19,7 @@ const event: MidiEvent = {
 
 describe('protocol version (spec §7.1.3)', () => {
   it('is pinned', () => {
-    expect(SCHEDULER_PROTOCOL_VERSION).toBe(1);
+    expect(SCHEDULER_PROTOCOL_VERSION).toBe(2);
   });
 });
 
@@ -44,7 +44,13 @@ describe('parseSchedulerRequest (spec §7.1.3, §1.3 #11)', () => {
         targetPath: 'mixer.track:t1.level',
         points: [],
       },
-      { kind: 'songSequence', orderedSequenceIds: ['a', 'a', 'b'] },
+      {
+        kind: 'songSequence',
+        orderedEntries: [
+          { sequenceId: 'a', repeats: 2 },
+          { sequenceId: 'b', repeats: 1 },
+        ],
+      },
       {
         kind: 'sequenceMeta',
         sequences: { a: { lengthBars: 2, timeSigNumerator: 4, timeSigDenominator: 4, tempo: null } },
@@ -129,7 +135,15 @@ describe('the guard is no looser than the store it mirrors (spec §1.3 #11, issu
       }),
     ).toBeNull();
     expect(parseSchedulerRequest({ kind: 'liveErase', trackId: 'a:b', note: 36, active: true })).toBeNull();
-    expect(parseSchedulerRequest({ kind: 'songSequence', orderedSequenceIds: ['a', 'b:c'] })).toBeNull();
+    expect(
+      parseSchedulerRequest({ kind: 'songSequence', orderedEntries: [{ sequenceId: 'b:c', repeats: 1 }] }),
+    ).toBeNull();
+    // …but `repeats: 0` is an ARRANGEMENT, not corruption (spec §7.9): the entry contributes
+    // no segments and is skipped. The guard refuses a whole message over one bad field, so a
+    // floor of 1 here would silence the entire playlist of a song the spec describes (#130).
+    expect(
+      parseSchedulerRequest({ kind: 'songSequence', orderedEntries: [{ sequenceId: 'a', repeats: 0 }] }),
+    ).not.toBeNull();
     // The target path itself is exempt — §7.8 addresses are built from colons.
     expect(
       parseSchedulerRequest({

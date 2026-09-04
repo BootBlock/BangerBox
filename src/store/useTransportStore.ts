@@ -53,6 +53,18 @@ interface TransportState {
   songLoopEnabled: boolean;
   coarsePosition: CoarsePosition;
   /**
+   * The §7.9 playlist entry song mode is playing, or null when the song is not rolling.
+   *
+   * It is the index into the POSITION-SORTED entry list the worker reports through
+   * `songAdvanced`, so an entry with `repeats: 3` holds this value for all three of its
+   * plays (spec §7.9, issue #130). A consumer MUST sort `useSequenceStore.songEntries` by
+   * `position` before indexing it — the raw array is not the same projection.
+   *
+   * It changes at most once per sequence pass, so it is ordinary React state rather than a
+   * §3.3 high-frequency value; the playhead inside the entry lives in the playhead SAB.
+   */
+  songEntryIndex: number | null;
+  /**
    * Arpeggiator on/off and its settings (spec §7.3). Live performance state, so it lives
    * here beside swing and the metronome rather than in the mode that edits it: the arp
    * keeps running while the user is in Grid or Pad Perform, and its settings have to
@@ -76,6 +88,8 @@ interface TransportState {
   setPlaybackMode: (mode: PlaybackMode) => void;
   setActiveSequenceId: (id: string | null) => void;
   setCoarsePosition: (position: CoarsePosition) => void;
+  /** Report which §7.9 entry song mode reached; null clears the readout (spec §7.9). */
+  setSongEntryIndex: (index: number | null) => void;
   setArpEnabled: (enabled: boolean) => void;
   /** Patch the arp settings; omitted fields keep their current value (spec §7.3). */
   setArpConfig: (config: Partial<ArpConfig>) => void;
@@ -107,12 +121,21 @@ export const useTransportStore = create<TransportState>()(
     loopEndTick: 0,
     songLoopEnabled: false,
     coarsePosition: { bar: 1, beat: 1 },
+    songEntryIndex: null,
     arpEnabled: false,
     arpConfig: DEFAULT_ARP_CONFIG,
 
     play: () => set({ isPlaying: true }),
     // Stopping also disarms recording and returns the readout to the top (spec §4.2).
-    stop: () => set({ isPlaying: false, isRecording: false, coarsePosition: { bar: 1, beat: 1 } }),
+    stop: () =>
+      set({
+        isPlaying: false,
+        isRecording: false,
+        coarsePosition: { bar: 1, beat: 1 },
+        // Nothing is playing, so no entry is: leaving the last one lit would claim the song
+        // is still on it (spec §7.9 returns the playhead to tick 0 on the stop path).
+        songEntryIndex: null,
+      }),
     setRecording: (armed) => set({ isRecording: armed }),
 
     setBpm: (bpm) => set({ bpm: clamp(bpm, BPM_RANGE[0], BPM_RANGE[1]) }),
@@ -143,7 +166,10 @@ export const useTransportStore = create<TransportState>()(
       set({ metronomeLevel: clamp(level, METRONOME_LEVEL_RANGE[0], METRONOME_LEVEL_RANGE[1]) }),
     setCountInBars: (bars) => set({ countInBars: bars }),
     setRecordMode: (recordMode) => set({ recordMode }),
-    setPlaybackMode: (playbackMode) => set({ playbackMode }),
+    // Leaving song mode clears the entry readout for the same reason a stop does: sequence
+    // mode has no playlist position, and the worker sends no `songAdvanced` to clear it.
+    setPlaybackMode: (playbackMode) =>
+      set(playbackMode === 'song' ? { playbackMode } : { playbackMode, songEntryIndex: null }),
     setActiveSequenceId: (activeSequenceId) => set({ activeSequenceId }),
     setArpEnabled: (arpEnabled) => set({ arpEnabled }),
     // Clamped to the §7.3 ranges here rather than at the control, so a value arriving from
@@ -164,5 +190,15 @@ export const useTransportStore = create<TransportState>()(
           beat: clampInt(coarsePosition.beat, 1, 16),
         },
       }),
+    // A report is only meaningful while the song is rolling. The worker learns about a stop
+    // on its next wake (spec §7.1.4), so a `songAdvanced` already in flight arrives after
+    // `stop()` has cleared the readout — and would light a playlist row on a stopped
+    // transport, permanently, since nothing else arrives to correct it.
+    setSongEntryIndex: (songEntryIndex) =>
+      set((state) =>
+        !state.isPlaying && songEntryIndex !== null
+          ? {}
+          : { songEntryIndex: songEntryIndex === null ? null : Math.max(0, Math.floor(songEntryIndex)) },
+      ),
   })),
 );

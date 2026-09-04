@@ -29,6 +29,20 @@ export const TIME_SIG_NUMERATOR_RANGE: Range = [1, 16];
 /** Denominator is one of 2/4/8/16 (spec §7.2). */
 export const TIME_SIG_DENOMINATORS = [2, 4, 8, 16] as const;
 
+/**
+ * Minimum `song_entries.repeats` (spec §7.9, §9.3), and it is **0**, not 1.
+ *
+ * §7.9 gives zero a meaning — "entries with `repeats: 0` contribute no segments and are
+ * skipped" — so a playlist holding one is a legitimate arrangement rather than a corrupt
+ * row. That matters at the §7.1.3 boundary since issue #130: the guard refuses a whole
+ * MESSAGE over one bad field, so a floor of 1 there would have dropped the entire playlist
+ * of a song §7.9 describes, leaving song mode silent with nothing said. Declared here so
+ * the guard and {@link songEntrySchema} take the same floor and neither can be the
+ * stricter. §7.9 states no ceiling — an entry repeated a thousand times is ordinary — so
+ * the bound on WORK lives in `buildSongMap`, not in a value range here.
+ */
+export const SONG_REPEATS_MIN = 0;
+
 // --- MIDI event (spec §9.3 midi_events) ------------------------------------------
 export const NOTE_RANGE: Range = [0, 127];
 export const VELOCITY_RANGE: Range = [1, 127];

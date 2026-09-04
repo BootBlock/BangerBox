@@ -557,6 +557,54 @@ async function assertShellAndSelfTest(page, label) {
     }
   });
 
+  // §7.7 removes a held pad's events "as the loop passes", and the case the unit tests could
+  // not reach is the shape of a REAL lookahead window as the playhead crosses the bar line
+  // (spec §13.5, issue #16). Under the defect the two lists below swap places.
+  await step(`${label}: a live-erase sweep over the loop end takes what it passed (issue #16)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.liveEraseWrapProof());
+    if (r.ticksBefore.length !== 5) {
+      throw new Error(`the probe wrote ${r.ticksBefore.length} notes, not 5 — nothing to sweep`);
+    }
+    const gone = r.ticksBefore.filter((tick) => !r.ticksAfter.includes(tick));
+    // The sweep straddles tick 3840: it takes 3600 on the way out and 0 on the way back in.
+    if (gone.join(',') !== '0,3600') {
+      throw new Error(
+        `the sweep took ticks [${gone.join(', ')}] — expected [0, 3600], survivors [${r.ticksAfter.join(', ')}]`,
+      );
+    }
+    if (r.ticksAfter.join(',') !== '960,1920,2880') {
+      throw new Error(`the ticks away from the sweep did not survive: [${r.ticksAfter.join(', ')}]`);
+    }
+    console.log(`       live erase: swept [${gone.join(', ')}] of a ${r.loopLengthTicks}-tick loop`);
+  });
+
+  // §7.9's `songAdvanced { entryIndex }` indexes the position-sorted ENTRY list, and §8.5.12's
+  // playlist has to mark the same row. Both halves are read from the running application: the
+  // worker's numbering, and the row Song mode lit while the repeated entry was still playing.
+  await step(`${label}: songAdvanced indexes §7.9's sorted entries, repeats and all (#130)`, async () => {
+    await page.getByTestId('mode-tab-song').click();
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.songEntryIndexProof());
+    if (r.entryCount !== 2 || r.segmentCount !== 3) {
+      throw new Error(
+        `the probe built ${r.entryCount} entries over ${r.segmentCount} plays — expected 2 over 3`,
+      );
+    }
+    if (r.reportedIndices.join(',') !== '0,1') {
+      throw new Error(
+        `the worker reported entry indices [${r.reportedIndices.join(', ')}] — a repeat consumed one of its own`,
+      );
+    }
+    if (r.markedRowIndex !== 0 || !r.markedRowText.includes('Entry probe A')) {
+      throw new Error(
+        `row ${r.markedRowIndex} ("${r.markedRowText}") was marked during the repeat — expected row 0, Entry probe A`,
+      );
+    }
+    console.log(
+      `       song entries: reported [${r.reportedIndices.join(', ')}] over ${r.segmentCount} plays of ${r.entryCount} entries`,
+    );
+    await page.getByTestId('mode-tab-main').click();
+  });
+
   // Grid scroll and zoom are held outside React (spec §3.3, §8.4, issue #28). Driven through
   // real wheel events on the real canvas, with the frame time measured across them — §11.5's
   // budget is 60 fps, and a mode re-rendering per wheel event is what used to threaten it.

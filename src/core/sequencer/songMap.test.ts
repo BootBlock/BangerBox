@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createDefaultSequence, type Sequence, type SongEntry } from '@/core/project/schemas';
 import { ticksPerBar } from './ppqn';
 import {
@@ -135,5 +135,26 @@ describe('entries that contribute nothing (spec §7.9)', () => {
     // Sorted: [missing, B, A] → indices 0, 1, 2. The missing entry consumes index 0.
     expect(map.map((segment) => segment.entryIndex)).toEqual([1, 2]);
     expect(map.map((segment) => segment.sequenceId)).toEqual(['B', 'A']);
+  });
+
+  /**
+   * A bound on the WORK, not on the arrangement (issue #130).
+   *
+   * `repeats` has a floor and no ceiling in §7.9, in the §9.3 column or in
+   * `songEntrySchema`, and the count now reaches both the worker that owns the transport
+   * and the §9.5 bounce on the main thread. A damaged §9.6 pack declaring a billion repeats
+   * would allocate a billion segments in either. The walk stops and SAYS so, which is what
+   * `segmentWindow` does for the same class of runaway (issue #95).
+   */
+  it('stops at the segment guard and warns rather than expanding a hostile repeat count', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const map = buildSongMap([entry('e1', 0, 'A', 250_000)], sequences, 100);
+      expect(map).toHaveLength(100_000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('100000 segments');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

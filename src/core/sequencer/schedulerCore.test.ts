@@ -161,7 +161,10 @@ describe('SchedulerCore — song transition (spec §7.9)', () => {
   it('schedules across an entry boundary and advances the song', () => {
     const core = new SchedulerCore();
     oneBarMeta(core, ['A', 'B'], 'A', 'song');
-    core.setSongSequence(['A', 'B']);
+    core.setSongSequence([
+      { sequenceId: 'A', repeats: 1 },
+      { sequenceId: 'B', repeats: 1 },
+    ]);
     core.setTempo(120);
     core.applyEventsDiff('ta', 'A', [note('a', 0, 36)], []);
     core.applyEventsDiff('tb', 'B', [note('b', 0, 38)], []);
@@ -181,7 +184,7 @@ describe('SchedulerCore — song transition (spec §7.9)', () => {
     // must not sound straight just because a song is playing it rather than the sequencer.
     const core = new SchedulerCore();
     oneBarMeta(core, ['A'], 'A', 'song');
-    core.setSongSequence(['A']);
+    core.setSongSequence([{ sequenceId: 'A', repeats: 1 }]);
     core.setTempo(120);
     core.setSwing(75, 16);
     core.applyEventsDiff('ta', 'A', [note('x', 240)], []);
@@ -195,7 +198,7 @@ describe('SchedulerCore — song transition (spec §7.9)', () => {
   it('applies a track groove in song mode (spec §7.5)', () => {
     const core = new SchedulerCore();
     oneBarMeta(core, ['A'], 'A', 'song');
-    core.setSongSequence(['A']);
+    core.setSongSequence([{ sequenceId: 'A', repeats: 1 }]);
     core.setTempo(120);
     core.setGroove('ta', {
       ppqn: PPQN,
@@ -352,6 +355,35 @@ describe('SchedulerCore — live erase (spec §7.7)', () => {
 
     // Window is linear [3763.2, 3859.2) → sequence [3763.2, 3840) ∪ [0, 19.2): 'late' only.
     expect(result.erased).toEqual([{ trackId: 't1', eventIds: ['late'] }]);
+  });
+
+  /**
+   * What a sweep longer than one loop pass means (spec §7.7 does not say).
+   *
+   * §7.7 removes a held pad's events "as the loop passes", which answers the ordinary case
+   * — a window narrower than the loop — and says nothing about a window that laps it. The
+   * rule this pins is the one the wrap-aware window already implies: what goes is the UNION
+   * of the sequence ticks the window passed over, and each event goes exactly ONCE however
+   * many passes swept it. A count would make the number of `erased` reports depend on the
+   * scheduler's wake rate, which is a §7.1.4 implementation detail rather than a musical one.
+   */
+  it('erases the union of a sweep that laps the loop, reporting each event once', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    // A one-beat loop: 960 ticks, 0.5 s at 120 bpm.
+    core.setLoop({ enabled: true, startTick: 0, endTick: 960 });
+    core.applyEventsDiff('t1', 'S', [note('at0', 0), note('other', 240, 38), note('at480', 480)], []);
+    core.setTransport(true, false, 0);
+    core.setLiveErase('t1', 36, true);
+
+    // One wake covering 2.2 passes: linear [192, 2304) → pass 0 [192, 960), pass 1 [0, 960),
+    // pass 2 [0, 384). Tick 480 is swept twice and tick 0 twice; neither may be reported twice.
+    const result = run(core, [0, 1.1]);
+    const ids = result.erased.flatMap((entry) => entry.eventIds);
+    expect(ids.toSorted()).toEqual(['at0', 'at480']);
+    // The other pad is never swept away, however many passes the window laps.
+    expect(notes(result).some((e) => e.note === 38)).toBe(true);
   });
 });
 

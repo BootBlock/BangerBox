@@ -113,6 +113,29 @@ describe('subscribeSequencerSync — incremental forwarding (spec §4.3)', () =>
     expect(scheduler.sendEventsDiff).toHaveBeenCalledWith('t1', 'S', [event('n1', 0)], []);
   });
 
+  /**
+   * spec §7.9, issue #130: the playlist crosses the wire in `position` order with `repeats`
+   * intact, because `songAdvanced { entryIndex }` indexes the ENTRY list. Expanding repeats
+   * here made an entry played twice two entries by the time the worker numbered them.
+   */
+  it('forwards the position-sorted playlist with repeats unexpanded', () => {
+    seed();
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+    scheduler.setSongSequence.mockClear();
+
+    // Written out of order on purpose: `position` is what §7.9 orders by, not array order.
+    useSequenceStore.getState().setSongEntries([
+      { id: 'e2', position: 1, sequenceId: 'S', repeats: 1 },
+      { id: 'e1', position: 0, sequenceId: 'S', repeats: 3 },
+    ]);
+
+    expect(scheduler.setSongSequence).toHaveBeenLastCalledWith([
+      { sequenceId: 'S', repeats: 3 },
+      { sequenceId: 'S', repeats: 1 },
+    ]);
+  });
+
   it('stops forwarding after dispose', () => {
     seed();
     const scheduler = fakeScheduler();

@@ -58,7 +58,10 @@ const ramps = (r: SchedulerTickResult): ScheduledEvent[] =>
 /** A two-entry song of one-bar sequences: 4 s total at 120 bpm. */
 function twoEntrySong(core: SchedulerCore): void {
   oneBarMeta(core, ['A', 'B']);
-  core.setSongSequence(['A', 'B']);
+  core.setSongSequence([
+    { sequenceId: 'A', repeats: 1 },
+    { sequenceId: 'B', repeats: 1 },
+  ]);
   core.setTempo(120);
 }
 
@@ -105,7 +108,10 @@ describe('song mode — note repeat (spec §7.3, §7.9)', () => {
       'A',
       'song',
     );
-    core.setSongSequence(['A', 'B']);
+    core.setSongSequence([
+      { sequenceId: 'A', repeats: 1 },
+      { sequenceId: 'B', repeats: 1 },
+    ]);
     core.setTempo(120);
     core.setNoteRepeat(true, { value: 4, triplet: false }); // every 960 ticks
     core.pushLiveNote(40, 90, true, 0, 'ta');
@@ -233,6 +239,32 @@ describe('song mode — live erase (spec §7.7, §7.9)', () => {
     // Entry A occupies 0–2 s. Stop short of B and only A's note may be gone.
     const result = run(core, 1.0);
     expect(result.erased).toEqual([{ trackId: 'ta', eventIds: ['a'] }]);
+  });
+
+  /**
+   * The song's own wrap is a loop boundary too (spec §7.9 `songLoopEnabled`).
+   *
+   * A sweep armed part-way through the arrangement must still take what the NEXT pass
+   * carries it over. `emitSongPass` runs per pass, so a sweep that begins after the first
+   * wrap has to reach segments the first pass already played and left alone.
+   */
+  it('erases on a later pass of a looping song, not only the first', () => {
+    const core = new SchedulerCore();
+    twoEntrySong(core);
+    core.setSongLoop(true);
+    core.applyEventsDiff('ta', 'A', [note('a', 600, 36)], []);
+    core.applyEventsDiff('tb', 'B', [note('b', 600, 36)], []);
+    core.setTransport(true, false, 0);
+
+    // Pass 1 (0–4 s) plays with nothing armed, so both notes survive it.
+    const firstPass = run(core, 4.0);
+    expect(firstPass.erased).toEqual([]);
+
+    core.setLiveErase('ta', 36, true);
+    core.setLiveErase('tb', 36, true);
+    // Into pass 2: entry A comes round again at 4–6 s. Stop before B's turn at 6 s.
+    const secondPass = run(core, 5.0);
+    expect(secondPass.erased).toEqual([{ trackId: 'ta', eventIds: ['a'] }]);
   });
 });
 

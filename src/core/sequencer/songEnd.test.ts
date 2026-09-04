@@ -58,7 +58,10 @@ function run(core: SchedulerCore, to: number, by = 0.05): Merged {
 /** A two-entry song of one-bar sequences: 4 s total at 120 bpm. */
 function twoEntrySong(core: SchedulerCore): void {
   oneBarMeta(core, ['A', 'B']);
-  core.setSongSequence(['A', 'B']);
+  core.setSongSequence([
+    { sequenceId: 'A', repeats: 1 },
+    { sequenceId: 'B', repeats: 1 },
+  ]);
   core.setTempo(120);
   core.applyEventsDiff('ta', 'A', [note('a', 0, 36)], []);
   core.applyEventsDiff('tb', 'B', [note('b', 0, 38)], []);
@@ -174,7 +177,7 @@ describe('end of song — loop (spec §7.9, songLoopEnabled true)', () => {
       'A',
       'song',
     );
-    core.setSongSequence(['A']);
+    core.setSongSequence([{ sequenceId: 'A', repeats: 1 }]);
     core.setTempo(960);
     core.setSongLoop(true);
     core.applyEventsDiff('ta', 'A', [note('a', 0)], []);
@@ -215,7 +218,10 @@ describe('end of song — a zero-length map (spec §7.9)', () => {
   it('stops when every entry names a sequence the project no longer has', () => {
     const core = new SchedulerCore();
     oneBarMeta(core, ['A']);
-    core.setSongSequence(['deleted', 'also-deleted']);
+    core.setSongSequence([
+      { sequenceId: 'deleted', repeats: 1 },
+      { sequenceId: 'also-deleted', repeats: 1 },
+    ]);
     core.setTempo(120);
     core.setTransport(true, false, 0);
 
@@ -294,7 +300,10 @@ describe('the tempo a scheduled note carries (spec §7.2, §7.9)', () => {
       'A',
       'song',
     );
-    core.setSongSequence(['A', 'B']);
+    core.setSongSequence([
+      { sequenceId: 'A', repeats: 1 },
+      { sequenceId: 'B', repeats: 1 },
+    ]);
     core.setTempo(120);
     core.applyEventsDiff('ta', 'A', [note('a', 0, 36)], []);
     core.applyEventsDiff('tb', 'B', [note('b', 0, 38)], []);

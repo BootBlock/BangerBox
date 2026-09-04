@@ -9,6 +9,11 @@
  * its actions, so reordering is undoable and autosaved like any other structural change
  * (spec §4.5). Duration is computed from each entry's sequence length and tempo using the
  * same PPQN maths the scheduler uses (spec §7.2) rather than a parallel calculation.
+ *
+ * The playlist is rendered in `position` order, which is the projection §7.9 names: the
+ * worker builds its song map from the same order and reports `songAdvanced { entryIndex }`
+ * against it, so the row this marks as playing is the row that is playing (issue #130).
+ * Indexing the raw `songEntries` array instead is exactly what §7.9 forbids.
  */
 import { useState } from 'react';
 import { useProjectStore, useSequenceStore, useTransportStore, useUIStore } from '@/store';
@@ -42,11 +47,14 @@ export function SongMode() {
   const songEntries = useSequenceStore((s) => s.songEntries);
   const playbackMode = useTransportStore((s) => s.playbackMode);
   const songLoopEnabled = useTransportStore((s) => s.songLoopEnabled);
+  const songEntryIndex = useTransportStore((s) => s.songEntryIndex);
   const projectBpm = useTransportStore((s) => s.bpm);
   const projectName = useProjectStore((s) => s.projectName);
   const [bouncing, setBouncing] = useState(false);
 
   const sequenceList = Object.values(sequences).sort((a, b) => a.position - b.position);
+  // spec §7.9: the position-sorted projection the scheduler numbers its entries against.
+  const orderedEntries = [...songEntries].sort((a, b) => a.position - b.position);
 
   const totalSeconds = songEntries.reduce((sum, entry) => {
     const sequence = sequences[entry.sequenceId];
@@ -72,15 +80,17 @@ export function SongMode() {
 
   const removeEntry = (id: string) => {
     writeEntries(
-      songEntries.filter((entry) => entry.id !== id).map((entry, index) => ({ ...entry, position: index })),
+      orderedEntries
+        .filter((entry) => entry.id !== id)
+        .map((entry, index) => ({ ...entry, position: index })),
     );
   };
 
   /** Move an entry one slot; positions are renumbered so they stay dense (spec §9.3). */
   const moveEntry = (index: number, delta: number) => {
     const target = index + delta;
-    if (target < 0 || target >= songEntries.length) return;
-    const reordered = [...songEntries];
+    if (target < 0 || target >= orderedEntries.length) return;
+    const reordered = [...orderedEntries];
     const [moved] = reordered.splice(index, 1);
     if (!moved) return;
     reordered.splice(target, 0, moved);
@@ -176,19 +186,25 @@ export function SongMode() {
           />
         ) : (
           <ol className="flex flex-col gap-1">
-            {songEntries.map((entry, index) => {
+            {orderedEntries.map((entry, index) => {
               const sequence = sequences[entry.sequenceId];
+              const playing = index === songEntryIndex;
               return (
                 <li
                   key={entry.id}
                   data-testid={`song-entry-${index}`}
-                  className="flex items-center gap-2 rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1.5"
+                  data-playing={playing || undefined}
+                  aria-current={playing || undefined}
+                  className={`flex items-center gap-2 rounded-bb-sm border px-2 py-1.5 ${
+                    playing ? 'border-bb-accent bg-bb-accent/20' : 'border-bb-line bg-bb-raised'
+                  }`}
                 >
                   <span className="w-6 shrink-0 font-mono text-xs tabular-nums text-bb-muted">
                     {index + 1}
                   </span>
                   <span className="flex-1 truncate text-xs text-bb-text">
                     {sequence?.name ?? 'Missing sequence'}
+                    {playing ? <span className="sr-only"> (playing)</span> : null}
                   </span>
                   <SegmentControl
                     label={`Repeats for entry ${index + 1}`}
@@ -212,7 +228,7 @@ export function SongMode() {
                     size="sm"
                     iconOnly
                     icon={<IconChevronDown size={14} aria-hidden="true" />}
-                    disabled={index === songEntries.length - 1}
+                    disabled={index === orderedEntries.length - 1}
                     onClick={() => moveEntry(index, 1)}
                   />
                   <Button
