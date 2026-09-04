@@ -1,18 +1,22 @@
-# BangerBox — Phase Handover (after the song entry-index closure)
+# BangerBox — Phase Handover (after the insert-defaults closure)
 
-Generated at the close of the §7.9 entry-index work per Protocol Alpha (spec §13.1). A new session
-MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and MUST
-reuse the patterns recorded here rather than inventing parallel ones.
+Generated at the close of the §5.7 insert-defaults work per Protocol Alpha (spec §13.1). A new
+session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
+MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the entry-index work merged to `main` (`--no-ff`). All eight §12 phases were already
-complete; this was a defect closure against §7.1.3/§7.7/§7.9, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1831 unit tests**, `test:e2e` real-browser smoke
-(dev + offline, **63/63 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+**State:** the insert-defaults work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §3.4/§4.2/§5.7, not a new phase, so `package.json`
+`config.phase` remains **"8"**. Suite: **1842 unit tests**, `test:e2e` real-browser smoke
+(dev + offline, **67/67 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
-**`SCHEDULER_PROTOCOL_VERSION` is now 2** (§7.1.3), and it is the first bump the project has
-made: `songSequence` carries §7.9 entries rather than a repeat-expanded id list, which changes
-an existing kind's shape rather than adding one. See §2 (ao) and §7.
+**No §9.2 migration was added and `PRAGMA user_version` is unchanged.** A project written before
+this work holds `"params":{}` on an occupied insert slot and resolves correctly because the
+completion sits at the store's own admission of a strip — see §2 (ap) and §6.
+
+**`SCHEDULER_PROTOCOL_VERSION` is 2** (§7.1.3), and it is the first bump the project has made:
+`songSequence` carries §7.9 entries rather than a repeat-expanded id list, which changes an
+existing kind's shape rather than adding one. See §2 (ao) and §7.
 
 **The Phase 8 live-hardware sign-off is still outstanding** (issue #13) and still requires the
 human developer. Nothing in this work touched it.
@@ -46,6 +50,38 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(ap) — the insert-defaults closure (§3.4, §4.2, §5.7, §9.2).** The ⚑ items below are settled
+  policy a new session should treat as binding, not as spec text:
+  - **An insert slot's params are complete for the effect in it, and the completion sits where a
+    slot ENTERS the store.** There are exactly two such places: the action that CREATES one
+    (`addInsert`, `replaceInsert`) and the action that ADMITS one (`setChannels`,
+    `upsertChannel`). Every route in passes through one of them — §4.4 hydration, a §9.6 import
+    and a §9.8 pack read back through hydration, and a §6 pad's `inserts` through `programSync`.
+  - **`createInsert` is the wrong place and always was**, though the merge lives there.
+    It is downstream of the store, so completing there leaves the store holding `{}` and the
+    §8.5.6 panel, the §4.1 gesture origin, an XYFX axis and a §7.8 lane all reading the range
+    floor. **Its merge nonetheless STAYS**: the §11.2 offline render helpers legitimately call
+    it with a partial record, and after this work it is a no-op for every slot the app builds.
+  - **The §4.3 sync layer is wrong for a second reason as well.** `mixerSync` diffs on `inserts`
+    IDENTITY and rebuilds the whole serial chain when it changes, so a subscriber completing
+    slots on the way past would allocate a new array every pass and tear the chain down.
+  - **`completeInsertParams` returns the SAME record when nothing was missing**, and
+    `withCompleteInserts` the same array and the same strip. That is what lets a hydrate leave
+    the §4.3 diff alone.
+  - **The stored value always wins and nothing is repaired.** The completion fills what is
+    ABSENT. A key the effect does not declare is left alone rather than dropped: it is inert,
+    and discarding a value a project carries is not the completion's business.
+  - **No §9.2 migration, because of WHERE the completion sits.** A migration would have had to
+    rewrite three JSON blob columns and would still not have covered a §9.6 import or a §9.8
+    pack, neither of which runs migrations at all.
+  - **`defaultEffectParams` states the whole slot surface, the wrapper's `mix` included.** §5.7
+    gives every insert a `mix` and the §7.8 catalogue offers it on every slot, but only three
+    effects name one in the §5.7 table. `{ mix: 1, …the effect's own row }` states what
+    `createInsert`'s `merged.mix ?? 1` was already doing, so no audio changed.
+  - **A §11.4 probe restores the PROJECT, not just the UI.** `installAudioProbe` runs in
+    production builds, so a proof that rewrites `projects.payload` puts the original back and
+    reloads, and a proof that adds a slot does not leave it behind.
 
 - **(ao) — the song entry-index closure (§7.1.3, §7.7, §7.9, §9.5).** The ⚑ items below are
   settled policy a new session should treat as binding, not as spec text:
@@ -334,6 +370,22 @@ Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment 
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
 
+**Insert slot parameters (spec §5.7, §4.2, §3.4):**
+
+- **`completeInsertParams(effectType, params)` in `effectParams.ts` is the one rule**, beside
+  the `defaultEffectParams` it fills from. It returns the SAME record when nothing was missing.
+- **`withCompleteInserts` in `useMixerStore.ts` is where the rule is applied**, from all four
+  actions a strip or a slot can enter through: `setChannels`, `upsertChannel`, `addInsert`,
+  `replaceInsert`. A new way for a strip to reach the store goes through it too.
+- **`defaultEffectParams` answers for the WHOLE slot surface**, so a new §5.7 parameter goes in
+  `EFFECT_PARAM_RANGES`, in the label table, in the unit table AND in the defaults.
+  `effectParams.test.ts` fails on any of the four being missed.
+- **The range-floor fallbacks in `InsertPanel`, `readScalar` and `XyfxMode` stay.** They are
+  what the types require of an index into a `Record<string, number>`; nothing reaches them for
+  an occupied slot, and the tests are what say so rather than the absence of the `??`.
+
+**From the previous work, and unchanged:**
+
 **The announcer (spec §8.2):**
 
 - **`src/ui/primitives/LiveRegion.tsx` holds the ONLY `aria-live` nodes in the application
@@ -601,7 +653,11 @@ transient channel still stand. New this work:
 
 ## 5. Repository catalogue — unchanged. No repository or DDL change.
 
-**No repository method was added or changed this work.** `exportMpcweb` reads the same rows; it
+**No repository method was added or changed this work.** The §11.4 insert-defaults proof reads and
+writes `projects.payload` through `ProjectRepository.getById`/`update`, which is what a §9.3 payload
+edit already goes through.
+
+From the export work, and unchanged: `exportMpcweb` reads the same rows; it
 simply reads each sample's bytes one at a time and hands them over rather than gathering them.
 
 From the data-integrity work: `dumpSnapshot` reads `samples.listGlobal` as well as `listByProject`, so a §9.6 export carries
@@ -610,6 +666,14 @@ the §9.8 global-library audio its programs reference. No repository method was 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1**. **No migration added.**
 
 **No DDL column, §9.3 payload field or §6 payload shape changed this work.**
+
+**A slot's `params` record now arrives at the store complete, and that needed no migration.** The
+§9.3 `tracks.mixer` column and the `master`/`returns` of `projects.payload` genuinely still hold
+`"params":{}` on a slot written before this work; they resolve because `useMixerStore.setChannels`
+completes an occupied slot on admission (§2 (ap)). `insertSlotSchema` is unchanged — `params` is
+still `z.record(z.string(), z.number())` and validates an empty record exactly as before. A project
+saved AFTER this work carries the parameters explicitly, so what it sounds like no longer depends
+on the defaults compiled into the build.
 
 From the data-integrity work: `projects.bpm_default` is WRITTEN as well as read (issue #93). The column has always existed
 with a default of 120, so a project saved before this loads unchanged and needs no migration.
@@ -658,7 +722,14 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**`useTransportStore.songEntryIndex` is new this work** (§4.2 permits adding fields with a
+**No store slice or field changed this work, but four `useMixerStore` actions changed what they
+write.** `setChannels`, `upsertChannel`, `addInsert` and `replaceInsert` all pass a strip through
+`withCompleteInserts`, so an occupied insert slot in `channels` always carries a value for every
+parameter its effect declares — §3.4's "the store value reflects the actual node state" is now true
+of the slot, not only of the node. Anything reading `slot.params` may rely on that; nothing may
+rely on the range-floor fallbacks still present for the type's sake.
+
+From the previous work, and unchanged: **`useTransportStore.songEntryIndex`** (§4.2 permits adding fields with a
 changelog entry; none removed), with `setSongEntryIndex`. It is the §7.9 playlist entry song mode
 is playing — the index into the POSITION-SORTED entry list, `null` when the song is not rolling.
 `AudioEngine`'s `onSongAdvanced` writes it and §8.5.12's `SongMode` reads it. It persists nowhere:
@@ -715,10 +786,15 @@ Changes from the previous work, recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-**Mode changes this work:** §8.5.12's `SongMode` renders its playlist in `position` order — the
-projection §7.9 numbers its entries against — and marks the entry that is playing, with an
-`sr-only` "(playing)" beside the name and `aria-current` on the row. `removeEntry` and `moveEntry`
-take the same sorted projection. No primitive changed and no shell component was added.
+**Mode changes this work:** none. `InsertPanel` gained comments only — its knobs read the same
+`slot.params[param] ?? range[0]` they always did, and what changed is that an occupied slot now
+carries the value, so the floor is never what a fresh insert draws. No primitive, shell component
+or mode markup changed.
+
+From the previous work, and unchanged: §8.5.12's `SongMode` renders its playlist in `position`
+order — the projection §7.9 numbers its entries against — and marks the entry that is playing,
+with an `sr-only` "(playing)" beside the name and `aria-current` on the row. `removeEntry` and
+`moveEntry` take the same sorted projection.
 
 From the previous work, and unchanged — **one shell component**: `PlatformNotices`, a dismissible strip between the
 transport bar and the mode content, rendering the §2.1 soft-capability notices and the §9.7
@@ -791,22 +867,60 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#130 is CLOSED by this work, and #16 was already closed** by the 2026-07-18 `collectErase` fix —
-the neighbour list below had gone stale and said otherwise. Nothing was added to the
-`check:orphans` allowlist.
+**#131 is CLOSED by this work.** Three new issues were filed while tracing where a slot enters the
+store — #133, #134 and #135 below. Nothing was added to the `check:orphans` allowlist.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
+- **#134** every §9.5 bounce renders a DRY mix. `renderSegments` connects each voice straight to a
+  bare master gain, so no level, pan, send or insert reaches any bounced file, and mixer automation
+  renders as nothing. `bounceTrack`'s "post-insert, pre-master" comment describes a channel the
+  offline context does not have. Voice-level §6 sound design does render — the pool is real; what
+  is missing is everything from §5.2 stage 3 outward.
 - **#132** sequence mode plays EVERY sequence at once, and a live erase deletes the held pad from
   all of them. `scheduleSequence` iterates `this.tracks` with no `sequenceId` filter where
   `emitSongPass` has one, and `sequencerSync` forwards an `eventsDiff` for every track in the
   project. Filed while pinning #16's "and nothing else" half; reproduced against the real core.
   Both halves are wrong — a sequence that is not playing sounds, and its notes are erased.
-- **#131** a new insert displays and announces its RANGE FLOOR while the graph runs the §5.7
-  defaults — `addInsert`/`replaceInsert` write `params: {}` and `createInsert` merges
-  `defaultEffectParams` over it, so a fresh delay sounds at 350 ms and reads as 1 ms. A §3.4
-  store-to-graph disagreement; filed while closing #35, where the missing unit made it legible.
+- **#133** a pad's mixer-strip edits never reach the §6 program payload, so level, pan, sends and
+  the whole insert chain on the Mixer's Pads tab are lost on reload. `mixerChannelDirtyKey` marks
+  the right entity dirty and `flushProgram` serialises `useProgramStore`, which nothing writes the
+  strip back into — so the save reports success and writes the program unchanged.
+- **#135** `addInsert` ignores the §1.3.1 slot limit. Past slot 8 the §7.8 address grammar stops
+  parsing, so the panel's own knobs, every automation lane and every Q-Link binding on that slot
+  go dead while the effect still sounds. Hit while writing the #131 browser proof, whose gesture
+  step silently addressed nothing until the proof stopped growing the chain.
 - **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
+
+**Honest scope notes for the insert-defaults work:**
+
+- **A pad's insert chain is completed in the MIXER store, not in the program payload.** §6
+  `Pad.inserts` reach the graph through `programSync` → `upsertChannel`, which completes them, and
+  the payload itself keeps whatever it holds. That is consistent and self-healing on every load —
+  and it is moot until #133 makes a pad strip persist at all.
+- **`createInsert`'s merge is now dead weight for the application** and load-bearing only for the
+  §11.2 offline render helpers, which legitimately pass a partial record. Removing it would break
+  those; keeping it costs one object spread per insert built.
+- **A key an effect does not declare survives the completion.** It is inert — the panel iterates
+  `EFFECT_PARAM_RANGES` and each core reads its params by name — and dropping it would discard
+  something a project carries.
+- **The range-floor fallbacks are still in the source**, in `InsertPanel`, `readScalar` and
+  `XyfxMode`. Nothing reaches them for an occupied slot; the tests say so, the `??` does not.
+- **Every regression test was proven against the unfixed code**: 8 of `insertDefaults.test.ts`'s
+  10 assertions fail there, and the two that do not are guards that pass trivially against code
+  completing nothing. Three EXISTING tests pinned the defect and were corrected rather than added
+  to — two asserted `params` `toEqual({})` after a replace, and `InsertPanel.test.tsx` asserted
+  the three range floors as `aria-valuetext`.
+- **`touchedToMs` in the §11.4 proof is a vacuity guard, not a regression assertion.** It reads
+  600 ms on the unfixed build too; what it catches is a gesture that reached nothing, which is
+  how the undo check could otherwise pass while proving nothing (#135).
+- **Measured in a real browser**: 6/6 driver checks at port 5344 and 67/67 smoke steps at
+  5342/5343 (up from 63), no console errors. A fresh delay, the same delay after a save and a real
+  `loadProject`, and one whose `projects.payload` was rewritten to `params: {}` the way a build
+  before this fix wrote it, all read 350.0 ms and echoed at 350.0 ms; the §8.5.6 panel announced
+  "350 ms" and "35 %". **Against the unfixed store all three read 1.0 ms and echoed at 350.0 ms**,
+  the first touch committed 600 ms and the undo returned the delay to **1 ms** — a value it had
+  never held — and the panel announced "1 ms" and "0 %".
 
 **Honest scope notes for the entry-index work:**
 
@@ -979,6 +1093,6 @@ the neighbour list below had gone stale and said otherwise. Nothing was added to
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1831**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **63/63 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1842**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **67/67 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
