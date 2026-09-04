@@ -274,8 +274,47 @@ export const EFFECT_PARAM_CHOICES: Partial<Record<EffectType, Record<string, rea
   delay: { sync: DELAY_SYNC_MODES },
 };
 
-/** Neutral starting parameters for a freshly added insert of `effectType` (spec §5.7). */
+/**
+ * The dry/wet mix an effect runs at when its §5.7 row does not name one.
+ *
+ * §5.7 gives EVERY insert the wrapper's `mix`, and the §7.8 catalogue offers it on every
+ * slot, but only `delay`, `saturator` and `reverb` state a value for it in the table below.
+ * Stating the rest here rather than at `createInsert`'s own fallback is what stops a slot
+ * reading 0 — the `MIX_RANGE` floor — while the graph runs it fully wet (issue #131).
+ */
+const DEFAULT_MIX = 1;
+
+/**
+ * Neutral starting parameters for an insert of `effectType` (spec §5.7) — the whole of the
+ * slot's surface, the wrapper's `mix` included, so that a slot carrying these agrees with
+ * the node `createInsert` builds from them (spec §3.4).
+ */
 export function defaultEffectParams(effectType: EffectType): Record<string, number> {
+  return { mix: DEFAULT_MIX, ...effectOwnParams(effectType) };
+}
+
+/**
+ * A slot's params, completed with the §5.7 defaults of the effect in it (issue #131).
+ *
+ * The stored value always wins: this fills what is ABSENT and repairs nothing. A slot with
+ * no effect keeps its own params, because there is nothing to default for.
+ *
+ * Returns `params` itself when nothing was missing. `mixerSync` diffs on `inserts` IDENTITY
+ * and rebuilds the whole serial chain when it changes (spec §4.3), so a completion that
+ * allocated unconditionally would tear that chain down on every hydrate.
+ */
+export function completeInsertParams(
+  effectType: EffectType | null,
+  params: Record<string, number>,
+): Record<string, number> {
+  if (effectType === null) return params;
+  const defaults = defaultEffectParams(effectType);
+  const complete = Object.keys(defaults).every((name) => params[name] !== undefined);
+  return complete ? params : { ...defaults, ...params };
+}
+
+/** The parameters §5.7's own table states for `effectType`, without the wrapper's `mix`. */
+function effectOwnParams(effectType: EffectType): Record<string, number> {
   switch (effectType) {
     case 'eq4':
       return {

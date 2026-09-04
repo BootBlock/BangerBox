@@ -6,6 +6,7 @@ import {
   effectParamUnit,
   EFFECT_PARAM_CHOICES,
   EFFECT_PARAM_RANGES,
+  MIX_RANGE,
 } from './effectParams';
 
 describe('effect parameter defaults (spec §5.7)', () => {
@@ -34,9 +35,28 @@ describe('effect parameter defaults (spec §5.7)', () => {
     expect(comp.crossoverMidHigh).toBeLessThanOrEqual(8_000);
     // Every default sits inside its declared range.
     for (const [name, value] of Object.entries(comp)) {
+      if (name === 'mix') continue; // the wrapper's param, ranged 0..1 rather than per effect
       const range = EFFECT_PARAM_RANGES.multibandComp[name]!;
       expect(value).toBeGreaterThanOrEqual(range[0]);
       expect(value).toBeLessThanOrEqual(range[1]);
+    }
+  });
+
+  /**
+   * The other half of the gate above, and what issue #131 turned on: `createInsert` merges
+   * these defaults over whatever a slot holds, so a parameter the table omits runs at the
+   * effect core's own idea of neutral and READS as the §7.8 range floor. The `mix` case is
+   * the one the per-effect rows leave out, and the §7.8 catalogue offers it on every slot.
+   */
+  it('states a default for every parameter a slot can address, the wrapper mix included', () => {
+    for (const effectType of EFFECT_TYPES) {
+      const defaults = defaultEffectParams(effectType);
+      for (const name of Object.keys(EFFECT_PARAM_RANGES[effectType])) {
+        expect(defaults[name], `${effectType}.${name}`).toBeTypeOf('number');
+      }
+      expect(defaults.mix, `${effectType}.mix`).toBeTypeOf('number');
+      expect(defaults.mix).toBeGreaterThanOrEqual(MIX_RANGE[0]);
+      expect(defaults.mix).toBeLessThanOrEqual(MIX_RANGE[1]);
     }
   });
 });

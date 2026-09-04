@@ -605,6 +605,69 @@ async function assertShellAndSelfTest(page, label) {
     await page.getByTestId('mode-tab-main').click();
   });
 
+  // §3.4 requires that "the store value reflects the actual node state". The two are measured
+  // separately, because that is the only way the disagreement is visible: the store number is
+  // taken through the fallback every reader uses, and the graph number is an offline render of
+  // a delay built from the slot's params verbatim (spec §11.2). Three slots, because a fix at
+  // the creating action alone leaves a project already on disk still wrong.
+  await step(`${label}: a slot's stored params are the ones the graph runs (spec §3.4, #131)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.insertDefaultsProof());
+    for (const [name, agreement] of Object.entries({
+      added: r.added,
+      reloaded: r.reloaded,
+      legacy: r.legacy,
+    })) {
+      if (!agreement.stored) {
+        throw new Error(`the ${name} slot carries no delay time at all — ${r.path} reads its range floor`);
+      }
+      if (!(agreement.echoPeak > 0.02)) {
+        throw new Error(`the ${name} slot rendered no audible echo (peak ${agreement.echoPeak})`);
+      }
+      // One millisecond: the echo is found by peak search at 48 kHz, so the two numbers agree
+      // to well within a sample-accurate delay line's own resolution.
+      const drift = Math.abs(agreement.storeTimeMs - agreement.graphTimeMs);
+      if (!(drift < 1)) {
+        throw new Error(
+          `the ${name} slot reads ${agreement.storeTimeMs.toFixed(1)} ms and echoes at ${agreement.graphTimeMs.toFixed(1)} ms`,
+        );
+      }
+    }
+    // The §5.7 default is 350 ms, and the range floor it used to read is 1 ms.
+    if (Math.abs(r.undoneToMs - 350) > 0.001) {
+      throw new Error(
+        `undoing the first touch of a fresh delay left it at ${r.undoneToMs} ms — expected 350`,
+      );
+    }
+    console.log(
+      `       insert defaults: added ${r.added.storeTimeMs.toFixed(0)}/${r.added.graphTimeMs.toFixed(1)} ms, reloaded ${r.reloaded.storeTimeMs.toFixed(0)}/${r.reloaded.graphTimeMs.toFixed(1)} ms, legacy ${r.legacy.storeTimeMs.toFixed(0)}/${r.legacy.graphTimeMs.toFixed(1)} ms`,
+    );
+  });
+
+  // The third reader of the same value: what §8.5.6's own panel draws and §8.2 announces.
+  // The probe above leaves that delay on the track strip, so this is the same slot.
+  await step(`${label}: the insert panel announces the value the graph runs (spec §8.2, #131)`, async () => {
+    await page.getByTestId('mode-tab-mixer').click();
+    await page.getByTestId('mixer-tab').getByRole('radio', { name: 'Master' }).click();
+    await page.getByTestId('mixer-inserts-master').click();
+    const time = page.getByRole('slider', { name: /^Time, insert \d+, Delay$/ });
+    await time.waitFor({ timeout: 5_000 });
+    const announced = await time.getAttribute('aria-valuetext');
+    if (announced !== '350 ms') {
+      throw new Error(`the fresh delay's Time knob announces "${announced}" — the graph runs 350 ms`);
+    }
+    const feedback = page.getByRole('slider', { name: /^Feedback, insert \d+, Delay$/ });
+    const feedbackText = await feedback.getAttribute('aria-valuetext');
+    if (feedbackText !== '35 %') {
+      throw new Error(`the fresh delay's Feedback knob announces "${feedbackText}" — the graph runs 35 %`);
+    }
+    console.log(`       insert panel: Time "${announced}", Feedback "${feedbackText}"`);
+    // A probe restores what it found: the delay is taken back off the master chain, through
+    // §8.5.6's own Remove control, so no later step mixes through an effect it did not ask for.
+    await page.getByRole('button', { name: /^Remove insert \d+, Delay$/ }).click();
+    await page.getByRole('slider', { name: /^Time, insert \d+, Delay$/ }).waitFor({ state: 'detached' });
+    await page.getByTestId('mode-tab-main').click();
+  });
+
   // Grid scroll and zoom are held outside React (spec §3.3, §8.4, issue #28). Driven through
   // real wheel events on the real canvas, with the frame time measured across them — §11.5's
   // budget is 60 fps, and a mode re-rendering per wheel event is what used to threaten it.
