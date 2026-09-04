@@ -277,4 +277,48 @@ describe('song mode — recording (spec §7.7, §7.9)', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]!.tickStart).toBeCloseTo(960, -1);
   });
+
+  it('keeps the length of a note held across an entry boundary', () => {
+    // The start and the end are folded into DIFFERENT segments, so folding each separately
+    // makes the subtraction negative and `captureAt` collapses the note to its 1-tick floor.
+    // The span is measured on the monotonic cursor first, then anchored to the start.
+    const core = new SchedulerCore();
+    twoEntrySong(core);
+    core.setMetronome(false, 0);
+    core.setTransport(true, true, 0);
+    core.tick(0);
+    core.pushLiveNote(40, 100, true, 1.5, 'ta'); // entry A, sequence tick 2880
+    core.pushLiveNote(40, 100, false, 2.5, 'ta'); // entry B, sequence tick 960
+    core.setTransport(false, false, 0);
+
+    const captured = core.tick(4.5).recorded.flatMap((f) => f.events);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.tickStart).toBeCloseTo(2880, -1);
+    // One second at 120 bpm is 1920 ticks, whichever segments the two ends landed in.
+    expect(captured[0]!.durationTicks).toBeCloseTo(1920, -2);
+  });
+
+  it('closes a note still held at the end of the song inside its own pattern', () => {
+    // §7.9 closes open notes on the stop path, and the playhead is then at `songTotalTicks`
+    // — past every segment. Left raw that wrote the very out-of-pattern tick #94 is about.
+    const core = new SchedulerCore();
+    twoEntrySong(core);
+    core.setMetronome(false, 0);
+    core.setTransport(true, true, 0);
+    core.tick(0);
+    core.pushLiveNote(40, 100, true, 3.5, 'tb'); // entry B, and never released
+
+    let ending: SchedulerTickResult | null = null;
+    for (let i = 71; i <= 140; i++) {
+      const r = core.tick(i * 0.05);
+      if (r.songEnded) {
+        ending = r;
+        break;
+      }
+    }
+    const captured = ending!.recorded.flatMap((f) => f.events);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.tickStart).toBeLessThan(3840);
+    expect(captured[0]!.tickStart + captured[0]!.durationTicks).toBeLessThanOrEqual(3840);
+  });
 });

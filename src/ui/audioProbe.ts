@@ -175,8 +175,13 @@ export interface NoteRepeatOwnerResult {
 export interface SchedulerBoundaryResult {
   /** The version this build attaches to the handshake, which the worker checks (issue #96). */
   readonly attachedVersion: number | null;
-  /** A message the guard must still accept, beside the five it must now refuse. */
+  /** A message the guard must still accept, beside the four it must now refuse. */
   readonly acceptsInRangeTempo: boolean;
+  /**
+   * A handshake with NO version must still be accepted, so the skew reaches the reporting
+   * branch. Dropping it would leave the SAB uninstalled and nothing said (issue #96).
+   */
+  readonly acceptsVersionlessHandshake: boolean;
   readonly refusals: { readonly name: string; readonly refused: boolean }[];
 }
 
@@ -1518,8 +1523,10 @@ function schedulerBoundaryProof(): SchedulerBoundaryResult {
     refused: parseSchedulerRequest(value) === null,
   });
   return {
-    attachedVersion: handshake?.kind === 'init' ? handshake.protocolVersion : null,
+    attachedVersion: (handshake?.kind === 'init' ? handshake.protocolVersion : null) ?? null,
     acceptsInRangeTempo: parseSchedulerRequest({ kind: 'tempo', bpm: 128 }) !== null,
+    acceptsVersionlessHandshake:
+      parseSchedulerRequest({ kind: 'init', playheadSab: createPlayheadSab() }) !== null,
     refusals: [
       refuses('tempo bpm -1', { kind: 'tempo', bpm: -1 }),
       refuses('swing amount 100', { kind: 'swing', amount: 100, division: 16 }),
@@ -1531,10 +1538,6 @@ function schedulerBoundaryProof(): SchedulerBoundaryResult {
         playbackMode: 'sequence',
       }),
       refuses('trackId with a colon', { kind: 'liveErase', trackId: 'track:1', note: 36, active: true }),
-      refuses('init with no protocol version', {
-        kind: 'init',
-        playheadSab: createPlayheadSab(),
-      }),
     ],
   };
 }

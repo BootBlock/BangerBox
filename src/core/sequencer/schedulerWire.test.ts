@@ -204,6 +204,20 @@ describe('the init handshake compares protocol versions (spec §7.1.3, issue #96
     error.mockRestore();
   });
 
+  it('names a handshake that carries no version at all, and still initialises', () => {
+    // A build predating the handshake version is the case the check exists for, so the
+    // guard must let it through to be reported rather than dropping it (issue #96).
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onInit = vi.fn();
+    const { core } = spyCore();
+    const request = parseSchedulerRequest({ kind: 'init', playheadSab: createPlayheadSab() });
+    expect(request).not.toBeNull();
+    applySchedulerRequest({ core, toContextTime: (t) => t, onInit, onClockSync: vi.fn() }, request!);
+    expect(String(error.mock.calls[0]![0])).toContain('sent no version');
+    expect(onInit).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
   it('names a skew rather than dropping messages in silence, and still initialises', () => {
     // Reporting, not refusing: the Zod guard already drops what this build cannot read, and
     // a worker that would not start is a dead transport. The §11.4 smoke fails on a console

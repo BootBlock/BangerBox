@@ -154,8 +154,24 @@ describe('the init handshake carries the protocol version (spec §7.1.3, issue #
     expect(request).toHaveProperty('protocolVersion', SCHEDULER_PROTOCOL_VERSION);
   });
 
-  it('requires it, so a build that omits it cannot pass unnoticed', () => {
-    expect(parseSchedulerRequest({ kind: 'init', playheadSab: new SharedArrayBuffer(32) })).toBeNull();
+  it('lets a handshake with no version through, so the skew is reported and not dropped', () => {
+    // The version exists to NAME a skew. Requiring it would have the guard drop the very
+    // handshake it is meant to name, leaving the SAB uninstalled, the transport dead and
+    // nothing said — the outcome the check was added to prevent. `applySchedulerRequest`
+    // reports the missing version instead (see schedulerWire.test.ts).
+    const request = parseSchedulerRequest({ kind: 'init', playheadSab: new SharedArrayBuffer(32) });
+    expect(request?.kind).toBe('init');
+    expect(request && request.kind === 'init' ? request.protocolVersion : 'absent').toBeUndefined();
+  });
+
+  it('survives a version it cannot read at all, for the same reason', () => {
+    const request = parseSchedulerRequest({
+      kind: 'init',
+      playheadSab: new SharedArrayBuffer(32),
+      protocolVersion: 'two',
+    });
+    expect(request).not.toBeNull();
+    expect(request).toHaveProperty('protocolVersion', undefined);
   });
 });
 

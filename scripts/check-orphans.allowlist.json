@@ -267,11 +267,6 @@
       "reason": "Internal caller: quantiseEvents. Exported so §7.4 strength and swing interaction is testable per tick."
     },
     {
-      "file": "src/core/sequencer/songMap.ts",
-      "export": "songTotalTicks",
-      "reason": "Internal caller: songSecondsToTick."
-    },
-    {
       "file": "src/core/sequencer/swing.ts",
       "export": "swingDivisionTicks",
       "reason": "Internal caller: swingOffsetTicks."

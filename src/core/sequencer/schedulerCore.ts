@@ -39,6 +39,7 @@ import {
   songSecondsToTick,
   songTickToSeconds,
   songTotalSeconds,
+  songTotalTicks,
   songWindowSlices,
   type SongSegment,
   type SongWindowSlice,
@@ -74,7 +75,10 @@ interface TrackEvents {
 interface OpenNote {
   readonly trackId: string;
   readonly note: number;
+  /** Where the note begins inside the pattern — what `midi_events.tick_start` holds (§9.3). */
   readonly startTick: number;
+  /** The same instant on the monotonic cursor, so the duration survives a wrap or a boundary. */
+  readonly startMonotonic: number;
   readonly velocity: number;
 }
 
@@ -311,14 +315,21 @@ export class SchedulerCore {
     if (on) {
       this.heldNotes.set(key, { note, velocity, trackId });
       if (this.recording && this.contentStarted(when)) {
-        this.openNotes.set(key, { trackId, note, startTick: this.captureTickAt(when), velocity });
+        const at = this.capturePositionAt(when);
+        this.openNotes.set(key, {
+          trackId,
+          note,
+          startTick: at.patternTick,
+          startMonotonic: at.monotonicTick,
+          velocity,
+        });
       }
     } else {
       this.heldNotes.delete(key);
       const open = this.openNotes.get(key);
       if (open && this.recording) {
         this.openNotes.delete(key);
-        this.captureNote(trackId, note, open, this.captureTickAt(when));
+        this.captureHeldNote(open, this.capturePositionAt(when).monotonicTick);
       }
     }
   }
@@ -518,23 +529,42 @@ export class SchedulerCore {
   }
 
   /**
-   * The tick a capture is written at (spec §7.7) — always a position inside the PATTERN,
-   * never on the transport's own timeline.
+   * Where a capture sits (spec §7.7), in the two domains a captured note needs at once.
    *
+   * `patternTick` is a position inside the PATTERN, never on the transport's own timeline.
    * {@link positionTickAt} answers where the playhead is, which in song mode is an absolute
-   * song tick spanning the whole arrangement (spec §7.9). A captured event lands in
-   * `midi_events.tick_start` (spec §9.3), which is a tick inside the track's own sequence,
-   * so a take played during the third bar of a song was written at ~4800 on a 3840-tick
-   * pattern — past its end, where it could never sound again. Song mode folds the song
-   * position onto the sequence tick of the segment under the playhead (issue #94).
+   * song tick spanning the whole arrangement (spec §7.9) — but a captured event lands in
+   * `midi_events.tick_start` (spec §9.3), a tick inside the track's own sequence, so a take
+   * played during the third bar of a song was written at ~4800 on a 3840-tick pattern, past
+   * its end, where it could never sound again (issue #94). A position past the last segment
+   * — the moment a song ends — is clamped into that segment rather than left raw, or the
+   * end of a song would write the very out-of-pattern tick this is here to prevent.
    *
-   * Sequence mode already returned a sequence tick, so nothing there changes.
+   * `monotonicTick` is the same instant on a cursor that only ever moves forward, and it is
+   * what a DURATION is measured on. Folding the note-on and the note-off separately is
+   * wrong twice over: across a song entry boundary the two land in different segments, and
+   * across a loop wrap the second folds behind the first — either way the subtraction goes
+   * negative and `captureAt` collapses a held note to its 1-tick floor. Measuring the span
+   * before folding it keeps a note held across either boundary the length it was played.
    */
-  private captureTickAt(when: number): number {
-    const tick = this.positionTickAt(when);
-    if (this.playbackMode !== 'song') return tick;
-    const segment = segmentAtSongTick(this.songMap, tick);
-    return segment ? tick - segment.startTick : tick;
+  private capturePositionAt(when: number): { patternTick: number; monotonicTick: number } {
+    if (this.playbackMode !== 'song') {
+      const monotonicTick = this.linearTickAt(when);
+      return { patternTick: sequenceTickAt(monotonicTick, this.loop), monotonicTick };
+    }
+    const total = songTotalSeconds(this.songMap);
+    const looping = this.songLoopEnabled && total > 0;
+    const absolute = this.anchorSongSeconds + Math.max(0, when - this.anchorContext);
+    const pass = looping ? Math.floor(absolute / total) : 0;
+    const within = looping ? absolute % total : absolute;
+    const songTick = songSecondsToTick(this.songMap, within);
+    const segment = segmentAtSongTick(this.songMap, songTick) ?? this.songMap[this.songMap.length - 1];
+    return {
+      patternTick: segment
+        ? Math.min(Math.max(0, songTick - segment.startTick), segment.lengthTicks)
+        : songTick,
+      monotonicTick: pass * songTotalTicks(this.songMap) + songTick,
+    };
   }
 
   // --- metronome + count-in (spec §7.7) ---
@@ -1119,8 +1149,14 @@ export class SchedulerCore {
   }
 
   // --- recording capture (spec §7.7) ---
-  private captureNote(trackId: string, note: number, open: OpenNote, endTick: number): void {
-    this.captureAt(trackId, note, open.velocity, open.startTick, endTick);
+  /**
+   * Close one held note (spec §7.7). The length is the span on the MONOTONIC cursor and the
+   * start is the pattern position, so a note held across a loop wrap or a song entry
+   * boundary keeps the length it was played instead of collapsing to the 1-tick floor.
+   */
+  private captureHeldNote(open: OpenNote, endMonotonic: number): void {
+    const held = Math.max(0, endMonotonic - open.startMonotonic);
+    this.captureAt(open.trackId, open.note, open.velocity, open.startTick, open.startTick + held);
   }
 
   private captureAt(
@@ -1146,10 +1182,8 @@ export class SchedulerCore {
     // The track and note come off the record, not off the map key it is filed under
     // (issue #96): splitting `${trackId}:${note}` restated an assumption about ids at a
     // call site, which is exactly the class of defect issue #25 was.
-    const endTick = this.captureTickAt(now);
-    for (const open of this.openNotes.values()) {
-      this.captureNote(open.trackId, open.note, open, endTick);
-    }
+    const endMonotonic = this.capturePositionAt(now).monotonicTick;
+    for (const open of this.openNotes.values()) this.captureHeldNote(open, endMonotonic);
     this.openNotes.clear();
   }
 

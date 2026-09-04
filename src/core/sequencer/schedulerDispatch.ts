@@ -39,8 +39,9 @@ export function applySchedulerRequest(sink: SchedulerRequestSink, request: Sched
       if (request.protocolVersion !== SCHEDULER_PROTOCOL_VERSION) {
         console.error(
           `[scheduler] protocol version mismatch: the main thread sent ` +
-            `${request.protocolVersion}, this worker speaks ${SCHEDULER_PROTOCOL_VERSION}. ` +
-            `Messages either side does not recognise will be dropped.`,
+            `${request.protocolVersion ?? 'no version'}, this worker speaks ` +
+            `${SCHEDULER_PROTOCOL_VERSION}. Messages either side does not recognise will ` +
+            `be dropped.`,
         );
       }
       sink.onInit(request.playheadSab);

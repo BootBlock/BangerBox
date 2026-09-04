@@ -98,8 +98,16 @@ export type SchedulerRequest =
   | {
       readonly kind: 'init';
       readonly playheadSab: SharedArrayBuffer;
-      /** The sender's {@link SCHEDULER_PROTOCOL_VERSION}, checked by the worker. */
-      readonly protocolVersion: number;
+      /**
+       * The sender's {@link SCHEDULER_PROTOCOL_VERSION}, compared by the worker.
+       *
+       * OPTIONAL on purpose, and the one field in this protocol that is. The version exists
+       * to NAME a skew, and a required field would have the guard drop the handshake of the
+       * very build it is meant to name — leaving the SAB uninstalled, the transport dead and
+       * nothing said, which is the outcome the check was added to prevent. This build always
+       * sends it; a peer that does not is reported like any other mismatch.
+       */
+      readonly protocolVersion?: number;
     }
   | { readonly kind: 'clockSync'; readonly contextTime: number; readonly performanceTime: number }
   | {
@@ -223,7 +231,10 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
   z.object({
     kind: z.literal('init'),
     playheadSab: playheadSabSchema,
-    protocolVersion: z.number().int(),
+    // `.catch(undefined)` rather than a plain optional: a version this build cannot read at
+    // all is exactly the skew the field reports, so it must reach the reporting branch
+    // instead of taking the whole handshake down with it.
+    protocolVersion: z.number().int().optional().catch(undefined),
   }),
   z.object({ kind: z.literal('clockSync'), contextTime: z.number(), performanceTime: z.number() }),
   z.object({
