@@ -1982,6 +1982,15 @@ async function insertDefaultsProof(): Promise<InsertDefaultsResult> {
     return { storeTimeMs: value, stored, graphTimeMs: echo.echoSeconds * 1000, echoPeak: echo.echoPeak };
   };
 
+  // Take back any delay an earlier run of this proof saved onto the master chain. `addInsert`
+  // appends and step 2 below persists, so without this a repeated run grows the chain past
+  // the §1.3.1 insert limit — at which point the §7.8 address stops parsing and the gesture
+  // in step 4 silently addresses nothing. Nothing else in the smoke's project puts a delay
+  // on master, so this removes only what the proof itself left.
+  for (const slot of useMixerStore.getState().channels[channelId]!.inserts) {
+    if (slot.effectType === 'delay') useMixerStore.getState().removeInsert(channelId, slot.id);
+  }
+
   // 1 — a slot the user just added, through the action the §8.5.6 slot picker calls. It is
   // tracked by ID from here on: `replaceInsert` keeps a slot's id and a reload preserves it,
   // so the id is the one handle that survives every step below.
