@@ -121,9 +121,11 @@ export interface DelayEchoOptions {
   /**
    * Build the delay from this params record VERBATIM, ignoring `division` and `time`.
    *
-   * It is the proof seam for issue #131: this is exactly the record `applyInserts` hands
+   * It is the proof seam for issue #131: the record is the one `applyInserts` hands
    * `createInsert` for a slot in the store (spec §4.3), so the echo it produces is the time
-   * the GRAPH runs while the §8.5.6 panel reads the store's own value for the same slot.
+   * the GRAPH runs while the §8.5.6 panel reads the store's own value for the same slot. The
+   * TEMPO is still this function's own, not the live transport's, so a caller measuring a
+   * §5.7 synced division has to pass `bpm` as well.
    */
   readonly params?: Record<string, number>;
 }

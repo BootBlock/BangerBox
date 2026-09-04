@@ -41,6 +41,10 @@ const headed = process.argv.includes('--headed');
 // pipeline, .mpcweb round-trip, worklet effects) already run in the dev section.
 const devOnly = process.argv.includes('--dev-only');
 const artefactDir = resolve(root, 'scripts/smoke-artefacts');
+// spec §5.7's own default delay time, restated here because the point of the issue-#131 step
+// is that the store, the graph and the panel all land on the same NUMBER — not merely on
+// whatever number they happen to share. The range floor they used to read is 1 ms.
+const DELAY_DEFAULT_MS = 350;
 
 const results = [];
 const consoleErrors = [];
@@ -623,19 +627,30 @@ async function assertShellAndSelfTest(page, label) {
       if (!(agreement.echoPeak > 0.02)) {
         throw new Error(`the ${name} slot rendered no audible echo (peak ${agreement.echoPeak})`);
       }
-      // One millisecond: the echo is found by peak search at 48 kHz, so the two numbers agree
-      // to well within a sample-accurate delay line's own resolution.
-      const drift = Math.abs(agreement.storeTimeMs - agreement.graphTimeMs);
-      if (!(drift < 1)) {
-        throw new Error(
-          `the ${name} slot reads ${agreement.storeTimeMs.toFixed(1)} ms and echoes at ${agreement.graphTimeMs.toFixed(1)} ms`,
-        );
+      // The absolute number is what makes this more than an internal-consistency check: the
+      // graph must echo at §5.7's own stated default, and the store must read the same. One
+      // millisecond of tolerance, because the echo is found by peak search at 48 kHz.
+      for (const [half, value] of [
+        ['reads', agreement.storeTimeMs],
+        ['echoes at', agreement.graphTimeMs],
+      ]) {
+        if (!(Math.abs(value - DELAY_DEFAULT_MS) < 1)) {
+          throw new Error(
+            `the ${name} slot ${half} ${value.toFixed(1)} ms — §5.7's default delay time is ${DELAY_DEFAULT_MS}`,
+          );
+        }
       }
     }
-    // The §5.7 default is 350 ms, and the range floor it used to read is 1 ms.
-    if (Math.abs(r.undoneToMs - 350) > 0.001) {
+    // A gesture that reached nothing would leave BOTH numbers below at the default, so the
+    // touched value is asserted too: without it the undo check could pass while proving
+    // nothing (the §7.8 address stops parsing past the §1.3.1 slot limit — issue #135).
+    if (Math.abs(r.touchedToMs - 600) > 0.001) {
+      throw new Error(`the first touch of the fresh delay put it at ${r.touchedToMs} ms — expected 600`);
+    }
+    // The range floor it used to be undone to is 1 ms — a value the delay had never held.
+    if (Math.abs(r.undoneToMs - DELAY_DEFAULT_MS) > 0.001) {
       throw new Error(
-        `undoing the first touch of a fresh delay left it at ${r.undoneToMs} ms — expected 350`,
+        `undoing the first touch of a fresh delay left it at ${r.undoneToMs} ms — expected ${DELAY_DEFAULT_MS}`,
       );
     }
     console.log(
@@ -644,27 +659,40 @@ async function assertShellAndSelfTest(page, label) {
   });
 
   // The third reader of the same value: what §8.5.6's own panel draws and §8.2 announces.
-  // The probe above leaves that delay on the track strip, so this is the same slot.
+  // Added through the slot picker a user actually operates, rather than by reaching into the
+  // store — and taken back out the same way, so the project is left as it was found.
   await step(`${label}: the insert panel announces the value the graph runs (spec §8.2, #131)`, async () => {
     await page.getByTestId('mode-tab-mixer').click();
     await page.getByTestId('mixer-tab').getByRole('radio', { name: 'Master' }).click();
     await page.getByTestId('mixer-inserts-master').click();
-    const time = page.getByRole('slider', { name: /^Time, insert \d+, Delay$/ });
+    const slots = page.locator('[data-testid^="insert-slot-"]');
+    const before = await slots.count();
+    await page.getByTestId('insert-add').selectOption('delay');
+    // `addInsert` appends, so the slot this step created is the last one — and the master
+    // chain may already carry inserts this step did not put there. Everything below is scoped
+    // to that one list item rather than matched across the panel.
+    const slot = slots.nth(before);
+    const time = slot.getByRole('slider', { name: /^Time, insert \d+, Delay$/ });
     await time.waitFor({ timeout: 5_000 });
     const announced = await time.getAttribute('aria-valuetext');
-    if (announced !== '350 ms') {
-      throw new Error(`the fresh delay's Time knob announces "${announced}" — the graph runs 350 ms`);
+    if (announced !== `${DELAY_DEFAULT_MS} ms`) {
+      throw new Error(
+        `the fresh delay's Time knob announces "${announced}" — the graph runs ${DELAY_DEFAULT_MS} ms`,
+      );
     }
-    const feedback = page.getByRole('slider', { name: /^Feedback, insert \d+, Delay$/ });
-    const feedbackText = await feedback.getAttribute('aria-valuetext');
+    const feedbackText = await slot
+      .getByRole('slider', { name: /^Feedback, insert \d+, Delay$/ })
+      .getAttribute('aria-valuetext');
     if (feedbackText !== '35 %') {
       throw new Error(`the fresh delay's Feedback knob announces "${feedbackText}" — the graph runs 35 %`);
     }
     console.log(`       insert panel: Time "${announced}", Feedback "${feedbackText}"`);
-    // A probe restores what it found: the delay is taken back off the master chain, through
-    // §8.5.6's own Remove control, so no later step mixes through an effect it did not ask for.
-    await page.getByRole('button', { name: /^Remove insert \d+, Delay$/ }).click();
-    await page.getByRole('slider', { name: /^Time, insert \d+, Delay$/ }).waitFor({ state: 'detached' });
+    // What this step added, it takes back, through §8.5.6's own Remove control — so no later
+    // step mixes through an effect it did not ask for.
+    await slot.getByRole('button', { name: /^Remove insert \d+, Delay$/ }).click();
+    if ((await slots.count()) !== before) {
+      throw new Error(`removing the added insert left ${await slots.count()} slots, not ${before}`);
+    }
     await page.getByTestId('mode-tab-main').click();
   });
 

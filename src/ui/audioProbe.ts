@@ -1982,14 +1982,14 @@ async function insertDefaultsProof(): Promise<InsertDefaultsResult> {
     return { storeTimeMs: value, stored, graphTimeMs: echo.echoSeconds * 1000, echoPeak: echo.echoPeak };
   };
 
-  // Take back any delay an earlier run of this proof saved onto the master chain. `addInsert`
-  // appends and step 2 below persists, so without this a repeated run grows the chain past
-  // the §1.3.1 insert limit — at which point the §7.8 address stops parsing and the gesture
-  // in step 4 silently addresses nothing. Nothing else in the smoke's project puts a delay
-  // on master, so this removes only what the proof itself left.
-  for (const slot of useMixerStore.getState().channels[channelId]!.inserts) {
-    if (slot.effectType === 'delay') useMixerStore.getState().removeInsert(channelId, slot.id);
-  }
+  // The row as it stands before any of this, restored at the end. The proof SAVES a slot and
+  // then rewrites the payload to demonstrate the legacy case, and `installAudioProbe` runs in
+  // production builds — so a probe that did not put this back would replace a real master
+  // chain's tuning with the §5.7 defaults, and grow the chain by a delay on every run.
+  const repos = getActiveRepositories();
+  const rowBefore = await repos.projects.getById(projectId);
+  if (rowBefore === undefined) throw new Error('insertDefaultsProof: the active project has no row.');
+  const payloadBefore = rowBefore.payload;
 
   // 1 — a slot the user just added, through the action the §8.5.6 slot picker calls. It is
   // tracked by ID from here on: `replaceInsert` keeps a slot's id and a reload preserves it,
@@ -2007,10 +2007,9 @@ async function insertDefaultsProof(): Promise<InsertDefaultsResult> {
   const reloaded = await agreementNow();
 
   // 3 — the §9.3 column as a build BEFORE this fix wrote it: an effect, and no parameters.
-  const repos = getActiveRepositories();
-  const row = await repos.projects.getById(projectId);
-  if (row === undefined) throw new Error('insertDefaultsProof: the active project has no row.');
-  const payload = JSON.parse(row.payload) as { master?: { inserts?: { params: unknown }[] } };
+  const saved = await repos.projects.getById(projectId);
+  if (saved === undefined) throw new Error('insertDefaultsProof: the active project has no row.');
+  const payload = JSON.parse(saved.payload) as { master?: { inserts?: { params: unknown }[] } };
   for (const slot of payload.master?.inserts ?? []) slot.params = {};
   await repos.projects.update(projectId, { payload: JSON.stringify(payload) });
   await projectService.loadProject(projectId);
@@ -2024,6 +2023,11 @@ async function insertDefaultsProof(): Promise<InsertDefaultsResult> {
   const touchedToMs = storedTime().value;
   undo();
   const undoneToMs = storedTime().value;
+
+  // Put the project back. The final `loadProject` is what returns the STORE to the row as
+  // well, so neither the added slot nor its undo entries outlive the proof.
+  await repos.projects.update(projectId, { payload: payloadBefore });
+  await projectService.loadProject(projectId);
 
   return { path, added, reloaded, legacy, touchedToMs, undoneToMs };
 }
