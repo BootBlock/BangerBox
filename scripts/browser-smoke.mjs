@@ -758,6 +758,73 @@ async function assertShellAndSelfTest(page, label) {
     );
   });
 
+  // A deleted track kept sounding until the project was reloaded (#137): the sender's events
+  // subscriber never handled a removed key, where the automation subscriber beside it does,
+  // so `removeTrack` told the worker nothing. The unit tests drive the core with an injected
+  // clock; the wire is what they cannot reach, and the defect lived entirely on it.
+  //
+  // Two tracks sound the same pad in unison, so the master peak halves when one goes — an
+  // audio measurement of "it stopped sounding" rather than an inspection (spec §11.2, §13.5).
+  // The delete happens WHILE THE TRANSPORT ROLLS, which is the §7.1.4 lookahead case.
+  //
+  // It sits HERE, beside the pad-strip step, because both end on a fresh `loadProject` while
+  // the two steps below do not — and the Grid step reads whatever arrangement the stores hold.
+  await step(`${label}: a deleted track stops sounding and leaves nothing behind (#137)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.trackWithdrawalProof());
+    // Nothing scheduled at all is a transport or engine failure, not a withdrawal that took
+    // too much — and blaming the withdrawal for it would send the next person to the wrong file.
+    if (r.scheduledBefore.length !== 2) {
+      throw new Error(
+        `${r.scheduledBefore.length} of 2 tracks sounded before the delete — the transport did not roll, so this proves nothing`,
+      );
+    }
+    if (r.scheduledAfter.join(',') !== r.keptTrackId) {
+      throw new Error(
+        `the worker scheduled [${r.scheduledAfter.join(', ')}] a full lookahead after the delete — expected the surviving track alone (master peak ${r.masterPeakBefore.toFixed(5)} → ${r.masterPeakAfter.toFixed(5)})`,
+      );
+    }
+    if (!(r.masterPeakBefore > 0.05)) {
+      throw new Error(`the master bus was silent before the delete (peak ${r.masterPeakBefore.toFixed(5)})`);
+    }
+    if (!(r.masterPeakAfter > 0.01)) {
+      throw new Error(
+        `the master bus fell silent after the delete (peak ${r.masterPeakAfter.toFixed(5)}) — the surviving track went with it`,
+      );
+    }
+    // The deleted track's pad is five times the surviving one's, so the peak should fall to
+    // roughly a fifth. The bound is loose because this is a live meter reading rather than an
+    // offline render; what it has to separate is "audibly quieter" from the ×1.0 the defect
+    // gives, and the unequal levels are what buy that separation.
+    const ratio = r.masterPeakAfter / r.masterPeakBefore;
+    if (!(ratio < 0.45)) {
+      throw new Error(
+        `the master peak went ${r.masterPeakBefore.toFixed(5)} → ${r.masterPeakAfter.toFixed(5)} (×${ratio.toFixed(3)}) — the deleted track, five times the louder of the two, is still sounding`,
+      );
+    }
+    if (r.stripRemains) throw new Error('the deleted track kept its §4.2 channel strip');
+    // §3.2 forbids an orphaned node. A residual note inside the §7.1.4 window resolves to no
+    // program once the track row is gone, and the demo fallback used to rebuild the channel
+    // `deleteTrack` had just destroyed and leave it wired to master for the session.
+    if (r.trackChannelRemains) {
+      throw new Error(
+        'the deleted track’s §5.2 channel was rebuilt after the delete — an orphan node on the master bus',
+      );
+    }
+    // What the save left on disk. `midi_events` cascades from the `tracks` row; the other two
+    // do not, and are the track's own to take (spec §7.5, §7.8, §9.3).
+    const leftovers = [];
+    if (r.trackRowRemains) leftovers.push('its §9.3 tracks row');
+    if (r.eventRowsRemain > 0) leftovers.push(`${r.eventRowsRemain} midi_events rows`);
+    if (r.automationRowsRemain > 0) leftovers.push(`${r.automationRowsRemain} automation_points rows`);
+    if (r.grooveAssignmentRemains) leftovers.push('its §7.5 groove assignment in projects.payload');
+    if (leftovers.length > 0) {
+      throw new Error(`a project saved with the track deleted still carries ${leftovers.join(', ')}`);
+    }
+    console.log(
+      `       track withdrawal: master peak ${r.masterPeakBefore.toFixed(5)} → ${r.masterPeakAfter.toFixed(5)} (×${ratio.toFixed(3)}) with the transport rolling; the worker scheduled ${r.scheduledBefore.length} tracks then 1; no row, event, lane, groove key, strip or channel left behind`,
+    );
+  });
+
   // §7.9 makes song mode the way to play several sequences in order, which only means
   // something if sequence mode plays ONE. The unit tests drive the core with an injected
   // clock; the wire is what they cannot reach, and the defect lived on both sides of it —

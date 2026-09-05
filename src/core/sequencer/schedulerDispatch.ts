@@ -111,5 +111,8 @@ export function applySchedulerRequest(sink: SchedulerRequestSink, request: Sched
     case 'liveErase':
       core.setLiveErase(request.trackId, request.note, request.active);
       return;
+    case 'removeTrack':
+      core.removeTrack(request.trackId);
+      return;
   }
 }

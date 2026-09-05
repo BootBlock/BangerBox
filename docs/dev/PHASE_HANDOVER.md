@@ -1,14 +1,27 @@
-# BangerBox — Phase Handover (after the pad-strip closure)
+# BangerBox — Phase Handover (after the track-withdrawal closure)
 
-Generated at the close of the §4.2 pad-strip work per Protocol Alpha (spec §13.1). A new
+Generated at the close of the §7.1.3 track-withdrawal work per Protocol Alpha (spec §13.1). A new
 session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the pad-strip work merged to `main` (`--no-ff`). All eight §12 phases were already
-complete; this was a defect closure against §4.2/§6, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **1907 unit tests**, `test:e2e` real-browser smoke
-(dev + offline, **72/72 steps**), plus `lint`, `type-check`, `format:check` and `verify`
-(**no open stubs**).
+**State:** the track-withdrawal work merged to `main` (`--no-ff`). All eight §12 phases were
+already complete; this was a defect closure against §7.1.3/§7.5/§7.8, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1925 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **74/74 steps**), plus `lint`, `type-check`, `format:check`
+and `verify` (**no open stubs**).
+
+**A track that leaves the project is WITHDRAWN from the §7.1.3 worker by name.** The worker holds
+every track on purpose (§14 (aq)), so nothing in its own state can tell it one has been deleted —
+and `subscribeSequencerSync`'s events subscriber never handled a removed key, so `removeTrack`
+told it nothing and it kept scheduling the track's notes for the rest of the session. The
+withdrawal is a new §7.1.3 request KIND, `removeTrack { trackId }`, and the subscriber watches
+`tracks` rather than `events`. See §2 (at), §4 and §7.
+
+**A track OWNS its §7.8 track-scope automation lanes and its §7.5 groove assignment, and the
+§9.3 `tracks` row cascades to neither.** `automation_points` declares no foreign key at all and
+the assignment lives in `projects.payload`, so `useSequenceStore.removeTrack` takes both. A lane
+left behind is not merely orphan data: `laneForTarget` lets a track lane override a sequence lane
+on the same §7.8 address whatever track owns it.
 
 **A pad's §4.2 channel strip is a PROJECTION of its §6 pad, maintained in both directions by
 `src/store/derive/padStripMirror.ts`.** It publishes the active drum program's pads as strips —
@@ -82,6 +95,55 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(at) — the track-withdrawal closure (§7.1.3, §7.5, §7.8, §9.3).** The ⚑ items below are
+  settled policy a new session should treat as binding, not as spec text:
+  - **A deleted track is withdrawn from the worker by a request kind of its own,
+    `removeTrack { trackId }`.** Not an `eventsDiff` listing every id in `deletes`: that kind
+    is a diff of a track's EVENTS and carries the `sequenceId` a track has, `applyEventsDiff`
+    would RE-CREATE the map entry a pure-delete diff was sent to empty, and it cannot reach the
+    §7.5 groove, §7.6 held notes, §7.7 open capture or armed erase — none of which is an event.
+  - **`SCHEDULER_PROTOCOL_VERSION` stays at 2.** Adding a kind does not move it; changing an
+    existing kind's SHAPE does (§14 (ao)). An older peer that does not know `removeTrack`
+    behaves exactly as this build did before the fix.
+  - **The rule is the SENDER's, and this does NOT re-open §14 (aq).** (aq) settled SELECTION —
+    which of the tracks the worker holds should sound now — and the sender must still ship the
+    whole project, because song mode picks a different sequence per segment. A withdrawal leaves
+    nothing to select: no mode plays the track again, in any segment, so it is the one thing
+    about a track the worker cannot work out for itself.
+  - **The subscriber watches `tracks`, not `events`.** A track deleted before it was ever played
+    never entered the events map, so a removed-key loop there finds nothing to withdraw while
+    the worker may still hold that track's groove. It also closes a leak nobody had filed:
+    `subscribeSequencerSync` is registered once at the §5.1 start gate and survives a project
+    switch, so every track of every project opened in a session used to accumulate in the map.
+  - **`SchedulerCore.removeTrack` drops EVERY map keyed by the id**, because the message means
+    the track does not exist rather than that one of its values changed. A groove left behind
+    would shape a later track reusing the id; a held note would keep note repeat and the
+    arpeggiator firing; a capture would flush a take through `commitRecordedTake`, writing the
+    deleted track's events map key straight back into the store.
+  - **A track deleted while the transport ROLLS still DISPATCHES what is already in the
+    §7.1.4 window, and hears nothing.** The batch has left the worker, which is the same
+    window a §7.7 live erase cannot reach back into; but the store no longer holds the track,
+    so `resolveNote` finds no program and `triggerFallbackDemo` refuses it.
+  - **A track with no PROGRAM and a track that does not EXIST are different things**, and the
+    §12 demo fallback only ever meant the first. Sounding the second played the demo sample
+    and, worse, `ensureTrackChannel` rebuilt the §5.2 channel `deleteTrack` had just
+    destroyed — an orphan node on the master bus for the session (§3.2).
+  - **`useSequenceStore.removeTrack` takes the track's §7.8 lanes and §7.5 groove assignment**,
+    in the store action rather than in `projectCrud.deleteTrack`, so `deleteSequence`'s loop and
+    any later caller get the same rule. Both reach the worker on the paths they already have —
+    the `automation` subscriber's cleared-key loop and the `trackGrooveIds` one.
+  - **A lane is the track's if the track OWNS it or if it ADDRESSES it.** Owning is track scope
+    with this id as `ownerId`; addressing is any lane, of either scope, whose target names the
+    track's §4.2 channel. Both halves are needed, because `recordParamGesture` writes
+    SEQUENCE-scope lanes — so a captured fader ride on a track is owned by the sequence and
+    would otherwise outlive its subject for ever. The registry answers which channel a target
+    names (§13.6), and each emptied lane's dirty key carries its OWN scope and owner.
+  - **The revert restores exactly what the delete took**, captured at the delete rather than as
+    whole maps, so an unrelated lane edited between the delete and the undo stands.
+  - **The §4.2 `track:<id>` strip was already correct**, and was checked rather than assumed:
+    `deleteTrack` → `commitTrackStrip(id, false)` → `mixerSync`'s removed-key loop →
+    `bridge.removeChannel` → `graph.removeTrackChannel`.
 
 - **(as) — the pad-strip closure (§4.2, §4.3, §6, §9.3).** The ⚑ items below are settled
   policy a new session should treat as binding, not as spec text:
@@ -567,6 +629,11 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   ROWS**, not as a `useSequenceStore.hydrate`, and must create them rather than borrow the
   project's: by the time the run reaches the late steps, earlier ones have opened imported and
   factory projects and what a track points at is no longer predictable.
+- **A §11.4 probe that measures two TRACKS must give each its own PROGRAM.** A §5.2 pad
+  channel is keyed `pad:<programId>:<padIndex>` with no track in the id, and
+  `ensurePadChannel` wires it to whichever track triggered it first — so two tracks on one
+  program share a pad channel and deleting the first silences the second (issue #141). The
+  track-withdrawal proof's first draft measured that instead of what it was written for.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
@@ -576,6 +643,22 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
+
+**Withdrawing a deleted track (spec §7.1.3, §7.5, §7.8):**
+
+- **`SchedulerClient.removeTrack` / `SchedulerCore.removeTrack` are the one withdrawal**, and
+  the core's body is "forget every map keyed by this id". A new piece of worker state keyed by
+  a track goes in there too, or it outlives the track that owns it.
+- **`sequencerSync`'s `tracks` subscriber is where a track's DEPARTURE is observed.** Anything
+  else the worker must be told when a track goes is sent from there. The `events` subscriber
+  stays about events, and still forwards a diff for every track in the project (§14 (aq)).
+- **`useSequenceStore.removeTrack` is where a track's OWNED data goes with it** — its §7.8
+  track-scope lanes and its §7.5 groove assignment. A new thing a track owns that the §9.3
+  `tracks` row does not cascade is removed there, with its own §4.4 dirty key and a revert that
+  restores exactly what the delete took.
+- **A §7.8 lane whose owner is a track is nobody else's to clean up.** `automation_points`
+  declares no foreign key, and `laneForTarget` lets a track lane override a sequence lane on the
+  same address whatever track owns it.
 
 **A pad's mixer strip (spec §4.2, §6, §8.5.6):**
 
@@ -983,8 +1066,16 @@ own defaults and needs no migration.
 
 ## 7. Worker / worklet / message protocol versions
 
-**Nothing in the §7.1.3 protocol changed this work** (issue #132): no request kind, no response
-kind, no `ScheduledEvent` field, and no change to an existing kind's shape. The fix is a
+**One §7.1.3 request KIND was added this work** (issue #137): `removeTrack { trackId }`, whose
+`trackId` takes `schedulerIdSchema` like every other id crossing the boundary. No response kind,
+no `ScheduledEvent` field, and no change to an existing kind's shape — so
+**`SCHEDULER_PROTOCOL_VERSION` is unchanged at 2**, by the extend-by-adding-kinds rule. An older
+peer that does not know the kind drops it at the Zod guard and behaves exactly as this build did
+before the fix. `SchedulerClient.removeTrack` is driven through `parseSchedulerRequest` and
+`applySchedulerRequest` by `schedulerWire.test.ts` like every other sender.
+
+From the previous work, and unchanged: **nothing in the §7.1.3 protocol changed** (issue #132): no request kind, no response
+kind, no `ScheduledEvent` field, and no change to an existing kind's shape. That fix was a
 scheduling decision inside the worker, taken against `activeSequenceId`, which `sequenceMeta`
 already carried.
 
@@ -1028,7 +1119,15 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store slice or field changed this work; `useProgramStore` gained ONE action.**
+**No store slice or field changed this work, but `useSequenceStore.removeTrack` changed what it
+writes.** It now also deletes the track's §7.8 track-scope automation lanes from `automation` and
+its §7.5 assignment from `trackGrooveIds`, in the same undoable commit and with a revert that
+restores exactly what the delete took. Each emptied lane carries its own §4.4 dirty key, which is
+what takes the orphan §9.3 `automation_points` rows; the assignment marks the project, because it
+persists in `projects.payload`. Both reach the worker through the subscribers that already handle
+a cleared lane and a cleared assignment.
+
+From the previous work, and unchanged: **no store slice or field changed; `useProgramStore` gained ONE action.**
 `applyPadStripEdit(programId, padIndex, edit)` writes a §4.2 pad-strip edit into the §6 pad,
 with no undo entry and no autosave mark — see §4. `src/store/syncLayer/padStrips.ts` moved to
 `src/store/padStrips.ts` and gained the reverse mapping; `src/store/derive/padStripMirror.ts`
@@ -1193,7 +1292,47 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#133 is CLOSED by this work.** Two new issues were filed while closing it — a keygroup's
+**#137 is CLOSED by this work.** One new issue was filed while closing it — two tracks that
+play the same program share one §5.2 pad channel, wired to whichever triggered it first (#141).
+Nothing was added to the `check:orphans` allowlist.
+
+**Honest scope notes for the track-withdrawal work:**
+
+- **Notes already in the §7.1.4 lookahead window still sound after the delete**, up to
+  `LOOKAHEAD_MS`. Inherent to a lookahead scheduler, and the §7.7 live-erase precedent; nothing
+  is done about it and nothing should be.
+- **The worker's `tracks` map still gains an empty entry from an `eventsDiff` for a track it
+  does not hold**, because that is also how a track's FIRST diff arrives. Nothing sends one for
+  a withdrawn track — the store deletes the track and its events in one `set` — so this is a
+  shape, not a path.
+- **A lane whose target names a deleted track goes with it whatever its scope**, and that was
+  the review's first finding: the first pass reclaimed only lanes the track OWNED, while
+  `recordParamGesture` writes sequence-scope ones.
+- **A §7.8 lane on a target that names no channel at all** — a `program:<id>.pad:<idx>.…`
+  address, or a `transport.…` one — is untouched by a track delete, correctly: it addresses
+  something the track does not own.
+- **`commitRecordedTake` and `removeEvents` still write `events[trackId]` back if a report
+  arrives for a deleted track.** The withdrawal is what stops those arriving; the store actions
+  themselves have no guard, which is pre-existing and untouched here.
+- **Every regression test was proven against the code it was written to catch**, by five
+  mutations: no `tracks` subscriber at all — the defect as filed (3 failures); the withdrawal
+  sent from the EVENTS subscriber instead (2); a core that forgets the track and nothing else
+  (3); a core that ignores the withdrawal entirely (6); and a store that keeps the deleted
+  track's lanes and groove (4). Two more for the review's own findings: a store that reclaims
+  only the lanes the track OWNS (1), and a dirty key naming the track's scope rather than the
+  lane's (1). Two of the eight core tests are GUARDS rather than regression tests and no
+  mutation moves them.
+- **The defect was measured in the browser too**, by removing the sender's withdrawal and
+  re-running the smoke: the step fails on the WIRE assertion — the worker scheduled both track
+  ids a full lookahead after the delete — which is reached before the peak, so the master peak
+  under the defect was not read.
+- **Measured in a real browser**: 74/74 smoke steps at ports 5342/5343, dev and offline, no
+  console errors. Deleting the louder of two tracks mid-transport took the §5.8 master peak from
+  0.19070 to 0.05512 (×0.289) in the dev pass and 0.16801 to 0.04800 (×0.286) offline, left the
+  survivor audible, and a `saveNow()` afterwards left no `tracks` row, no `midi_events` row, no
+  `automation_points` row, no `trackGrooveIds` key, no §4.2 strip and no §5.2 channel.
+
+**#133 was CLOSED by the previous work.** Two new issues were filed while closing it — a keygroup's
 program-scope mixer sounds and nothing can edit it (#139), and a §7.8 `program:….amp` edit
 leaves the Mixer's own pad fader stale until a reload (#140). Nothing was added to the
 `check:orphans` allowlist.
@@ -1232,17 +1371,21 @@ sound-design parameter still renders as nothing (#138), listed below. Nothing wa
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-From the previous work: **#134, #132 and #131 are CLOSED**, and #135, #137 and #138 remain open.
+From the previous work: **#134, #133, #132 and #131 are CLOSED**, and #135, #138, #139, #140
+and #141 remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **A DELETED track keeps sounding until the project is reloaded.**
-  `subscribeSequencerSync`'s events subscriber iterates `Object.entries(events)` and never
-  handles a REMOVED key, where the automation subscriber immediately below it does — so
-  `removeTrack` deletes the store's events and tells the worker nothing, and the worker keeps
-  scheduling them. Confirmed against the sync layer while measuring #132 (the smoke's failure
-  message counted four tracks where the probe had hydrated two), filed as issue #137, and
-  deliberately not fixed there: it is a withdrawal defect, not a selection one.
+- **#141** two tracks that play the same program share ONE §5.2 pad channel, wired to whichever
+  track triggered it first — so the second track's fader, pan, mute, solo, sends and inserts do
+  nothing for that pad, and deleting the first track silences the second. `ensurePadChannel`
+  keys the channel `pad:<programId>:<padIndex>`, with no track in the id, and ignores
+  `trackInput` once one is built. Found writing the #137 browser proof, whose first draft
+  measured this instead of the withdrawal.
+- **#135** `addInsert` ignores the §1.3.1 slot limit. Past slot 8 the §7.8 address grammar stops
+  parsing, so the panel's own knobs, every automation lane and every Q-Link binding on that slot
+  go dead while the effect still sounds. §14 (ar) has made slots 1 to 8 mean what they say and
+  §14 (as) made a pad's slots persist, so the limit now bounds something durable.
 - **#140** a §7.8 `program:<id>.pad:<idx>.amp` or `.pan` edit changes the pad and the graph and
   leaves the Mixer's own fader showing the old position until a reload. Two registered §7.8
   addresses reach one value and only the mixer side writes through; the publish deliberately
@@ -1539,6 +1682,6 @@ From the previous work: **#134, #132 and #131 are CLOSED**, and #135, #137 and #
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1907**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **72/72 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1925**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **74/74 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
