@@ -2782,40 +2782,66 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
   const ctx = sampleEditContext();
   const sampleRate = ctx.projectSampleRate;
 
-  // A tenth-second 1 kHz tone through a pad with no envelope shaping, so what the master tap
-  // measures is how many voices are sounding and nothing else.
-  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * 0.1), sampleRate);
-  const toneData = tone.getChannelData(0);
-  for (let i = 0; i < toneData.length; i += 1) {
-    toneData[i] = 0.4 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
-  }
-  const sample = await importDecodedSample(tone, 'track withdrawal probe', ['probe'], {
-    ...ctx,
-    context: engine.context,
-  });
-
-  const program = createDefaultDrumProgram('Track withdrawal probe');
-  const pad = createDefaultPad(0, 'Track withdrawal probe');
-  pad.playbackMode = 'oneShot';
-  pad.layers = [layer({ sampleId: sample.id })];
-  pad.envelopes = {
-    ...pad.envelopes,
-    amp: { ...pad.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+  /**
+   * A tenth-second 1 kHz tone at a given amplitude, through a pad with no envelope shaping,
+   * so what the master tap measures is which voices are sounding and nothing else.
+   *
+   * The two tracks are deliberately UNEQUAL. Two equal voices at the same instant sum, but
+   * not coherently enough to halve the measured peak reliably — the first draft read ×0.665
+   * against a ×1.0 defect, which is too little separation to trust a live meter with. A loud
+   * track and a quiet one make the fall unmistakable, and the quiet one's survival is then
+   * an assertion in its own right rather than a rounding error.
+   */
+  const buildTone = async (name: string, amplitude: number): Promise<string> => {
+    const tone = engine.context.createBuffer(1, Math.floor(sampleRate * 0.1), sampleRate);
+    const toneData = tone.getChannelData(0);
+    for (let i = 0; i < toneData.length; i += 1) {
+      toneData[i] = amplitude * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+    }
+    const imported = await importDecodedSample(tone, name, ['probe'], { ...ctx, context: engine.context });
+    return imported.id;
   };
-  program.pads = [pad];
+
+  /**
+   * One program per track, NOT one shared between them. A §5.2 pad channel is keyed
+   * `pad:<programId>:<padIndex>` and `ensurePadChannel` wires it to the input of whichever
+   * track triggered it first, so two tracks on ONE program share a pad channel and the
+   * second track's hits already sum into the first track's strip. Deleting the first would
+   * then take the second's audio path with it, and this proof would be measuring that
+   * instead of the withdrawal. Filed as issue #141; kept out of the measurement here.
+   */
+  const buildProgram = (name: string, sampleId: string) => {
+    const program = createDefaultDrumProgram(name);
+    const pad = createDefaultPad(0, name);
+    pad.playbackMode = 'oneShot';
+    pad.layers = [layer({ sampleId })];
+    pad.envelopes = {
+      ...pad.envelopes,
+      amp: { ...pad.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+    };
+    program.pads = [pad];
+    return program;
+  };
+  // A is the track that goes, and it is the loud one; B stays and is a fifth of it.
+  const programs = [
+    buildProgram('Withdrawal probe A', await buildTone('withdrawal probe A', 0.6)),
+    buildProgram('Withdrawal probe B', await buildTone('withdrawal probe B', 0.12)),
+  ];
 
   const sequence = { ...createDefaultSequence(projectId, 98, 'Track withdrawal probe'), lengthBars: 1 };
   const deletedTrackId = crypto.randomUUID();
   const keptTrackId = crypto.randomUUID();
   const targetPath = channelLevelPath(`track:${deletedTrackId}`);
 
-  await repos.programs.create({
-    id: program.id,
-    project_id: projectId,
-    name: program.name,
-    type: 'drum',
-    payload: JSON.stringify(program),
-  });
+  for (const program of programs) {
+    await repos.programs.create({
+      id: program.id,
+      project_id: projectId,
+      name: program.name,
+      type: 'drum',
+      payload: JSON.stringify(program),
+    });
+  }
   await repos.sequences.create({
     id: sequence.id,
     project_id: projectId,
@@ -2832,7 +2858,7 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
     await repos.tracks.create({
       id,
       sequence_id: sequence.id,
-      program_id: program.id,
+      program_id: programs[position]!.id,
       position,
       name: `Withdrawal probe ${position === 0 ? 'A' : 'B'}`,
       type: 'drum',
@@ -2945,7 +2971,7 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
   // the lane the probe wrote is cleared by name whether or not the fix took it.
   await repos.automation.replaceTarget('track', deletedTrackId, targetPath, []);
   await repos.sequences.remove(sequence.id);
-  await repos.programs.remove(program.id);
+  for (const program of programs) await repos.programs.remove(program.id);
   useSequenceStore.getState().assignTrackGroove(deletedTrackId, null);
   await projectService.saveNow();
   await projectService.loadProject(projectId);

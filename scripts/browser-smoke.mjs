@@ -780,7 +780,7 @@ async function assertShellAndSelfTest(page, label) {
     }
     if (r.scheduledAfter.join(',') !== r.keptTrackId) {
       throw new Error(
-        `the worker scheduled [${r.scheduledAfter.join(', ')}] a full lookahead after the delete — expected the surviving track alone`,
+        `the worker scheduled [${r.scheduledAfter.join(', ')}] a full lookahead after the delete — expected the surviving track alone (master peak ${r.masterPeakBefore.toFixed(5)} → ${r.masterPeakAfter.toFixed(5)})`,
       );
     }
     if (!(r.masterPeakBefore > 0.05)) {
@@ -791,13 +791,14 @@ async function assertShellAndSelfTest(page, label) {
         `the master bus fell silent after the delete (peak ${r.masterPeakAfter.toFixed(5)}) — the surviving track went with it`,
       );
     }
-    // Two identical voices at the same `when` sum coherently, so one of them is about half
-    // the peak. Generous either side: this is a live meter reading, not an offline render,
-    // and the assertion that matters is "audibly quieter", not a ratio to three places.
+    // The deleted track's pad is five times the surviving one's, so the peak should fall to
+    // roughly a fifth. The bound is loose because this is a live meter reading rather than an
+    // offline render; what it has to separate is "audibly quieter" from the ×1.0 the defect
+    // gives, and the unequal levels are what buy that separation.
     const ratio = r.masterPeakAfter / r.masterPeakBefore;
-    if (!(ratio < 0.75)) {
+    if (!(ratio < 0.45)) {
       throw new Error(
-        `the master peak went ${r.masterPeakBefore.toFixed(5)} → ${r.masterPeakAfter.toFixed(5)} (×${ratio.toFixed(3)}) — the deleted track is still sounding`,
+        `the master peak went ${r.masterPeakBefore.toFixed(5)} → ${r.masterPeakAfter.toFixed(5)} (×${ratio.toFixed(3)}) — the deleted track, five times the louder of the two, is still sounding`,
       );
     }
     if (r.stripRemains) throw new Error('the deleted track kept its §4.2 channel strip');
