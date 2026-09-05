@@ -79,6 +79,16 @@ interface MixerState {
   addInsert: (channelId: string, effectType: EffectType) => InsertSlotResult;
   /** Swap the effect in one slot, keeping its chain position (spec §8.5.6). */
   replaceInsert: (channelId: string, slotId: string, effectType: EffectType) => InsertSlotResult;
+  /**
+   * Empty one insert slot, leaving it in the chain (spec §8.5.6, §5.2, §7.8).
+   *
+   * The rack does not shrink and no other slot moves, because a §7.8 `slotN` address is the
+   * slot's POSITION in this array (§14 (ar)) — see the action for what dropping it cost.
+   *
+   * No {@link InsertSlotResult}: unlike the two actions that may OCCUPY a slot, this can
+   * refuse for no reason a user needs to hear. An empty slot has nothing to remove, and
+   * §8.5.6 disables the control there rather than offering one that would say so.
+   */
   removeInsert: (channelId: string, slotId: string) => void;
   setInsertEnabled: (channelId: string, slotId: string, enabled: boolean) => void;
 }
@@ -584,13 +594,33 @@ export const useMixerStore = create<MixerState>()(
     removeInsert: (channelId, slotId) => {
       const prev = get().channels[channelId];
       if (prev === undefined) return;
+      const target = prev.inserts.find((slot) => slot.id === slotId);
+      // Nothing to remove is not an edit: this used to filter, find no match, write the same
+      // array back and leave a "Remove insert" step in the §4.5 history that undid nothing.
+      if (target === undefined || target.effectType === null) return;
       const write = (inserts: InsertSlotState[]) =>
         set((state) => ({
           channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } },
         }));
+      // spec §5.2, §7.8 — EMPTY the slot; never drop it. A §7.8 `slotN` address is 1-based
+      // over this array on both sides of the graph (§14 (ar)), so dropping the slot slid every
+      // effect behind it onto somebody else's address, taking every automation lane, XY axis
+      // and §10.3 binding on those slots with it. §5.2 calls the chain "insert slots (default
+      // 4)" and `createDefaultChannelStrip` opens exactly that many empty ones, so an empty
+      // slot is a first-class thing rather than an absence — and the §1.3.1 rack keeps its
+      // length rather than shrinking by one on every removal (issue #142).
+      //
+      // The slot keeps its own id, exactly as `addInsert` and `replaceInsert` do: the id is
+      // the SLOT's handle (React key, and what every control in the row passes back), not the
+      // effect's. `createEmptyInsertSlot`'s other two fields are restated rather than merged,
+      // so an emptied slot is indistinguishable from one the strip was created with — §14
+      // (an)'s "an empty slot reads as empty, never as bypassed".
+      const emptied = prev.inserts.map((slot) =>
+        slot.id === slotId ? { ...slot, effectType: null, enabled: false, params: {} } : slot,
+      );
       commit({
         label: 'Remove insert',
-        apply: () => write(prev.inserts.filter((slot) => slot.id !== slotId)),
+        apply: () => write(emptied),
         revert: () => write(prev.inserts),
         dirtyKeys: [mixerChannelDirtyKey(channelId)],
       });

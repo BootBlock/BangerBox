@@ -170,6 +170,11 @@ export interface AudioProbe {
    * (issue #135) — measured on the real graph through the §5.8 master tap.
    */
   insertLimitProof: () => Promise<InsertLimitResult>;
+  /**
+   * Removing an insert empties its slot and moves no other slot's §7.8 address (issue #142)
+   * — measured in the WAV a §9.5 bounce writes.
+   */
+  insertRemoveProof: () => Promise<InsertRemoveResult>;
   /** A pad's §4.2 strip is reachable and survives a save + reload (§4.2, §6, §9.3, #133). */
   padStripProof: () => Promise<PadStripResult>;
   /** Sequence mode plays ONE sequence, and erases in only that one (§7.7, §7.9, #132). */
@@ -237,6 +242,28 @@ export interface InsertLimitResult {
   readonly admittedOverLongSlots: number;
   /** Whether `replaceInsert` refused to occupy a slot past the limit in that chain. */
   readonly replaceBeyondLimitRefused: boolean;
+}
+
+/** Outcome of the §7.8 insert-removal proof (see {@link AudioProbe.insertRemoveProof}). */
+export interface InsertRemoveResult {
+  /** The §4.2 channel the proof drives, so a failure names the strip it drove. */
+  readonly channelId: string;
+  /** Slots the §1.3.1 rack held before the removal. */
+  readonly slotsBefore: number;
+  /** Slots it holds afterwards — the rack does not shrink (spec §5.2, §1.3.1). */
+  readonly slotsAfter: number;
+  /** 1-based §7.8 slot number the surviving filter sits in afterwards; it must not move. */
+  readonly survivingSlot: number;
+  /** RMS of the bar with both filters wide open, after slot 1 was removed — the vacuity guard. */
+  readonly openRms: number;
+  /** The same bar after closing the REMOVED slot's own address; it must reach nothing. */
+  readonly removedSlotClosedRms: number;
+  /** The same bar after closing the SURVIVING slot's address instead; it must collapse. */
+  readonly survivingSlotClosedRms: number;
+  /** First beat under a §7.8 lane on the surviving slot, sweeping its filter open. */
+  readonly laneFirstBeatRms: number;
+  /** Last beat under that same lane — the filter open, so far above the first beat. */
+  readonly laneLastBeatRms: number;
 }
 
 /**
@@ -3275,6 +3302,245 @@ async function insertLimitProof(engine: AudioEngine): Promise<InsertLimitResult>
 }
 
 /**
+ * Removing an insert EMPTIES its slot; every §7.8 address behind it stays put (issue #142).
+ *
+ * `removeInsert` wrote `prev.inserts.filter(...)`, which DROPS the slot — so on a rack of
+ * `[filter, filter]` removing slot 1 slid the second filter onto the `slot1` address, and
+ * §14 (ar)'s "a `slotN` address is 1-based over the §4.2 slot array, on both sides" stopped
+ * being true the moment a user tapped Remove. Every §7.8 lane, §8.5.10 axis and §10.3 binding
+ * behind the removal moved with it, onto a different effect or onto nothing.
+ *
+ * "The lane drives the wrong effect" is an audio claim, so it is measured rather than
+ * inspected (spec §11.2, §13.5), in the WAV a §9.5 bounce writes and reads back over real
+ * OPFS. One bar of 4/4 at 120 bpm carries four quarter-second hits of a 1 kHz tone through a
+ * track strip whose rack holds two lowpass filters, both wide open. Slot 1 is then removed,
+ * and the same bar is rendered three more times:
+ *
+ *   - closing the REMOVED slot's own address must reach nothing — the slot is empty;
+ *   - closing the SURVIVING slot's address must collapse the bar — it still names that filter;
+ *   - a §7.8 lane on the surviving slot, sweeping it from 60 Hz to 12 kHz, must open it.
+ *
+ * The first two swap under the defect, which is what makes the pair falsifiable rather than
+ * an assertion that a number did not move: with the slot dropped, `slot1` names the survivor
+ * and `slot2` names nothing at all.
+ *
+ * The probe owns its arrangement as real §9.3 ROWS and creates them rather than borrowing the
+ * project's, then deletes them and reloads: `installAudioProbe` runs in production builds, and
+ * `removeInsert` commits, so this proof marks a real track dirty.
+ */
+async function insertRemoveProof(engine: AudioEngine): Promise<InsertRemoveResult> {
+  const { bounceActiveSequence } = await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+  const { insertParamPath } = await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const repos = getActiveRepositories();
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A quarter-second 1 kHz tone: short enough to leave the beat gaps silent, and two octaves
+  // above the 80 Hz the filters below close to, so an address that reaches its filter is
+  // unmistakable rather than subtle.
+  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * 0.25), sampleRate);
+  const toneData = tone.getChannelData(0);
+  for (let i = 0; i < toneData.length; i += 1) {
+    toneData[i] = 0.6 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+  }
+  const sample = await importDecodedSample(tone, 'insert remove probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  // A pad that plays the tone flat: no envelope shaping, so what a render measures is the
+  // §5.2 track insert chain and nothing else.
+  const program = createDefaultDrumProgram('Insert remove probe');
+  const pad = createDefaultPad(0, 'Insert remove probe');
+  pad.playbackMode = 'oneShot';
+  pad.layers = [layer({ sampleId: sample.id })];
+  pad.envelopes = {
+    ...pad.envelopes,
+    amp: { ...pad.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+  };
+  program.pads = [pad];
+
+  const sequence = { ...createDefaultSequence(projectId, 96, 'Insert remove probe'), lengthBars: 1 };
+  const trackId = crypto.randomUUID();
+  const channelId = `track:${trackId}`;
+
+  await repos.programs.create({
+    id: program.id,
+    project_id: projectId,
+    name: program.name,
+    type: 'drum',
+    payload: JSON.stringify(program),
+  });
+  await repos.sequences.create({
+    id: sequence.id,
+    project_id: projectId,
+    position: sequence.position,
+    name: sequence.name,
+    length_bars: sequence.lengthBars,
+    time_sig_numerator: sequence.timeSig.numerator,
+    time_sig_denominator: sequence.timeSig.denominator,
+    // Its OWN tempo: `activeSequenceSegments` falls back to the transport's, and an earlier
+    // smoke step leaves whatever it was working at. The windows below are placed in seconds.
+    tempo: 120,
+    swing_amount: sequence.swingAmount,
+    swing_division: sequence.swingDivision,
+  });
+  await repos.tracks.create({
+    id: trackId,
+    sequence_id: sequence.id,
+    program_id: program.id,
+    position: 0,
+    name: 'Insert remove probe',
+    type: 'drum',
+    mixer: JSON.stringify(createDefaultChannelStrip(channelId)),
+  });
+  // §1.3.1 maps a pad index straight to a note number, so pad 0 is note 0. One bar of 4/4 at
+  // 960 PPQN is 3840 ticks and, at 120 bpm, two seconds.
+  await repos.midiEvents.replaceTrack(
+    trackId,
+    [0, 960, 1_920, 2_880].map((tick) => ({
+      id: crypto.randomUUID(),
+      track_id: trackId,
+      tick_start: tick,
+      duration_ticks: 120,
+      note: 0,
+      velocity: 100,
+      extra: null,
+    })),
+  );
+
+  await projectService.loadProject(projectId);
+  useProgramStore.getState().setActiveProgram(program.id);
+  const transport = () => useTransportStore.getState();
+  transport().setActiveSequenceId(sequence.id);
+  transport().setPlaybackMode('sequence');
+  transport().setMetronomeEnabled(false);
+  transport().setCountInBars(0);
+  transport().setRecording(false);
+  commitTempo(120);
+
+  const mixer = () => useMixerStore.getState();
+
+  /** The §1.3.1 rack with a lowpass in slots 1 and 2, both wide open, the rest empty. */
+  const twoOpenFilters = (): void => {
+    const strip = mixer().channels[channelId] ?? createDefaultChannelStrip(channelId);
+    const inserts = createDefaultChannelStrip(channelId).inserts.map((slot, index) =>
+      index < 2
+        ? {
+            ...slot,
+            effectType: 'filter' as const,
+            enabled: true,
+            params: { type: 0, cutoff: 20_000, resonance: 1, mix: 1 },
+          }
+        : slot,
+    );
+    mixer().upsertChannel({ ...strip, inserts });
+  };
+
+  /** Replace the sequence's §7.8 lanes without touching the rows it was hydrated from. */
+  const setLane = (automation: Record<string, AutomationPoint[]>): void => {
+    const seq = useSequenceStore.getState();
+    seq.hydrate({
+      sequences: seq.sequences,
+      tracks: seq.tracks,
+      events: seq.events,
+      automation,
+      songEntries: seq.songEntries,
+    });
+  };
+
+  /** Render the active sequence and read the WAV back from `/bounces/` over real OPFS. */
+  const measure = async (): Promise<{ rms: number; firstBeat: number; lastBeat: number }> => {
+    const path = await bounceActiveSequence('probe-insert-remove', ctx);
+    const decoded = decodeWav(new Uint8Array(await (await readFile(path)).arrayBuffer()));
+    const left = decoded.channels[0]!;
+    const right = decoded.channels[1] ?? left;
+    const mono = new Float32Array(left.length);
+    for (let i = 0; i < mono.length; i += 1) mono[i] = (left[i]! + right[i]!) / 2;
+    // Beat windows start 20 ms in: the §4.3 dezipper takes `PARAM_RAMP_MS` to reach the first
+    // automated value, and that run-in is the graph settling rather than the mix.
+    const beat = (index: number): number =>
+      rmsBetween(mono, decoded.sampleRate, index * 0.5 + 0.02, index * 0.5 + 0.24);
+    return { rms: rmsBetween(mono, decoded.sampleRate, 0, 2), firstBeat: beat(0), lastBeat: beat(3) };
+  };
+
+  // 1 — the removal itself, through the §8.5.6 store action a user's Remove button calls.
+  setLane({});
+  twoOpenFilters();
+  const slotsBefore = mixer().channels[channelId]!.inserts.length;
+  const removedSlotId = mixer().channels[channelId]!.inserts[0]!.id;
+  mixer().removeInsert(channelId, removedSlotId);
+  const after = mixer().channels[channelId]!.inserts;
+  const slotsAfter = after.length;
+  const survivingSlot = after.findIndex((slot) => slot.effectType !== null) + 1;
+
+  const openRms = (await measure()).rms;
+
+  /** Close one §7.8 slot address two octaves below the tone, and render the bar. */
+  const closeSlot = async (slotNumber: number): Promise<number> => {
+    twoOpenFilters();
+    mixer().removeInsert(channelId, mixer().channels[channelId]!.inserts[0]!.id);
+    mixer().commit(insertParamPath(channelId, slotNumber, 'cutoff'), 80);
+    return (await measure()).rms;
+  };
+
+  // 2 — the address of the slot the removal emptied. It must reach nothing: with the slot
+  // dropped instead, it names the surviving filter and this render collapses.
+  const removedSlotClosedRms = await closeSlot(1);
+  // 3 — the address of the slot BEHIND the removal, which still names its filter. With the
+  // slot dropped, this address is past the end of the chain and reaches nothing.
+  const survivingSlotClosedRms = await closeSlot(2);
+
+  // 4 — the same statement as a §7.8 LANE, which is how a user meets it: an `exp` sweep from
+  // 60 Hz to 12 kHz across the bar on the slot behind the removal.
+  twoOpenFilters();
+  mixer().removeInsert(channelId, mixer().channels[channelId]!.inserts[0]!.id);
+  mixer().commit(insertParamPath(channelId, 2, 'cutoff'), 60);
+  const cutoff = insertParamPath(channelId, 2, 'cutoff');
+  const point = (tick: number, value: number): AutomationPoint => ({
+    id: crypto.randomUUID(),
+    scope: 'sequence',
+    ownerId: sequence.id,
+    targetPath: cutoff,
+    tick,
+    value,
+    // A filter sweep is geometric in Hz; a linear one spends the first beat already past the
+    // tone it is supposed to be holding back.
+    curve: 'exp',
+  });
+  setLane({ [automationLaneKey('sequence', sequence.id, cutoff)]: [point(0, 60), point(3_840, 12_000)] });
+  const laneBar = await measure();
+  setLane({});
+
+  // Put the project back: the probe's own rows go, and the load takes its stores with them.
+  // The sequence cascades to the track and the track to its events (spec §9.3). The save
+  // first, because §14 (aj) makes `loadProject` REFUSE over unsaved work and the removals
+  // above marked the track dirty.
+  await projectService.saveNow();
+  await repos.sequences.remove(sequence.id);
+  await repos.programs.remove(program.id);
+  await projectService.loadProject(projectId);
+
+  return {
+    channelId,
+    slotsBefore,
+    slotsAfter,
+    survivingSlot,
+    openRms,
+    removedSlotClosedRms,
+    survivingSlotClosedRms,
+    laneFirstBeatRms: laneBar.firstBeat,
+    laneLastBeatRms: laneBar.lastBeat,
+  };
+}
+
+/**
  * Two tracks that play ONE program each get their own §5.2 pad channel (issue #141).
  *
  * A pad channel is keyed `pad:<programId>:<padIndex>` — no track in the id — and
@@ -3486,9 +3752,11 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
   transport().play();
   await delay(300); // past the first beat, so the meter is reading programme material
   const livePeakSeeded = await peakOver(1_400);
-  // Bypassed rather than removed: `removeInsert` still shrinks the rack (issue #142), and
-  // this proof has no business depending on that. §5.7's bypass is true bypass via routing.
-  mixer().setInsertEnabled(padChannel, filterSlotId, false);
+  // REMOVED rather than bypassed. This used to bypass, because `removeInsert` shrank the rack
+  // and slid every slot behind it onto a different §7.8 address (issue #142) — a removal now
+  // empties the slot in place, so it is the plainer statement of "take the filter out", and it
+  // exercises the §4.3 chain rebuild on the live graph as well.
+  mixer().removeInsert(padChannel, filterSlotId);
   await delay(300);
   const livePeakSecondClosed = await peakOver(1_400);
   // The second track's fader, opened for the first time — its channel was built with the 0
@@ -3801,6 +4069,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     songEntryIndexProof: () => songEntryIndexProof(),
     insertDefaultsProof: () => insertDefaultsProof(),
     insertLimitProof: () => insertLimitProof(engine),
+    insertRemoveProof: () => insertRemoveProof(engine),
     padStripProof: () => padStripProof(engine),
     sequenceFilterProof: () => sequenceFilterProof(engine),
     trackWithdrawalProof: () => trackWithdrawalProof(engine),

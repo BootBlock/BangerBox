@@ -186,6 +186,48 @@ describe('InsertPanel replace (spec §8.5.6)', () => {
   });
 });
 
+describe('InsertPanel remove (spec §8.5.6, issue #142)', () => {
+  it('empties the slot and leaves the rest of the chain where it was', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(screen.getByLabelText('Remove insert 1, Delay'));
+
+    // The rack is unchanged in length and the limiter is still slot 2 — which is what its
+    // §7.8 `insert:track:1:slot2.*` address, and every lane and binding on it, names.
+    expect(stripNow().inserts).toHaveLength(2);
+    expect(stripNow().inserts[0]!.effectType).toBeNull();
+    expect(stripNow().inserts[1]!.effectType).toBe('limiter');
+    expect(screen.getByRole('listitem', { name: 'Insert 1 — empty' })).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: 'Insert 2 — Limiter' })).toBeInTheDocument();
+  });
+
+  /**
+   * The §10.3 half of the same statement: the encoders follow the FIRST non-empty slot, so
+   * emptying slot 1 hands them to the limiter in slot 2 — at slot 2's own address, not at a
+   * renumbered one.
+   */
+  it('re-derives the Q-Link binding against the slot the effect is actually in', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    expect(focusPaths()[0]).toBe('insert:track:1:slot1.time');
+
+    await user.click(screen.getByLabelText('Remove insert 1, Delay'));
+
+    expect(focusPaths().length).toBeGreaterThan(0);
+    expect(focusPaths().every((path) => path.startsWith('insert:track:1:slot2.'))).toBe(true);
+  });
+
+  it('has nothing to remove in an empty slot', () => {
+    const strip = stripNow();
+    useMixerStore.getState().setChannels({
+      [CHANNEL]: { ...strip, inserts: [{ ...strip.inserts[0]!, effectType: null }] },
+    });
+    renderPanel();
+    expect(screen.getByLabelText('Remove insert 1, empty')).toBeDisabled();
+  });
+});
+
 describe('index-encoded parameters (spec §5.7)', () => {
   it('offers the delay’s synced divisions by name rather than by index', async () => {
     const user = userEvent.setup();
