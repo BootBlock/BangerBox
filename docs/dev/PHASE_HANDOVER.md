@@ -6,7 +6,7 @@ and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the amp-envelope-lane work merged to `main` (`--no-ff`). All eight §12 phases were
 already complete; this was a defect closure against §7.8/§5.4, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **2028 unit tests**, `test:e2e`
+`package.json` `config.phase` remains **"8"**. Suite: **2033 unit tests**, `test:e2e`
 real-browser smoke (dev + offline, **86/86 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
 
@@ -1953,8 +1953,20 @@ was added to the `check:orphans` allowlist.
   hold alone fails **2**; and one departing from the peak rather than from the contour fails
   **1**. The two anti-over-correction guards — a flat span, and a lane reaching only its own
   pad — are moved by no mutation.
+- **The review found four defects, and one more fell out of fixing them.** An interruption
+  fade read the RUNNING contour where `rescheduleDeclick` reads where it STOPPED;
+  `relayAmpContour` erased the freeze it then read and re-based neither `contourFrozenAt` nor
+  `declickFadeStart`; the §5.9 preview stepped back up to unity for a cut inside its own
+  declick, which is a regression this work introduced in the one window the new argument made
+  reachable; and the walk re-laid every future voice on every window, the (voice × window)
+  cost the `detune` branch beside it avoids. Bounding that walk then exposed the flat-span
+  guard sitting on the PAD rather than on the voice, so a lane that never changes reached only
+  what its first window could see — the review did not find that one, the bound did. Each was
+  proven by its own mutation: 1, 1, 1, 1, 1 and 2 failures.
 - **Measured in a real browser**: 86/86 smoke steps at ports 5342/5343, dev and offline, no
-  console errors. A bounce beat rose in **0.2747 s** under a lane sweeping `amp.attack` from
+  console errors, and every figure below identical before and after the review fixes — they
+  are corners the smoke does not reach, plus a cost. A bounce beat rose in **0.2747 s** under a
+  lane sweeping `amp.attack` from
   1 ms to 400 ms against **0.0009 s** unautomated, with beat 1 of the same bar still at
   **0.0054 s**. Live, the §5.8 master peak read **0.27839** at a 1 ms attack against
   **0.05454** at a 2 s one (×0.196). The direct §11.2 profile read the two voices rising in
@@ -2577,6 +2589,6 @@ instead.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**2028**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**2033**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **86/86 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
