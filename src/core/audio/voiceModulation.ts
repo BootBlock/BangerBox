@@ -151,8 +151,14 @@ export function staticSourceValues(note: number, velocity: number, random: numbe
 export interface StaticModulation {
   /** Additive detune offset in cents (pitch target). */
   readonly detuneCents: number;
-  /** Multiplicative cutoff factor (filterCutoff target); 1 = unchanged. */
-  readonly cutoffFactor: number;
+  /**
+   * Cutoff modulation in cents (filterCutoff target); 0 = unchanged. It is expressed in
+   * cents rather than as a multiplier because it is summed onto the voice's
+   * `filter.detune` beside the §6 filter envelope and cutoff LFO, which are already there:
+   * `filter.frequency` carries the pad's own cutoff, which the §7.8 `filter.cutoff` lane
+   * owns (spec §6, §7.8, issue #138).
+   */
+  readonly cutoffCents: number;
   /** Multiplicative amp factor (amp target); 1 = unchanged, clamped ≥ 0. */
   readonly ampFactor: number;
 }
@@ -181,7 +187,7 @@ export function staticModulation(
   const amp = clampModSum(result.get('amp') ?? 0);
   return {
     detuneCents: pitch * PITCH_MOD_CENTS,
-    cutoffFactor: 2 ** (cutoff * FILTER_MOD_OCTAVES),
+    cutoffCents: cutoff * FILTER_MOD_OCTAVES * 1200,
     ampFactor: Math.max(0, 1 + amp),
   };
 }

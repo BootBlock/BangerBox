@@ -30,12 +30,19 @@ function spec(context: AudioContext, over: Partial<VoiceTriggerSpec> = {}): Voic
   };
 }
 
-/** The detune the built voice's source ended up carrying. */
+/**
+ * The total detune the built voice carries: what was written to `source.detune` PLUS the pad's
+ * §7.8 `pitch` lane node summed into it (issue #138). The two are separate nodes precisely so
+ * a lane can move the pad without touching the voice, so a reading of either alone is half the
+ * answer — and each is clamped by the range it is bounded by.
+ */
 function detuneOf(fake: ReturnType<typeof createFakeAudioContext>['fake']): number {
   const source = fake.nodes.find((node) => node.nodeType === 'bufferSource') as unknown as {
     detune: { value: number };
   };
-  return source.detune.value;
+  const lane = fake.nodes.find((node) => node.nodeType === 'constantSource') as unknown as
+    { offset: { value: number } } | undefined;
+  return source.detune.value + (lane?.offset.value ?? 0);
 }
 
 /** The peak the amp envelope ramped to (spec §5.4 attack). */

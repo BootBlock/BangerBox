@@ -42,7 +42,7 @@ describe('staticSourceValues (spec §6)', () => {
 
 describe('staticModulation (spec §6 voice-start offsets)', () => {
   it('is neutral with no routes', () => {
-    expect(staticModulation([], 60, 100, 0)).toEqual({ detuneCents: 0, cutoffFactor: 1, ampFactor: 1 });
+    expect(staticModulation([], 60, 100, 0)).toEqual({ detuneCents: 0, cutoffCents: 0, ampFactor: 1 });
   });
 
   it('turns a velocity→amp route into an amp factor above unity', () => {
@@ -57,10 +57,11 @@ describe('staticModulation (spec §6 voice-start offsets)', () => {
     expect(detuneCents).toBeCloseTo(1200);
   });
 
-  it('turns a filterCutoff route into a multiplicative cutoff factor', () => {
+  it('turns a filterCutoff route into a cutoff offset in cents', () => {
     const routes: ModRoute[] = [{ source: 'velocity', target: 'filterCutoff', amount: 0.25 }];
-    const { cutoffFactor } = staticModulation(routes, 60, 127, 0); // 2^(0.25 × 4) = 2
-    expect(cutoffFactor).toBeCloseTo(2);
+    // 0.25 × 4 octaves = one octave up, which is 1200 cents on the voice's `filter.detune`.
+    const { cutoffCents } = staticModulation(routes, 60, 127, 0);
+    expect(cutoffCents).toBeCloseTo(1200);
   });
 
   it('clamps a negative amp modulation to zero', () => {

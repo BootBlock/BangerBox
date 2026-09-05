@@ -1,14 +1,38 @@
-# BangerBox — Phase Handover (after the shared-pad-channel closure)
+# BangerBox — Phase Handover (after the per-voice lane closure)
 
-Generated at the close of the §5.2 shared-pad-channel work per Protocol Alpha (spec §13.1). A new
+Generated at the close of the §7.8 per-voice lane work per Protocol Alpha (spec §13.1). A new
 session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the shared-pad-channel work merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §4.2/§5.2/§5.3/§8.5.6, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1965 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **78/78 steps**), plus `lint`, `type-check`, `format:check`
+**State:** the per-voice lane work merged to `main` (`--no-ff`). All eight §12 phases were
+already complete; this was a defect closure against §6/§7.8/§9.5/§10.2, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1983 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **80/80 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
+
+**A §7.8 per-voice leaf names a §6 field of the PAD, and a lane REPLACES the patch's static
+value.** `program:<id>.pad:<idx>.filter.cutoff`, `…filter.resonance` and `…pitch` were written
+onto each SOUNDING voice, which reaches only the voices that exist at the moment of the write —
+so a note struck between two automation windows was built from the §6 payload, and a §9.5
+render, which builds every voice before it applies any ramp, was given no voice pool at all.
+Each of the three now rides a `ConstantSourceNode` the whole pad shares and every voice is
+built against. The §6 contour keeps modulating around it. See §2 (aw) and §4.
+
+**The reason issue #138 gave was not the reason.** It said the write would land on the param the
+voice's own §6 contour occupies, which §14 (x) forbids; that was true of none of the three. The
+filter envelope and the cutoff LFO are on `filter.detune` while the write was on
+`filter.frequency`, nothing in §6 modulates `filter.Q`, and (x) had already moved the pitch
+write onto the voice's own bend node. The obstacle was always the SET of voices a write reaches.
+
+**A §10.2 bend and a §7.8 pitch lane are separate nodes, so they SUM.** §10.2 used to say one
+offset per voice was shared by the two and the later superseded the other; bending an automated
+pitch now bends the automated pitch, exactly as bending mid-envelope bends the envelope. The
+declick model carries the two on ONE additive track, because the graph sums them onto one param.
+
+**A pad's tune and a LAYER's tune are different quantities.** §6 stores `tuneSemitones` per
+layer and §8.5.5 sets them independently, while the §7.8 leaf names one value for the pad —
+`padTuneSemitones(pad)` is the one place that says which layer is the pad's, and each layer's
+DIFFERENCE from it stays with the voice.
 
 **A §4.2 channel id NAMES a strip; the §5.2 graph REALISES it, once per track.** A pad channel
 was keyed `pad:<programId>:<padIndex>` with no track in the id, and `ensurePadChannel` wired it
@@ -147,6 +171,34 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(aw) — the per-voice lane closure (§6, §7.8, §9.5, §10.2).** The ⚑ items below are
+  settled policy a new session should treat as binding, not as spec text:
+  - **A §7.8 per-voice leaf is a PAD value, and a lane REPLACES the patch's static value.**
+    `writePadLeaf` writes the §6 field, `programWithLiveGestures` builds a voice from it, the
+    Grid draws it against the field's own range: a lane at 5 kHz means the pad's cutoff is
+    5 kHz, and the §6 contour keeps modulating around it. The OFFSET reading is what the code
+    half-did, and it was incoherent — a pad tuned +5 st under a lane saying +7 sounded at +12.
+  - ⚑ **One node per pad per leaf, and every voice is BUILT against it.** A per-voice write
+    reaches only the voices that exist when it lands. The voice keeps what the leaf does not
+    own: its layer fine tune and static pitch mod on `source.detune`, its own static cutoff mod
+    in cents on `filter.detune` beside the §6 filter envelope and cutoff LFO.
+  - ⚑ **A node is seeded from the §6 payload, and RE-SEEDED when that payload has moved since
+    the last trigger.** That is the only route for an edit which does not publish — a
+    keygroup's `filter`, which `changedPadLeaves` skips, and a project or §9.8 pack loaded over
+    the top of the one open. A §7.8 ramp does not write the store, so it never looks like such
+    a move and is never undone by the next note.
+  - ⚑ **A program that leaves the store takes its lanes with it** (§3.2), through
+    `SyncBridge.onProgramRemoved`. They outlive the voices that borrow them, so nothing else
+    would ever free them.
+  - ⚑ **A bend and a pitch lane SUM**, and §10.2 is revised to say so. A bend is a performance
+    gesture layered over the programmed sound; a lane IS programmed sound.
+  - ⚑ **The two amp-ENVELOPE leaves are deliberately not covered** (issue #143). An AHDSR is
+    applied when a voice starts, so there is no param to sum onto; a remembered value would
+    work live and not offline, because a render triggers every voice before any ramp.
+  - ⚑ **A lane does not re-lay the declick of a voice that has not STARTED.** A render walks
+    `SCHEDULER_INTERVAL_MS` windows across the whole span, so doing so integrates the same
+    contour once per (voice × window). A §10.2 bend keeps the clamp: it is one event.
 
 - **(av) — the shared-pad-channel closure (§4.2, §5.2, §5.3, §8.5.6, §9.5).** The ⚑ items
   below are settled policy a new session should treat as binding, not as spec text:
@@ -750,6 +802,25 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   rack's first free slot, so a fresh effect lands at the FRONT of a default four-slot strip
   and the empty slots sit behind it. Find it by effect, or by diffing the list. Eight tests
   and two §11.4 probes carried the old assumption.
+- **A §11.4 probe that measures a VOICE must NEUTRALISE the §5.2 strips first**, as
+  `bounceMixProof` does. By the time the smoke reaches the late steps the project carries a
+  350 ms delay at 35 % feedback on its MASTER strip, left by the §8.5.6 insert-panel step,
+  which smears every hit into the next. `padLaneProof`'s first run measured a quarter-second
+  hit as 0.5000 s long and read as a failed fix.
+- **A probe that places its windows in SECONDS must give its sequence its own §9.3 tempo.**
+  `activeSequenceSegments` falls back to the transport's bpm, and an earlier step leaves
+  whatever tempo it was working at.
+- **`cancelAndHoldAtTime` anchors a later ramp only when there is an event at or after the
+  cancel time to rewrite.** On an otherwise-empty timeline it inserts nothing and the following
+  `linearRampToValueAtTime` interpolates from the preceding event — see issue #144, which is
+  what that costs the §5.4 declick.
+- **The shell's working directory DRIFTS between tool calls, and a `gh` invocation resets it to
+  the main checkout.** Two commits landed on `main` in the primary checkout that way and had to
+  be moved with `format-patch` + `am`. Pass `git -C <abs worktree>` or `cd <abs worktree> &&`
+  on every command; check `pwd` after anything that shells out.
+- **Commit BEFORE a mutation experiment, not after it.** A loop that begins
+  `git checkout -- <files>` to clean up the previous mutation destroys uncommitted work in
+  those files on its FIRST pass, before any mutation has been applied.
 - **A removed worktree can leave an EMPTY directory behind under `.claude/worktrees/`.** A
   lingering shell holds its CWD, so `git worktree remove` and `rm -rf` both fail with
   "Permission denied" / "Device or resource busy". `padchannel` is one; `slotlimit`,
@@ -766,6 +837,39 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
+
+**A §7.8 per-voice lane (spec §6, §7.8, §9.5):**
+
+- **`PadLane` in `voicePool.ts` is the ONE place a §7.8 per-voice leaf's value lives** — one
+  `ConstantSourceNode` per pad per leaf, which every voice of the pad is built against. The
+  voice's own param holds the neutral the node sums onto: `filter.frequency.value = 0`,
+  `filter.Q.value = 0`, and the pad's tune removed from `baseDetune`. A new per-voice §7.8 leaf
+  gets a node there, or it reaches only the voices that happen to exist when it is written.
+- **`applyPadParam` writes the NODE, and walks the voices only for `detune`** — to move their
+  §5.4 declick, because detune is the playback rate. It skips a voice that has not STARTED and
+  leaves it to the window that reaches it.
+- **`VoicePool.seedLaneNode` owns the seeding rule**: build and seed on first use, re-seed when
+  the §6 payload has moved since the last trigger. `laneNode` is the build-only half, which is
+  what a §7.8 write calls when the pad has never sounded.
+- **`releaseProgramLanes(programId)` is called from `SyncBridge.onProgramRemoved`**, reported by
+  `subscribeProgramParamSync` from the diff it already computes. A new thing the graph hangs off
+  a §6 program is released there too, or it outlives the program that owns it (§3.2).
+- **`padTuneSemitones(pad)` in `programVoice.ts` says which layer's tune is the PAD's**, and
+  both the voice builder and `syncLayer/programParams` read it through that function. Each
+  layer's own tune travels as `ResolvedVoice.layerTuneCents`, its difference from the pad's.
+- **`boundedCents` bounds each detune contribution by the §6 rule that admits IT.** The pad's
+  tune and a layer's distance from it are bounded separately because they are bounded
+  differently; a non-finite one contributes nothing rather than the range floor (§14 (ak)).
+- **`StaticModulation.cutoffCents` replaces `cutoffFactor`**, so every §6 filter modulator —
+  the envelope, the cutoff LFO and the per-voice static mod — lands on `filter.detune` in cents
+  while `filter.frequency` carries only the pad's shared cutoff.
+- **`DetuneSchedule.bend` models the SUM of the two nodes summed into `source.detune`**: this
+  voice's §10.2 bend and its pad's §7.8 lane. `applyRetune` takes their total, and the track is
+  seeded at the voice's start with the lane's value rather than at zero.
+- **The §11.4 `padLaneProof` neutralises the §5.2 strips before it renders**, reads a cutoff
+  lane as a LEVEL and a pitch lane as a LENGTH, and measures the live half with the transport
+  stopped at the moment of each write — so the only way a write can reach the pass that follows
+  is a value the next voice is built against.
 
 **A pad channel, and what a §4.2 id resolves to (spec §4.2, §5.2, §5.3):**
 
@@ -1264,7 +1368,13 @@ own defaults and needs no migration.
 
 ## 7. Worker / worklet / message protocol versions
 
-**Nothing in the §7.1.3 protocol changed this work** (issue #141): no request kind, no response
+**Nothing in the §7.1.3 protocol changed this work** (issue #138): no request kind, no response
+kind, no `ScheduledEvent` field, and no change to an existing kind's shape.
+**`SCHEDULER_PROTOCOL_VERSION` stays at 2.** A §7.8 pad lane is a §5.2 graph object and never
+crosses the worker boundary — the scheduler emits the same `automationRamp` for these addresses
+as for any other, and what changed is where the dispatcher puts the value.
+
+From the previous work, and unchanged: **nothing in the §7.1.3 protocol changed** (issue #141): no request kind, no response
 kind, no `ScheduledEvent` field, and no change to an existing kind's shape.
 **`SCHEDULER_PROTOCOL_VERSION` stays at 2.** A pad channel is a §5.2 graph object and never
 crosses the worker boundary — the scheduler knows nothing about channels.
@@ -1327,7 +1437,14 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store slice or field changed this work, but two `useMixerStore` actions changed their
+**No store slice, field or action changed this work; the §4.3 BRIDGE gained one method.**
+`SyncBridge.onProgramRemoved(programId)` is how a §6 program leaving the store reaches the
+graph, and `subscribeProgramParamSync` reports it from the diff it already computes. It is a
+genuine §4.3 hook — the audio bridge releases that program's §7.8 pad-lane nodes — unlike the
+`onActiveProgramChanged` §14 (as) deleted, whose body was empty in both bridges.
+
+From the previous work, and unchanged: **no store slice or field changed, but two
+`useMixerStore` actions changed their
 RETURN TYPE and what they may do.** `addInsert` and `replaceInsert` return `InsertSlotResult`
 (`{ ok: true } | { ok: false, reason }`) where they returned `void`, and both refuse a slot
 position the §1.3.1 limit forbids. `addInsert` also FILLS the rack's first free slot rather
@@ -1512,13 +1629,71 @@ per §14 (ak) — clamp in range, refuse a non-finite one, throw on a bad struct
 **`check:stubs` reports ZERO open stubs.** Outstanding work lives in GitHub issues, not in code
 comments.
 
+**A §7.8 lane on a §6 sound-design parameter now sounds and renders** (#138); the two
+amp-envelope leaves do not (#143), and the §5.4 declick has never been 3 ms long (#144).
+
 **STILL OUTSTANDING FROM PHASE 8 — READ THIS FIRST:**
 
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#141 is CLOSED by this work.** No new issue was filed while closing it, and nothing was
-added to the `check:orphans` allowlist.
+**#138 is CLOSED by this work.** Two new issues were filed while closing it — a §7.8 lane on
+`amp.attack` or `amp.release` reaches nothing (#143), and the §5.4 declick fades from the
+note-on rather than from 3 ms before the region end (#144). Nothing was added to the
+`check:orphans` allowlist.
+
+**Honest scope notes for the per-voice lane work:**
+
+- **The two amp-ENVELOPE leaves are inert** (#143). `program:<id>.pad:<idx>.amp.attack` and
+  `…amp.release` are registered, offered by the Grid and named among §10.3's pad-mode defaults,
+  and `programParamChange` maps neither. An AHDSR is applied when a voice STARTS, so there is
+  no param to sum onto; a remembered value would work live and not offline, because a render
+  triggers every voice before it applies any ramp.
+- **The §5.4 declick fades across a WHOLE region** (#144), and always has. Profiling the amp
+  gain of a bounced hit — rather than its start and its end, which is all any previous proof
+  read — shows a straight line from the note-on to the region's end where §5.4 asks for a 3 ms
+  fade at the end of it. `cancelAndHoldAtTime` anchors a ramp only when there is an event at or
+  after the cancel time to rewrite, and a voice's amp timeline normally has none. Pre-existing,
+  audible on every voice, and every RMS figure recorded since §14 (t) was measured under it —
+  so it is its own closure, and both builds of this one were measured under it.
+- **A §7.8 lane's last value survives a reload of the SAME project.** `syncLayer/programParams`
+  publishes only what CHANGED between two program objects, so a reload of unchanged values
+  publishes nothing and the node keeps what the last ramp put there. Loading a DIFFERENT
+  project releases the lanes with the programs that leave the store. The §6 control reads the
+  committed value and moving it re-asserts it.
+- **No §7.8 address reaches a KEYGROUP's voices**, before or after this work: `padKeyFor`
+  builds `<id>:<padIndex>` and `resolveKeygroupVoice` sets `<id>:keygroup`. Pre-existing,
+  untouched, and adjacent to #139.
+- **A pad whose §6 filter is off still gains no filter node mid-note**, so a cutoff or
+  resonance lane reaches nothing there. Unchanged — materialising one would click.
+- **A pad's lane nodes are not pruned while its program is in the store**, only released with
+  that program or by `VoicePool.destroy()`. That is the trade §6's free-running LFOs already
+  make, in the same map, for the same reason: the node has to outlive the note.
+- **Every regression test was proven against the code it was written to catch**, by twelve
+  mutations: the per-voice write — the defect as filed (7 failures); a node re-seeded from the
+  §6 payload on every trigger (5); bend and lane sharing one node (1); a teardown that leaves
+  the lanes connected (1); the static cutoff modulation dropped (1); a pitch lane that does not
+  move the declick (1); a lane node started at the note rather than on the context clock (1);
+  and the review's own five — a layer's whole tune on the pad node (1), a node never re-seeded
+  (2), a program's lanes kept (1), a removal never reported (1), and the declick re-laid for
+  future voices (1). One test is the anti-over-correction guard and no mutation moves it: a
+  lane reaches nothing on a pad whose §6 filter is off.
+- **The defect was measured in the browser too**, by giving the render no voice pool and
+  restoring the per-voice write: the swept bar and the unautomated one came back the same file
+  to every digit (**0.0006096859010598197 RMS** on beat 4 of both), the pitched bar and the
+  unpitched one likewise (**0.248875 s** on every beat of both), and the live pass read
+  **0.01043** open against **0.00557** closed — both the closed reading. The step fails on the
+  cutoff assertion, which is the render half of the issue as filed and is reached first.
+- **Measured in a real browser**: 80/80 smoke steps at ports 5342/5343, dev and offline, no
+  console errors. A lane sweeping a pad's own lowpass 60 Hz → 12 kHz rendered **0.17299 RMS on
+  beat 4 against 0.00061 unautomated (×283.73)**, and **0.00078 on beat 1 of the same bar**; a
+  lane raising the pad two octaves left beat 4 sounding **0.0846 s against 0.2276 s on beat 1
+  (×0.372)** at ×0.66 of beat 1's head level; and the live §5.8 master peak read **0.27707
+  open against 0.01049 closed (×0.038)** in the dev pass and **0.26326 against 0.00295
+  (×0.011)** offline, with each §7.8 write made while the transport was stopped.
+
+**#141 was CLOSED by the previous work.** No new issue was filed while closing it, and nothing
+was added to the `check:orphans` allowlist.
 
 **Honest scope notes for the shared-pad-channel work:**
 
@@ -1694,17 +1869,22 @@ sound-design parameter still renders as nothing (#138), listed below. Nothing wa
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-**#137, #135, #134, #133, #132 and #131 are CLOSED**, and #138, #139, #140, #141 and #142
-remain open.
+**#141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**, and #139, #140, #142, #143
+and #144 remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **#141** two tracks that play the same program share ONE §5.2 pad channel, wired to whichever
-  track triggered it first — so the second track's fader, pan, mute, solo, sends and inserts do
-  nothing for that pad, and deleting the first track silences the second. `ensurePadChannel`
-  keys the channel `pad:<programId>:<padIndex>`, with no track in the id, and ignores
-  `trackInput` once one is built. Found writing the #137 browser proof, whose first draft
-  measured this instead of the withdrawal.
+- **#144** the §5.4 end-of-buffer declick fades from the NOTE-ON rather than from 3 ms before
+  the region end, so every voice decays across its whole length. `scheduleAmpDeclick` uses
+  `cancelAndHoldAtTime` as an anchor and that method inserts nothing when no event stands at or
+  after the cancel time. Audible on every voice, live and in every §9.5 bounce, and a fix means
+  the caller supplying the level the fade departs from. Found profiling the amp gain of a
+  bounced hit while closing #138.
+- **#142** `removeInsert` drops the slot from the array rather than emptying it, so every §7.8
+  address behind the removed one shifts onto a different effect.
+- **#143** a §7.8 lane on `program:<id>.pad:<idx>.amp.attack` or `…amp.release` reaches
+  nothing: `programParamChange` maps neither, so both are inert live and render as nothing.
+  An AHDSR is applied at note-on, so there is no param to sum onto.
 - **#140** a §7.8 `program:<id>.pad:<idx>.amp` or `.pan` edit changes the pad and the graph and
   leaves the Mixer's own fader showing the old position until a reload. Two registered §7.8
   addresses reach one value and only the mixer side writes through; the publish deliberately
@@ -1712,17 +1892,6 @@ remain open.
 - **#139** a keygroup program's §6 program-scope `mixer` and `inserts` sound — `ensureProgramChannel`
   seeds the channel from the payload — and no surface can edit them: §8.5.6 renders no strip for a
   keygroup, `padStripsForProgram` publishes none, and the §7.8 address resolves to nothing.
-- **#142** `removeInsert` drops the slot from the array rather than emptying it, so every §7.8
-  address behind the removed one shifts onto a different effect — a lane on `slot3` starts
-  driving what used to be in `slot4`, and the §1.3.1 rack gets shorter every time. The
-  editing-side half of what §14 (ar) fixed for the wiring side.
-- **#138** a §7.8 lane on a §6 sound-design parameter (`program:<id>.pad:<idx>.filter.cutoff` and
-  its siblings) renders as nothing in a §9.5 bounce. It is not an oversight: offline every voice
-  of the render exists from the moment it is built, so `applyPadParam`'s "the voices sounding now"
-  is the whole span at once, and the write would land on the `AudioParam` the voice's own §6
-  contour occupies — which §14 (x) forbids. A fix means giving a per-voice lane its own summing
-  input, the way the §10.2 bend node has one; that is a change to how a voice is BUILT, not to the
-  bounce. Channel-scope program addresses (a pad's amp and pan) already render.
 - **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
 
 **Honest scope notes for the bounce-mixer work:**
@@ -2002,6 +2171,6 @@ remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1965**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **78/78 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1983**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **80/80 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.

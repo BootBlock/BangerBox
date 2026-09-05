@@ -2,9 +2,11 @@
  * Program-parameter diff — spec §4.3 ("the sync layer is idempotent and diff-based: it
  * compares previous/next selector values and touches only what changed").
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createDefaultDrumProgram, createDefaultPad, type Program } from '@/core/project/schemas';
-import { changedPadLeaves } from './programParams';
+import { useProgramStore } from '../useProgramStore';
+import { noopBridge } from './bridge';
+import { changedPadLeaves, subscribeProgramParamSync } from './programParams';
 
 const PROGRAM_ID = 'prog-1';
 
@@ -75,5 +77,24 @@ describe('changedPadLeaves (spec §4.3)', () => {
 
   it('ignores a removed program', () => {
     expect(changedPadLeaves(programWith([basePad()]), {})).toEqual([]);
+  });
+});
+
+describe('subscribeProgramParamSync (spec §3.2, §4.3)', () => {
+  it('tells the graph which programs have LEFT the store', () => {
+    const onProgramRemoved = vi.fn();
+    const dispose = subscribeProgramParamSync({ ...noopBridge, onProgramRemoved });
+    try {
+      // A §7.8 pad lane outlives the voices that borrow it, so a program the store no longer
+      // holds — a project loaded over the top of the one open, or a deleted program — leaves
+      // nodes nothing else can free (issue #138).
+      useProgramStore.getState().setPrograms(programWith([basePad()]));
+      expect(onProgramRemoved).not.toHaveBeenCalled();
+      useProgramStore.getState().setPrograms({});
+      expect(onProgramRemoved).toHaveBeenCalledWith(PROGRAM_ID);
+    } finally {
+      dispose();
+      useProgramStore.getState().setPrograms({});
+    }
   });
 });

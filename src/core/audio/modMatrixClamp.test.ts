@@ -34,9 +34,9 @@ describe('staticModulation clamps its summed targets (spec §6, issue #76)', () 
     expect(stat.ampFactor).toBe(2);
   });
 
-  it('caps the cutoff factor at the full-scale modulation depth', () => {
+  it('caps the cutoff modulation at the full-scale modulation depth', () => {
     const stat = staticModulation(pileUp(MAX_MOD_ROUTES, 'velocity', 'filterCutoff'), 60, 127, 0);
-    expect(stat.cutoffFactor).toBeCloseTo(2 ** 4, 6);
+    expect(stat.cutoffCents).toBeCloseTo(4 * 1200, 6); // four octaves, not thirty-two
   });
 
   it('leaves a single in-range route exactly as it was', () => {

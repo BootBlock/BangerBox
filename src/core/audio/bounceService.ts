@@ -37,6 +37,13 @@
  *   - bounce selected track({@link bounceTrack}, post-insert/pre-master)
  *   - resample to pad      ({@link resampleSequenceToSample})
  *
+ * **A §7.8 lane on a §6 sound-design parameter renders** (issue #138): `filter.cutoff`,
+ * `filter.resonance` and `pitch` each ride a `ConstantSourceNode` the whole pad shares, which
+ * every voice is built against, so a lane reaches a voice for exactly as long as that voice
+ * sounds. The two §7.8 amp-ENVELOPE leaves (`amp.attack`, `amp.release`) still do not: an
+ * AHDSR is applied when a voice starts (spec §6), and a render builds every voice before it
+ * applies any ramp — see issue #143.
+ *
  * **What a render cannot see, and does not guess.** A bounce is of COMMITTED state. A §4.1
  * gesture still in flight lives on the transient channel and has not been committed, so a
  * fader held down while Bounce is tapped renders at the value the project holds — the rule
@@ -101,14 +108,13 @@ async function renderSegments(
 
   const graph = new MixerGraph(offline);
   const pool = new VoicePool(offline);
-  // No voice pool: a §7.8 lane addressing a per-voice §6 parameter has no offline meaning.
-  // The pool holds every voice of the whole render from the moment it is built, so "the
-  // voices sounding now" — the set the live bridge ramps — is the whole span at once, and the
-  // write would land on the same `AudioParam` the voice's own §6 contour already occupies.
-  // §14 (x) settled that a scheduled contour and a live retune may never share one param.
-  // Channel-scope program addresses (a pad's amp and pan) are unaffected: they resolve to the
-  // pad STRIP, which the render has. Tracked as its own gap rather than half-rendered here.
-  const bridge = createAudioBridge({ graph, context: offline, voicePool: () => null });
+  // The pool is the bridge's, so a §7.8 lane on a §6 sound-design parameter renders (issue
+  // #138). It can be, because such a lane no longer writes the voices that exist at the moment
+  // of the ramp — which offline is every voice of the whole render at once. It writes the
+  // pad's own §7.8 lane node, which each voice is built against and hears only for as long as
+  // it sounds. `bounceAutomationRamps` emits the same windows for these addresses as for a
+  // §5.2 strip, so what a bounce renders is what live playback sounds like.
+  const bridge = createAudioBridge({ graph, context: offline, voicePool: () => pool });
 
   const programs = useProgramStore.getState().programs;
   const bufferCache = new Map<string, AudioBuffer>();

@@ -118,12 +118,37 @@ describe('resolveDrumVoice (spec §6)', () => {
 
     const soft = resolveDrumVoice(program, 4, 20);
     expect(soft?.sampleId).toBe('soft');
-    expect(soft?.detuneCents).toBe(210); // 2 semitones + 10 cents
+    // The §7.8 `pitch` leaf's own value is separated from the rest (issue #138): the pad's
+    // semitone tune rides the pad's shared lane node, the layer's fine tune stays on the voice.
+    expect(soft?.padTuneSemitones).toBe(2);
+    expect(soft?.detuneCents).toBe(10);
     expect(soft?.chokeGroup).toBe(3);
     expect(soft?.playbackMode).toBe('oneShot');
     expect(soft?.channelId).toBe(programChannelId(program.id, 4));
 
     expect(resolveDrumVoice(program, 4, 100)?.sampleId).toBe('hard');
+  });
+
+  it('splits a layer tune into the pad tune and this layer distance from it', () => {
+    const program = createDefaultDrumProgram('Kit');
+    const pad = createDefaultPad(0);
+    // §6 stores `tuneSemitones` per layer and §8.5.5 sets them independently, while the §7.8
+    // `pitch` leaf names ONE value for the pad — the first layer's. Folding a layer's own tune
+    // into the pad's would put it on the shared lane node, and the octave between these two
+    // would become whichever of them sounded first (issue #138).
+    pad.layers = [
+      layer({ sampleId: 'soft', velocityStart: 1, velocityEnd: 63, tuneSemitones: 0 }),
+      layer({ sampleId: 'hard', velocityStart: 64, velocityEnd: 127, tuneSemitones: 12 }),
+    ];
+    program.pads = [pad];
+
+    const soft = resolveDrumVoice(program, 0, 20);
+    expect(soft?.padTuneSemitones).toBe(0);
+    expect(soft?.layerTuneCents).toBe(0);
+
+    const hard = resolveDrumVoice(program, 0, 100);
+    expect(hard?.padTuneSemitones).toBe(0); // the PAD's tune, which is the first layer's
+    expect(hard?.layerTuneCents).toBe(1_200); // and this layer's own octave, kept apart
   });
 
   it('returns null for an unassigned pad or an unmatched velocity', () => {
@@ -140,7 +165,10 @@ describe('resolveKeygroupVoice (spec §6)', () => {
     program.zones = [zone({ sampleId: 'keys', rootNote: 60 })];
     const voice = resolveKeygroupVoice(program, 72, 100);
     expect(voice?.sampleId).toBe('keys');
+    // A keygroup's whole repitch is the key distance, which no §7.8 address names: its pad
+    // key is `<id>:keygroup`, so the `pitch` leaf's own share is 0 (issue #138).
     expect(voice?.detuneCents).toBe(1200);
+    expect(voice?.padTuneSemitones).toBe(0);
     expect(voice?.channelId).toBe(programChannelId(program.id, 0));
     expect(voice?.polyphony).toBe(program.polyphony);
   });
