@@ -103,6 +103,31 @@ describe('InsertPanel and the §1.3.1 slot limit (issue #135)', () => {
   });
 
   /**
+   * A reorder is the one surface that moves an effect between §7.8 addresses without creating
+   * a slot, so `upsertChannel` does not bound it — see `withCompleteInserts`. Inside an
+   * over-long chain a project carried, walking an effect past the limit would put a sounding
+   * effect where nothing addresses it, so the button that would do it is not offered.
+   */
+  it('will not walk an effect past the limit with the reorder buttons', async () => {
+    const user = userEvent.setup();
+    const strip = createDefaultChannelStrip(CHANNEL, 6);
+    useMixerStore.getState().setChannels({
+      [CHANNEL]: {
+        ...strip,
+        inserts: strip.inserts.map((slot, index) =>
+          index === 3 ? { ...slot, effectType: 'delay' as const, enabled: true } : slot,
+        ),
+      },
+    });
+    renderPanel();
+
+    const later = screen.getByLabelText('Move insert 4, Delay later');
+    expect(later).toBeDisabled();
+    await user.click(screen.getByLabelText('Move insert 4, Delay earlier'));
+    expect(stripNow().inserts[2]!.effectType).toBe('delay');
+  });
+
+  /**
    * The refusal the disabled controls above do NOT cover: a channel with no strip at all. The
    * panel cannot know the chain is full there — it has no chain — so the Add picker is live
    * and the store's own sentence is what the user gets (spec §4.2, §8.1).

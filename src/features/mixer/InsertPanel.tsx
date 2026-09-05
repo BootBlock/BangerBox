@@ -90,10 +90,19 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
   }, [channelId, inserts]);
   useQLinkFocus(focusParams);
 
-  /** Reorder by rewriting the slot array — the store commits it as one undo entry. */
+  /**
+   * Reorder by rewriting the slot array — `upsertChannel` applies it as one bare `set`.
+   *
+   * This is the one surface that can move an effect between §7.8 addresses without CREATING a
+   * slot, so the §1.3.1 limit is not applied by the store here (admission stays unbounded —
+   * see `withCompleteInserts`). Inside a chain a project carried that is longer than the
+   * limit, walking an effect past it would put a sounding effect where nothing can address
+   * it, so the Move-later button that would do it is disabled (issue #135).
+   */
   const moveSlot = (index: number, delta: number) => {
     const target = index + delta;
     if (!strip || target < 0 || target >= inserts.length) return;
+    if (inserts[index]?.effectType !== null && target >= insertLimit) return;
     const reordered = [...inserts];
     const [moved] = reordered.splice(index, 1);
     if (!moved) return;
@@ -184,13 +193,15 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                       report(mixer().replaceInsert(channelId, slot.id, event.target.value as EffectType));
                     }}
                     // A slot PAST the §1.3.1 limit exists only in a chain a project already
-                    // carried (see `withCompleteInserts`): an effect put there would sound
-                    // while every §7.8 address on it stayed dead, so the store refuses and
-                    // the control says so rather than looking operable (issue #135).
+                    // carried (see `withCompleteInserts`), and the store will not put a new
+                    // effect there — so the control says so rather than looking operable
+                    // (issue #135). The copy claims only what is true: the §7.8 grammar bounds
+                    // `slotN` by the configurable RANGE, so a slot past THIS project's limit
+                    // may still be addressable, and one already sounding goes on sounding.
                     disabled={beyondLimit}
                     title={
                       beyondLimit
-                        ? `Slot ${index + 1} is past this project's limit of ${insertLimit} insert slots, so nothing can address it.`
+                        ? `Slot ${index + 1} is past this project's limit of ${insertLimit} insert slots, so no new effect can go here.`
                         : undefined
                     }
                     data-testid={`insert-replace-${index}`}
@@ -240,7 +251,11 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                     size="sm"
                     iconOnly
                     icon={<IconChevronDown size={14} aria-hidden="true" />}
-                    disabled={index === inserts.length - 1}
+                    // Never into a position §1.3.1 forbids, which only an over-long chain
+                    // from a project has at all (issue #135).
+                    disabled={
+                      index === inserts.length - 1 || (effectType !== null && index + 1 >= insertLimit)
+                    }
                     onClick={() => moveSlot(index, 1)}
                   />
                   <Button

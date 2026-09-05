@@ -292,8 +292,10 @@ function writeScalar(strip: ChannelStrip, field: ScalarField, value: number): Ch
  * truncating silently deletes an effect the user made and a §9.5 bounce would then render
  * differently from the one they last heard. So the chain is admitted WHOLE and it sounds.
  * What sits past the limit stays unaddressable — the pre-existing §7.8 consequence, not made
- * worse — and nothing the app itself builds can reach that state, because the limit is
- * applied where a slot is CREATED (`addInsert`, `replaceInsert`).
+ * worse — and nothing the app itself builds can GROW a chain into that state, because the
+ * limit is applied where a slot is CREATED (`addInsert`, `replaceInsert`). Inside such a
+ * chain, §8.5.6's own reorder is what declines to walk an effect into a forbidden position:
+ * a reorder writes through `upsertChannel`, which is admission and stays unbounded.
  */
 function withCompleteInserts(strip: ChannelStrip): ChannelStrip {
   let changed = false;
@@ -346,9 +348,20 @@ export function freeInsertSlot(inserts: readonly InsertSlotState[], limit: numbe
   return inserts.length < limit ? inserts.length : null;
 }
 
-/** The refusal both creating actions give when §1.3.1 leaves nowhere to put an effect. */
+/** The refusal `addInsert` gives when §1.3.1 leaves nowhere to put an effect. */
 function fullChainReason(limit: number): string {
   return `All ${limit} insert slots on this channel are in use. Remove or replace one first.`;
+}
+
+/**
+ * The refusal `replaceInsert` gives for a slot POSITION the limit forbids.
+ *
+ * Not `fullChainReason`: the chain may have free slots and still not admit an effect here,
+ * because only a chain a project already carried has a slot past the limit at all. Saying
+ * "all N slots are in use" of a mostly empty rack names the wrong rule.
+ */
+function beyondLimitReason(slotNumber: number, limit: number): string {
+  return `Slot ${slotNumber} is past this project's limit of ${limit} insert slots.`;
 }
 
 /** Map a channel id to the entity whose persistence owns its strip (spec §5.2, §9.3). */
@@ -529,7 +542,7 @@ export const useMixerStore = create<MixerState>()(
       // over-long chain admitted from a project has a slot here at all; filling one would put
       // a sounding effect where no §7.8 address reaches (issue #135).
       const limit = insertSlotLimit();
-      if (slotIndex >= limit) return refuseSlot(fullChainReason(limit));
+      if (slotIndex >= limit) return refuseSlot(beyondLimitReason(slotIndex + 1, limit));
       if (target.effectType === effectType) return SLOT_ACCEPTED;
       const write = (inserts: InsertSlotState[]) =>
         set((state) => ({

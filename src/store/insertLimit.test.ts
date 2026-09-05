@@ -168,8 +168,38 @@ describe('the limit bounds what `replaceInsert` may occupy (spec §1.3.1, §14 (
     expect(stripNow().inserts[0]!.effectType).toBe('reverb');
   });
 
+  it('names the SLOT rather than a full chain, because the chain need not be full', () => {
+    useMixerStore.getState().setChannels({ [CHANNEL]: strip(CHANNEL, 6) });
+    const refusal = useMixerStore.getState().replaceInsert(CHANNEL, stripNow().inserts[5]!.id, 'delay');
+    // "All 4 insert slots are in use" would name the wrong rule: five of the six are empty.
+    expect(refusal.ok === false && refusal.reason).toContain('Slot 6');
+    expect(refusal.ok === false && refusal.reason).not.toContain('in use');
+  });
+
   it('refuses a slot id the channel does not hold', () => {
     expect(useMixerStore.getState().replaceInsert(CHANNEL, 'not-a-slot', 'delay').ok).toBe(false);
+  });
+});
+
+describe('an out-of-range limit from a project (spec §4.1, §9.3, §9.6)', () => {
+  /**
+   * §9.3 declares no CHECK on `projects.insert_limit`, `rowToProjectSettings` copies the
+   * column straight through and §9.6's manifest types it as a bare number — so a hand-edited
+   * row or an imported project can carry any value at all. Enforcing the limit is what made
+   * that matter: `20` would build chains no §7.8 address can reach, and `0` would lock every
+   * channel out of inserts entirely.
+   */
+  it('clamps a hydrated limit above the §1.3.1 range, and still bounds the chain by it', () => {
+    setLimit(20);
+    expect(useProjectStore.getState().globalInsertLimit).toBe(GLOBAL_INSERT_LIMIT_RANGE[1]);
+    for (let i = 0; i < 12; i += 1) useMixerStore.getState().addInsert(CHANNEL, 'delay');
+    expect(stripNow().inserts.length).toBe(GLOBAL_INSERT_LIMIT_RANGE[1]);
+  });
+
+  it('clamps one below it, so a channel is never locked out of inserts', () => {
+    setLimit(0);
+    expect(useProjectStore.getState().globalInsertLimit).toBe(GLOBAL_INSERT_LIMIT_RANGE[0]);
+    expect(useMixerStore.getState().addInsert(CHANNEL, 'delay').ok).toBe(true);
   });
 });
 

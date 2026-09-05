@@ -3074,12 +3074,19 @@ async function insertLimitProof(engine: AudioEngine): Promise<InsertLimitResult>
   // and a probe reaching the stores mid-load would have its own work replaced by that load.
   await projectService.loadProject(projectId);
   const repos = getActiveRepositories();
-  const payloadBefore = (await repos.projects.getById(projectId))?.payload ?? '{}';
+  // BOTH §9.3 columns this proof writes, captured before it writes either. `flushProject`
+  // writes `insert_limit` from the store as well as `payload`, so a restore that put only the
+  // payload back would leave a user who had chosen 8 slots on the 4 this proof sets — and
+  // `installAudioProbe` runs in production builds.
+  const rowBefore = await repos.projects.getById(projectId);
+  if (rowBefore === undefined) throw new Error('insertLimitProof: the active project has no row.');
+  const payloadBefore = rowBefore.payload;
+  const insertLimitBefore = rowBefore.insert_limit;
 
   const channelId = 'master';
   const mixer = () => useMixerStore.getState();
   // The §1.3.1 default, set explicitly so the numbers below do not depend on the row the
-  // probe happened to find. The reload at the end takes the project's own value back.
+  // probe happened to find. Both columns are put back at the end.
   const limit = 4;
   useProjectStore.getState().setGlobalInsertLimit(limit);
 
@@ -3169,11 +3176,11 @@ async function insertLimitProof(engine: AudioEngine): Promise<InsertLimitResult>
   const beyond = mixer().channels[channelId]!.inserts[8]!;
   const replaceBeyondLimitRefused = !mixer().replaceInsert(channelId, beyond.id, 'delay').ok;
 
-  // Put the project back. The save flushes the probe's own strips into the row, the column is
-  // then rewritten verbatim, and the reload takes the STORES back with it — including the
-  // §1.3.1 limit this proof set (issue #135).
+  // Put the project back. The save flushes the probe's own strips into the row, both columns
+  // are then rewritten verbatim, and the reload takes the STORES back with them — including
+  // the §1.3.1 limit this proof set (issue #135).
   await projectService.saveNow();
-  await repos.projects.update(projectId, { payload: payloadBefore });
+  await repos.projects.update(projectId, { payload: payloadBefore, insert_limit: insertLimitBefore });
   await projectService.loadProject(projectId);
 
   return {
