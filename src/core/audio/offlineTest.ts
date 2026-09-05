@@ -24,6 +24,8 @@ import {
 } from '@/core/project/schemas';
 import { resolvedVoiceToTrigger, resolveVoice } from './programVoice';
 import { VoicePool } from './voicePool';
+import { PreviewChannel } from './preview';
+import { DECLICK_FADE_MS } from '@/core/constants';
 
 export interface EffectRenderResult {
   inputRms: number;
@@ -509,4 +511,126 @@ export async function renderKernelGuardOffline(effectType: EffectType): Promise<
     params: { ceiling: Number.NaN, release: Number.NaN, size: Number.NaN, damping: Number.NaN },
   });
   return { rms: rendered.outputRms, finite: Number.isFinite(rendered.outputRms) && rendered.outputRms > 0 };
+}
+
+// --- §5.4 amp-gain profile (spec §11.2, issue #144) -----------------------------------
+
+/**
+ * The shape of a voice's amp gain across its region, measured rather than inferred
+ * (spec §5.4, §11.2).
+ *
+ * Every previous proof of the end-of-buffer declick read a voice's ENDS — how long it
+ * sounded, and how near zero its last frame was — and a fade that runs the whole length of
+ * the region satisfies both. That is how issue #144 survived every proof since §14
+ * `2026-07-18 (t)`. These fields describe the shape in between.
+ */
+export interface AmpProfileResult {
+  /** Seconds from the note-on to the last frame above the noise floor — the region's end. */
+  readonly regionSeconds: number;
+  /** Gain 1 ms after the note-on — the level the §6 AHDSR settles this voice at. */
+  readonly headGain: number;
+  /** Gain at the region's midpoint. §5.4 holds it there; a fade across the whole region halves it. */
+  readonly midGain: number;
+  /** Gain `DECLICK_FADE_MS` before the end — where the §5.4 fade begins, so still at head level. */
+  readonly fadeStartGain: number;
+  /** Milliseconds the gain spends below half `headGain` — how long the fade to zero really is. */
+  readonly fadeMs: number;
+}
+
+/**
+ * Read a rendered signal as an amp-gain profile. The caller renders a CONSTANT sample, so
+ * every frame is the amp gain itself and the profile needs no envelope estimation — which
+ * is what lets a 3 ms fade be told from a 250 ms one.
+ */
+function ampProfile(data: Float32Array, sampleRate: number): AmpProfileResult {
+  const end = soundingSeconds(data, sampleRate);
+  const at = (seconds: number): number => {
+    const index = Math.round(seconds * sampleRate);
+    return Math.abs(data[Math.min(data.length - 1, Math.max(0, index))] ?? 0);
+  };
+  const headGain = at(0.001);
+  const half = headGain / 2;
+  let lastAboveHalf = 0;
+  for (let i = 0; i < data.length; i++) {
+    if (Math.abs(data[i]!) >= half) lastAboveHalf = (i + 1) / sampleRate;
+  }
+  return {
+    regionSeconds: end,
+    headGain,
+    midGain: at(end / 2),
+    fadeStartGain: at(end - DECLICK_FADE_MS / 1000),
+    fadeMs: Math.max(0, end - lastAboveHalf) * 1000,
+  };
+}
+
+/** A buffer of constant 1.0 — played by a voice, the render IS that voice's amp gain. */
+function constantBuffer(context: BaseAudioContext, seconds: number): AudioBuffer {
+  const buffer = context.createBuffer(1, Math.floor(context.sampleRate * seconds), context.sampleRate);
+  buffer.getChannelData(0).fill(1);
+  return buffer;
+}
+
+/**
+ * Profile the amp gain of one pool voice across its region (spec §5.4, §11.2, issue #144).
+ *
+ * The pad carries a flat AHDSR — no attack, no decay, full sustain — so the only thing that
+ * may move its gain is the §5.4 declick, and the §6 filter is off so nothing colours the
+ * constant sample on its way out.
+ */
+export async function renderAmpProfileOffline(
+  seconds = 0.4,
+  sampleSeconds = 0.25,
+): Promise<AmpProfileResult> {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, Math.floor(sampleRate * seconds), sampleRate);
+  const program = createDefaultDrumProgram('Declick profile');
+  const pad = createDefaultPad(0);
+  pad.layers = [{ ...createDefaultVelocityLayer('offline'), velocityStart: 0, velocityEnd: 127 }];
+  pad.envelopes = {
+    ...pad.envelopes,
+    amp: { attack: 0, hold: 0, decay: 0, sustain: 1, release: 10, curve: 'linear' },
+  };
+  program.pads = [pad];
+  const resolved = resolveVoice(program, 0, 127);
+  if (!resolved) return ampProfile(new Float32Array(1), sampleRate);
+
+  const pool = new VoicePool(context);
+  const destination = context.createGain();
+  destination.connect(context.destination);
+  pool.trigger(
+    resolvedVoiceToTrigger(resolved, {
+      id: 'offline-declick',
+      buffer: constantBuffer(context, sampleSeconds),
+      destination,
+      when: 0,
+      velocity: 127,
+      programId: 'offline',
+      bpm: DEFAULT_BPM,
+    }),
+  );
+  const rendered = await context.startRendering();
+  pool.destroy();
+  return ampProfile(rendered.getChannelData(0), sampleRate);
+}
+
+/**
+ * The same profile for a §5.9 preview audition, which §5.9 says is "declicked at both ends
+ * like a voice" and reaches that through the very same helper (spec §5.9, §14 `(u)`).
+ *
+ * It is measured separately rather than assumed to agree, because sharing the helper is a
+ * claim about the code and this is a claim about the sound.
+ */
+export async function renderPreviewProfileOffline(
+  seconds = 0.4,
+  sampleSeconds = 0.25,
+): Promise<AmpProfileResult> {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, Math.floor(sampleRate * seconds), sampleRate);
+  const monitor = context.createGain();
+  monitor.connect(context.destination);
+  const preview = new PreviewChannel(context, monitor);
+  preview.play(constantBuffer(context, sampleSeconds), 0);
+  const rendered = await context.startRendering();
+  preview.destroy();
+  return ampProfile(rendered.getChannelData(0), sampleRate);
 }

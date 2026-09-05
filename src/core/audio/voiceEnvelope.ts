@@ -8,6 +8,7 @@
  * level (spec §6). Times are milliseconds (schema units); the AudioParam clock is seconds.
  */
 import type { AhdsrEnvelope } from '@/core/project/schemas';
+import { setParamNow } from './params/ramps';
 import type { DetuneBreakpoint } from './detuneSchedule';
 
 /** Smallest non-zero value an exponential ramp may target (they cannot reach 0). */
@@ -93,36 +94,98 @@ export function scheduleModEnvelope(
 }
 
 /**
+ * The level the amp contour {@link scheduleAmpAttack} lays down holds at `time` (spec §6).
+ *
+ * It is evaluated from the same four segment boundaries that function writes, so the model
+ * and the sound cannot disagree — the discipline {@link modEnvelopeBreakpoints} already keeps
+ * for the declick's detune integrator. The §5.4 declick needs it because it cannot ask the
+ * param: no public `AudioParam` member reports the value a contour WILL hold at a future
+ * time, and `cancelAndHoldAtTime` pins one only where there is an event at or after the
+ * cancel time to rewrite (issue #144).
+ *
+ * The boundaries are tested from the last segment backwards, so a zero-length attack, hold
+ * or decay resolves to the stage that follows it — which is what Web Audio does with several
+ * events written at one time, and what a flat §6 envelope is made of.
+ */
+export function ampLevelAt(peak: number, amp: AhdsrEnvelope, when: number, time: number): number {
+  const attackEnd = when + amp.attack / 1000;
+  const holdEnd = attackEnd + amp.hold / 1000;
+  const decayEnd = holdEnd + amp.decay / 1000;
+  const sustain = peak * amp.sustain;
+  if (time >= decayEnd) return sustain;
+  if (time >= holdEnd) {
+    const progress = (time - holdEnd) / (decayEnd - holdEnd);
+    // Exactly the condition `scheduleAmpAttack` applies the exponential decay on (spec §6).
+    if (amp.curve === 'exponential' && sustain > EXP_FLOOR && amp.decay > 0) {
+      return peak * (sustain / peak) ** progress;
+    }
+    return peak + (sustain - peak) * progress;
+  }
+  if (time >= attackEnd) return peak;
+  if (time <= when) return 0;
+  return peak * ((time - when) / (attackEnd - when));
+}
+
+/**
+ * Where a `declickMs` fade landing on `endTime` begins (spec §5.4).
+ *
+ * The clamp is on the fade's START rather than on its length: `earliest` is the voice's own
+ * note-on, or on a re-lay the moment of the retune, and §5.4 forbids a ramp that reaches back
+ * before it. A voice shorter than the fade therefore gets a shorter fade rather than an
+ * earlier one, and still lands on true zero at its end.
+ *
+ * Callers need the time as well as the schedule, because the level the fade departs from is
+ * the contour's value THERE — so this is exported rather than left inside
+ * {@link scheduleAmpDeclick}.
+ */
+export function declickFadeStart(endTime: number, earliest: number, declickMs: number): number {
+  return Math.max(earliest, endTime - declickMs / 1000);
+}
+
+/**
  * Schedule the declick fade that lands a voice on silence at `endTime` — the moment its
  * buffer runs out (spec §5.4: a voice never ends on a hard cut). Without this the amp gain
  * sits at the sustain level and output steps from the sample's last frame straight to zero,
  * which clicks for any sample not ending at a zero crossing.
  *
- * The fade starts `declickMs` before `endTime`, or at `earliest` (the voice's start) for a
- * voice shorter than the fade itself, so the ramp never reaches back before the note-on.
- * `cancelAndHoldAtTime` truncates whatever AHDSR segment is still running at that point:
- * reaching zero by `endTime` outranks completing the contour. A later note-off or steal
- * cancels this ramp in turn, since both hold the param at their own earlier time.
+ * **The fade departs from `level`, and the caller supplies it** (issue #144).
+ * `cancelAndHoldAtTime` was used as the anchor, and it inserts a held value only where there
+ * is an event at or after the cancel time to rewrite; a voice's amp timeline has nothing
+ * after its decay, so the ramp interpolated from the AHDSR's last event instead and every
+ * voice faded across its whole length. {@link ampLevelAt} is where a pool voice gets the
+ * number; a §5.9 audition sits at unity and passes 1. A non-finite level is refused by the
+ * §4.3 guard rather than written, which leaves the fade departing from the contour — the
+ * defect's own shape, and audible rather than the silence a NaN would leave behind.
  *
- * Returns the context time the fade begins.
+ * `cancelAndHoldAtTime` stays for the job it can do: erasing whatever is scheduled beyond
+ * the fade's start, and truncating an AHDSR segment still running there — reaching zero by
+ * `endTime` outranks completing the contour. A later note-off or steal cancels this ramp in
+ * turn, since both hold the param at their own earlier time, and there they have this ramp
+ * to rewrite, so the hold they ask for IS inserted.
  */
 export function scheduleAmpDeclick(
   param: AudioParam,
   endTime: number,
   earliest: number,
   declickMs: number,
-): number {
-  const fadeStart = Math.max(earliest, endTime - declickMs / 1000);
-  if (endTime <= fadeStart) return fadeStart; // zero-length region: nothing to fade
+  level: number,
+): void {
+  const fadeStart = declickFadeStart(endTime, earliest, declickMs);
+  if (endTime <= fadeStart) return; // zero-length region: nothing to fade
   param.cancelAndHoldAtTime(fadeStart);
+  setParamNow(param, level, fadeStart);
   param.linearRampToValueAtTime(0, endTime);
-  return fadeStart;
 }
 
 /**
  * Schedule the release ramp from `when` to silence over `releaseMs`, holding whatever
  * level the envelope had reached. Returns the context time the voice is silent (when the
  * source should stop).
+ *
+ * This one really can anchor on `cancelAndHoldAtTime` and needs no level of its own
+ * (issue #144): a release, a steal and a choke all interrupt a voice whose declick ramp is
+ * still scheduled beyond them, so there is always an event at or after `when` for the method
+ * to rewrite. The declick is the last thing on the timeline and never has one.
  */
 export function scheduleAmpRelease(param: AudioParam, when: number, releaseMs: number): number {
   const end = when + releaseMs / 1000;

@@ -389,6 +389,64 @@ async function assertShellAndSelfTest(page, label) {
     }
   });
 
+  // §5.4 asks for two things of the way a voice ENDS, and the probe that covered them had no
+  // caller at all. The first is issue #87: the fade lands on the region's real end, which a
+  // pitch contour moves because detune IS the playback rate. The second is issue #144: that
+  // fade is `DECLICK_FADE_MS` long. Reading a voice's ends cannot tell the two apart — a fade
+  // running the whole length of a voice also finishes at the right moment on near-silence —
+  // so the profile below plays a CONSTANT sample and reads the amp gain itself, across the
+  // region. The §5.9 audition is measured beside it because it declicks through one helper.
+  await step(`${label}: the declick lands on the region end and is 3 ms long (#87, #144)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.declickContourProof());
+    // Logged BEFORE the assertions, unlike every other step here: the profile IS the evidence
+    // for #144, and a run that trips on one of its six numbers should still report the rest.
+    console.log(
+      `       declick: region ${r.flatSeconds.toFixed(4)} s flat → ${r.sweptSeconds.toFixed(4)} s swept an octave down, ending on ${r.sweptFinalMagnitude.toFixed(5)}; voice gain ${r.voiceProfile.headGain.toFixed(5)} head → ${r.voiceProfile.midGain.toFixed(5)} mid → ${r.voiceProfile.fadeStartGain.toFixed(5)} at −${r.declickMs} ms, fading in ${r.voiceProfile.fadeMs.toFixed(2)} ms; preview gain ${r.previewProfile.headGain.toFixed(5)} → ${r.previewProfile.midGain.toFixed(5)} → ${r.previewProfile.fadeStartGain.toFixed(5)}, fading in ${r.previewProfile.fadeMs.toFixed(2)} ms`,
+    );
+    // Issue #87: an octave-down pitch sweep halves the rate at note-on, so the region is longer.
+    if (!(r.flatSeconds > 0.1)) {
+      throw new Error(`the unmodulated voice sounded for ${r.flatSeconds.toFixed(4)} s — nothing played`);
+    }
+    const stretched = r.sweptSeconds / r.flatSeconds;
+    if (!(stretched > 1.3)) {
+      throw new Error(
+        `a voice swept an octave down sounded ${r.sweptSeconds.toFixed(4)} s against ${r.flatSeconds.toFixed(4)} s flat (×${stretched.toFixed(3)}) — the fade did not follow the detune contour`,
+      );
+    }
+    if (!(r.sweptFinalMagnitude < 0.05)) {
+      throw new Error(
+        `the swept voice's last audible frame was ${r.sweptFinalMagnitude.toFixed(5)} — it stepped to zero instead of fading`,
+      );
+    }
+    // Issue #144, on the pool voice and then on the §5.9 preview. Both play a constant sample,
+    // so every frame of the render IS the amp gain and no envelope has to be estimated.
+    for (const [what, p] of [
+      ['a pool voice', r.voiceProfile],
+      ['a §5.9 audition', r.previewProfile],
+    ]) {
+      if (!(p.headGain > 0.5)) {
+        throw new Error(`${what} rendered ${p.headGain.toFixed(5)} at its head — nothing sounded`);
+      }
+      const held = p.midGain / p.headGain;
+      if (!(held > 0.9)) {
+        throw new Error(
+          `${what} held ${p.midGain.toFixed(5)} at the midpoint of its ${p.regionSeconds.toFixed(4)} s region against ${p.headGain.toFixed(5)} at its head (×${held.toFixed(3)}) — the §5.4 fade is running across the whole voice`,
+        );
+      }
+      const atFade = p.fadeStartGain / p.headGain;
+      if (!(atFade > 0.9)) {
+        throw new Error(
+          `${what} was already down to ${p.fadeStartGain.toFixed(5)} (×${atFade.toFixed(3)}) ${r.declickMs} ms before its end — the fade begins long before §5.4 asks for it`,
+        );
+      }
+      if (!(p.fadeMs <= r.declickMs + 1)) {
+        throw new Error(
+          `${what} spent ${p.fadeMs.toFixed(2)} ms below half its level, where §5.4 asks for a ${r.declickMs} ms fade`,
+        );
+      }
+    }
+  });
+
   await step(`${label}: a synced LFO follows the tempo (spec §6, issue #107)`, async () => {
     const rates = await page.evaluate(() => globalThis.__bangerboxAudioProbe.syncedLfoRates());
     // A 1/4-synced LFO is 1 Hz at 60 bpm and 4 Hz at 240 bpm; the free one ignores both.

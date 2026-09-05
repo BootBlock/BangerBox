@@ -67,6 +67,13 @@ describe('preview channel (spec §5.9)', () => {
       method: 'cancelAndHoldAtTime',
       args: [1 - DECLICK_FADE_MS / 1000],
     });
+    // …departing from unity, which is where the audition's own amp sits for its whole life.
+    // Without this the fade interpolates from that opening `setValueAtTime` and the whole
+    // audition decays — the same issue #144 defect the pool had, through the same helper.
+    expect(amp.gain.calls).toContainEqual({
+      method: 'setValueAtTime',
+      args: [1, 1 - DECLICK_FADE_MS / 1000],
+    });
     expect(amp.gain.calls).toContainEqual({ method: 'linearRampToValueAtTime', args: [0, 1] });
 
     preview.stop(0.5); // cut mid-buffer

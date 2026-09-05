@@ -222,6 +222,109 @@ describe('voice endings (spec §5.4 declick)', () => {
     pool.destroy();
   });
 
+  it('departs the fade from the level the §6 AHDSR holds there, not from the note-on', () => {
+    // Issue #144. The fade begins 3 ms before the 1 s buffer end, long after the default
+    // envelope has settled, so it must depart from peak × sustain — velocity 100 of 127 at
+    // 0 dB, times a sustain of 0.8. Without the write the ramp interpolates from the AHDSR's
+    // last event and the voice decays across its whole second.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'level', when: 0 }));
+    const departure = paramCalls(ampGain(fake))
+      .filter((c) => c.method === 'setValueAtTime')
+      .at(-1);
+    expect(departure?.args[1]).toBeCloseTo(1 - 0.003);
+    expect(departure?.args[0]).toBeCloseTo((100 / 127) * 0.8, 5);
+    pool.destroy();
+  });
+
+  it('departs a re-laid fade from the same level after a retune moves the end', () => {
+    // The retune path lays the fade a second time (issue #87), and it has to supply the
+    // departure level too — a re-lay that anchored on `cancelAndHoldAtTime` alone would put
+    // the defect straight back for every bent, automated or live-tuned voice.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'relevel', when: 0 }));
+    pool.applyProgramDetune('p1', -1200, 0.5); // half a rate, so the region ends at 1.5 s
+    const departure = paramCalls(ampGain(fake))
+      .filter((c) => c.method === 'setValueAtTime')
+      .at(-1);
+    expect(departure?.args[1]).toBeCloseTo(1.5 - 0.003);
+    expect(departure?.args[0]).toBeCloseTo((100 / 127) * 0.8, 5);
+    pool.destroy();
+  });
+
+  it('reads a re-laid fade from where the erase froze the timeline, not from a contour that has stopped', () => {
+    // A 60 ms region under the default 60 ms decay is still decaying when its fade begins, so
+    // the first lay's `cancelAndHoldAtTime` truncated the AHDSR there and the contour does not
+    // run past it. Bending down an octave 10 ms in doubles what is left and pushes the fade to
+    // 107 ms — past the point the timeline was frozen at. The level it departs from is
+    // therefore the contour's at 57 ms (0.63936), not the sustain level it would have reached
+    // by 107 ms had it kept running (0.62992); reading the later one steps the amp down.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'frozen', when: 0, startFrame: 0, endFrame: 2_880 })); // 60 ms
+    pool.applyProgramDetune('p1', -1200, 0.01);
+    const departure = paramCalls(ampGain(fake))
+      .filter((c) => c.method === 'setValueAtTime')
+      .at(-1);
+    expect(departure?.args[1]).toBeCloseTo(0.11 - 0.003, 6);
+    expect(departure?.args[0]).toBeCloseTo(0.63936, 5);
+    pool.destroy();
+  });
+
+  it('reads a SECOND re-lay from where the contour stopped, not from the previous fade start', () => {
+    // A §7.8 pitch lane re-lays every `SCHEDULER_INTERVAL_MS`, so the level has to be read at
+    // the EARLIEST fade start the voice has had rather than the last one — the AHDSR stopped
+    // running at the first, and nothing restarts it. A 60 ms region under a 500 ms decay is
+    // still decaying there, so reading the previous fade start walks the level down a frozen
+    // contour a step per window: 0.55978 instead of 0.65752 on only the second retune.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const slow = createDefaultEnvelope({ attack: 1, hold: 0, decay: 500, sustain: 0.2 });
+    pool.trigger(spec(context, { id: 'twice', when: 0, startFrame: 0, endFrame: 2_880, amp: slow }));
+    pool.applyProgramDetune('p1', -1200, 0.01); // fade moves 0.057 s → 0.107 s
+    pool.applyProgramDetune('p1', -2400, 0.02); // …and again, to 0.197 s
+    const departure = paramCalls(ampGain(fake))
+      .filter((c) => c.method === 'setValueAtTime')
+      .at(-1);
+    expect(departure?.args[1]).toBeCloseTo(0.197, 6);
+    expect(departure?.args[0]).toBeCloseTo(0.65752, 5);
+    pool.destroy();
+  });
+
+  it('clamps a voice shorter than the fade to its own start, and departs from the contour there', () => {
+    // §5.4 clamps the fade's START, so a 2 ms region gets a 2 ms fade rather than one
+    // beginning 1 ms before the voice exists. With a flat §6 envelope the contour is already
+    // at peak there, so the voice still sounds — for 2 ms, ending on true zero.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const flat = createDefaultEnvelope({ attack: 0, hold: 0, decay: 0, sustain: 1 });
+    pool.trigger(spec(context, { id: 'short', when: 0, startFrame: 0, endFrame: 96, amp: flat }));
+    const calls = paramCalls(ampGain(fake));
+    const departure = calls.filter((c) => c.method === 'setValueAtTime').at(-1);
+    expect(departure?.args[1]).toBe(0); // clamped to the note-on, never before it
+    expect(departure?.args[0]).toBeCloseTo(100 / 127, 5);
+    expect(calls.filter((c) => c.method === 'linearRampToValueAtTime').at(-1)?.args).toEqual([0, 0.002]);
+    pool.destroy();
+  });
+
+  it('leaves a voice shorter than its own §6 attack silent, as the clamp always has', () => {
+    // The other side of the same clamp, pinned so it is a stated consequence rather than a
+    // surprise: the contour holds ZERO at a note-on with an attack still to run, so a 2 ms
+    // region under the default 1 ms attack departs from zero and ramps to zero. Unchanged by
+    // issue #144 — `cancelAndHoldAtTime` pinned the same zero — and a §6 question about what a
+    // voice shorter than its attack should sound like, which §5.4 does not ask.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'stub', when: 0, startFrame: 0, endFrame: 96 }));
+    const departure = paramCalls(ampGain(fake))
+      .filter((c) => c.method === 'setValueAtTime')
+      .at(-1);
+    expect(departure?.args).toEqual([0, 0]);
+    pool.destroy();
+  });
+
   it('places the declick relative to the trimmed end, not the buffer end', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
