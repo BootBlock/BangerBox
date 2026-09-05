@@ -7,14 +7,18 @@
  * scheduler the UI does.
  */
 import type { AudioEngine } from '@/core/audio/engine';
+import { DECLICK_FADE_MS } from '@/core/constants';
 import {
+  renderAmpProfileOffline,
   renderDelayEchoOffline,
   renderEffectOffline,
   renderKernelGuardOffline,
   renderLfoPhaseOffline,
   renderLfoRateOffline,
+  renderPreviewProfileOffline,
   renderProgramNote,
   renderRampGuardOffline,
+  type AmpProfileResult,
   type DelayEchoResult,
   type EffectRenderResult,
 } from '@/core/audio/offlineTest';
@@ -521,6 +525,16 @@ export interface DeclickContourResult {
   readonly sweptSeconds: number;
   /** The last audible sample of the swept voice — a declicked end lands on near-zero. */
   readonly sweptFinalMagnitude: number;
+  /**
+   * The amp gain of a pool voice across its whole region (issue #144). The two readings
+   * above are its ENDS, and a fade that runs the entire length of a voice satisfies both —
+   * which is why the defect survived every proof since §14 `2026-07-18 (t)`.
+   */
+  readonly voiceProfile: AmpProfileResult;
+  /** The same profile for a §5.9 audition, which declicks through the very same helper. */
+  readonly previewProfile: AmpProfileResult;
+  /** `DECLICK_FADE_MS` — the fade length §5.4 asks for, so a failure can quote its own budget. */
+  readonly declickMs: number;
 }
 
 /** Outcome of the §6 mod-matrix clamp proof (see {@link modClampProof}). */
@@ -2461,12 +2475,17 @@ function schedulerBoundaryProof(): SchedulerBoundaryResult {
 }
 
 /**
- * The §5.4 declick follows a pitch-modulated voice's real end (issue #87).
+ * The §5.4 declick follows a pitch-modulated voice's real end (issue #87), and is
+ * `DECLICK_FADE_MS` long rather than as long as the voice (issue #144).
  *
  * A pitch envelope varies `source.detune` inside the AudioParam, and detune IS the playback
  * rate, so the buffer runs out at a time no base-rate estimate predicts. Sweeping an octave
  * DOWN halves the rate at note-on, so the swept voice must sound audibly longer than the flat
  * one — and still land on near-silence rather than stepping to zero.
+ *
+ * The two profiles are the #144 half, and they read the amp gain ACROSS the region rather
+ * than at its ends: both halves of the pair above are satisfied by a voice that fades from
+ * its note-on, which is what the engine did for every voice it ever played.
  */
 async function declickContourProof(): Promise<DeclickContourResult> {
   const build = (semitones: number) => {
@@ -2490,6 +2509,9 @@ async function declickContourProof(): Promise<DeclickContourResult> {
     flatSeconds: flat.soundingSeconds,
     sweptSeconds: swept.soundingSeconds,
     sweptFinalMagnitude: swept.finalMagnitude,
+    voiceProfile: await renderAmpProfileOffline(),
+    previewProfile: await renderPreviewProfileOffline(),
+    declickMs: DECLICK_FADE_MS,
   };
 }
 
