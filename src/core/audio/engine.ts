@@ -63,8 +63,6 @@ export class AudioEngine {
   private readonly programBuffers = new Map<string, AudioBuffer>();
   /** Reversed copies for §6 reversed layers, one per decoded buffer (spec §6). */
   private readonly reversedBuffers: ReversedBufferCache;
-  /** Pad/program channels whose §6 mixer has been pushed to the graph (apply once). */
-  private readonly channelMixerApplied = new Set<string>();
   /** Preloaded demo sample the scheduler dispatch triggers per note (the demo instrument). */
   private demoBuffer: AudioBuffer | null = null;
   private playheadRaf: number | null = null;
@@ -132,7 +130,7 @@ export class AudioEngine {
     const path = await ensureDemoSampleInOpfs(projectId);
     const buffer = await this.sampleCache.get(path);
     const track = this.graph.ensureTrackChannel(DEMO_TRACK_ID);
-    const pad = this.graph.ensurePadChannel(DEMO_PAD_CHANNEL, track.input);
+    const pad = this.graph.ensurePadChannel(DEMO_PAD_CHANNEL, DEMO_TRACK_ID, track.input).channel;
     this.voicePool.trigger({
       id: crypto.randomUUID(),
       buffer,
@@ -272,7 +270,6 @@ export class AudioEngine {
     this.graph.destroy();
     this.sampleCache.clear();
     this.programBuffers.clear();
-    this.channelMixerApplied.clear();
     this.demoBuffer = null;
   }
 
@@ -394,19 +391,28 @@ export class AudioEngine {
   }
 
   /**
-   * The pad/program channel for a resolved voice, created under the track group and — on
-   * first use — seeded with the §6 pad mixer (level/pan/sends). Live pad-mixer editing goes
-   * through Mixer mode and the sync layer; here the stored §6 values are made audible.
+   * This track's realisation of the pad channel for a resolved voice, created under the
+   * track group (spec §5.2 stage 5) and seeded once, in the §14 (ar) order: the §6 payload
+   * first, then the §4.2 strip where the store has one.
+   *
+   * A pad channel exists once PER TRACK playing the program (issue #141), so a second track
+   * builds its instance long after `resyncAll` ran and after any edit the strip has had —
+   * which is why it is seeded here rather than left at the §4.2 defaults `createChannelStrip`
+   * gives it. The graph reports what it built; an engine-side "already seeded" set would
+   * outlive `removePadChannel` and leave a rebuilt channel unseeded.
    */
   private ensureProgramChannel(trackId: string, resolved: ResolvedVoice): ChannelHandle {
     const track = this.graph.ensureTrackChannel(trackId);
-    const pad = this.graph.ensurePadChannel(resolved.channelId, track.input);
-    if (!this.channelMixerApplied.has(resolved.channelId)) {
-      this.channelMixerApplied.add(resolved.channelId);
+    const { channel: pad, created } = this.graph.ensurePadChannel(resolved.channelId, trackId, track.input);
+    if (created) {
       const now = this.context.currentTime;
       pad.setLevel(resolved.mixer.level, now, false);
       pad.setPan(resolved.mixer.pan, now, false);
       resolved.mixer.sendLevels.forEach((level, index) => pad.setSendGain(index, level, now, false));
+      // The store is the §1.3 #16 runtime truth, so it wins where it carries a strip for this
+      // pad; where it does not — a pad of a program that is not the active one — the §6
+      // payload above is the only value there is.
+      this.bridge.seedChannel(pad);
     }
     return pad;
   }
@@ -423,7 +429,11 @@ export class AudioEngine {
     if (useSequenceStore.getState().tracks[event.trackId] === undefined) return;
     this.scheduledNotes++;
     const track = this.graph.ensureTrackChannel(event.trackId);
-    const pad = this.graph.ensurePadChannel(`pad:${event.trackId}:${event.note}`, track.input);
+    const pad = this.graph.ensurePadChannel(
+      `pad:${event.trackId}:${event.note}`,
+      event.trackId,
+      track.input,
+    ).channel;
     this.voicePool.trigger({
       id: crypto.randomUUID(),
       buffer: this.demoBuffer,

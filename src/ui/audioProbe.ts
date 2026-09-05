@@ -176,6 +176,8 @@ export interface AudioProbe {
   sequenceFilterProof: () => Promise<SequenceFilterResult>;
   /** A deleted track stops sounding and leaves nothing behind (§7.1.3, §7.5, §7.8, #137). */
   trackWithdrawalProof: () => Promise<TrackWithdrawalResult>;
+  /** Two tracks on one program each own their §5.2 pad channel (§5.2, §4.2, §6, #141). */
+  sharedPadChannelProof: () => Promise<SharedPadChannelResult>;
 }
 
 /**
@@ -270,6 +272,26 @@ export interface PadStripResult {
   readonly afterReload: PadStripReading;
   /** RMS of the same bounce with the TRACK strip soloed, and the pad strips present (§5.2). */
   readonly soloedTrackRms: number;
+}
+
+/** Outcome of the §5.2 shared-pad-channel proof (see {@link AudioProbe.sharedPadChannelProof}). */
+export interface SharedPadChannelResult {
+  /** The §4.2 pad strip both tracks play, so a failure names the channel it drove. */
+  readonly padChannel: string;
+  /** How many §5.2 pad channels the LIVE graph holds under that one id after both tracks played. */
+  readonly liveRealisations: number;
+  /** RMS of a §9.5 bounce with both track faders at unity — two voices summing per hit. */
+  readonly bothTracksRms: number;
+  /** The same bounce with the SECOND track's fader closed. The defect leaves this unchanged. */
+  readonly secondFaderClosedRms: number;
+  /** The same bounce with the FIRST track's fader closed. The defect renders silence. */
+  readonly firstFaderClosedRms: number;
+  /** The same bounce with both faders at unity and the PAD strip at 0.8 (−12 dB, §8.5.6). */
+  readonly padFaderRms: number;
+  /** §5.8 master peak with the transport rolling and both track faders at unity. */
+  readonly livePeakBoth: number;
+  /** The same peak with the second track's fader closed mid-transport. */
+  readonly livePeakSecondClosed: number;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -3005,7 +3027,7 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
   await delay(200);
 
   const stripRemains = useMixerStore.getState().channels[`track:${deletedTrackId}`] !== undefined;
-  const trackChannelRemains = engine.graph.getChannel(`track:${deletedTrackId}`) !== undefined;
+  const trackChannelRemains = engine.graph.channelsFor(`track:${deletedTrackId}`).length > 0;
   await projectService.saveNow();
 
   const trackRowRemains = (await repos.tracks.getById(deletedTrackId)) !== undefined;
@@ -3198,6 +3220,219 @@ async function insertLimitProof(engine: AudioEngine): Promise<InsertLimitResult>
   };
 }
 
+/**
+ * Two tracks that play ONE program each get their own §5.2 pad channel (issue #141).
+ *
+ * A pad channel is keyed `pad:<programId>:<padIndex>` — no track in the id — and
+ * `ensurePadChannel` wired it to the input of whichever track triggered it FIRST. §5.2 stage
+ * 5 places "all pad outputs of the program on a track" at that track's input, so the second
+ * track's voices arrived at the first track's strip and its own fader, pan, mute, solo, sends
+ * and inserts were bypassed for every pad the two shared. Deleting the first track then took
+ * the node the second was sounding through.
+ *
+ * "The second track's fader does nothing" is an audio claim, so it is measured rather than
+ * inspected (spec §11.2, §13.5). Both tracks hit the same pad on the same four beats, so each
+ * hit is two coherent voices summing, and each §9.5 bounce is read back from `/bounces/` over
+ * real OPFS. Closing ONE track's fader must halve the render:
+ *
+ *   - the second track's fader, against the defect's ×1.0 — its audio was never on that strip;
+ *   - the first track's fader, against the defect's ×0 — that strip carried BOTH tracks.
+ *
+ * The pad strip's own fader is the guard on the other side of the decision: one §6 `Pad`
+ * record, one §4.2 strip, one §7.8 address, N realisations. −12 dB there must reach both, or
+ * the fix would trade one silent strip for another.
+ *
+ * The live half is measured too, because `bounceService` and `AudioEngine` build the graph
+ * through the same factories but on their own paths.
+ *
+ * The probe owns its arrangement as real §9.3 ROWS and creates them rather than borrowing the
+ * project's, then deletes them and reloads: `installAudioProbe` runs in production builds.
+ */
+async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChannelResult> {
+  const { bounceActiveSequence } = await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+  const { channelLevelPath } = await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const repos = getActiveRepositories();
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A tenth-second 1 kHz tone through a pad with no envelope shaping, so what a render
+  // measures is which voices reached the master and nothing else. 0.3 leaves headroom for
+  // two of them summing — a §9.5 WAV is written at the §9.3 bit depth and would clip at 1.0,
+  // which would cost the linearity every ratio below depends on.
+  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * 0.1), sampleRate);
+  const toneData = tone.getChannelData(0);
+  for (let i = 0; i < toneData.length; i += 1) {
+    toneData[i] = 0.3 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+  }
+  const sample = await importDecodedSample(tone, 'shared pad channel probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  // ONE program, deliberately: it is the whole subject of the proof.
+  const program = createDefaultDrumProgram('Shared pad probe');
+  const pad = createDefaultPad(0, 'Shared pad probe');
+  pad.playbackMode = 'oneShot';
+  pad.layers = [layer({ sampleId: sample.id })];
+  pad.envelopes = {
+    ...pad.envelopes,
+    amp: { ...pad.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+  };
+  program.pads = [pad];
+  const padChannel = `pad:${program.id}:0`;
+
+  const sequence = { ...createDefaultSequence(projectId, 97, 'Shared pad probe'), lengthBars: 1 };
+  const firstTrackId = crypto.randomUUID();
+  const secondTrackId = crypto.randomUUID();
+
+  await repos.programs.create({
+    id: program.id,
+    project_id: projectId,
+    name: program.name,
+    type: 'drum',
+    payload: JSON.stringify(program),
+  });
+  await repos.sequences.create({
+    id: sequence.id,
+    project_id: projectId,
+    position: sequence.position,
+    name: sequence.name,
+    length_bars: sequence.lengthBars,
+    time_sig_numerator: sequence.timeSig.numerator,
+    time_sig_denominator: sequence.timeSig.denominator,
+    tempo: 120,
+    swing_amount: sequence.swingAmount,
+    swing_division: sequence.swingDivision,
+  });
+  for (const [position, id] of [firstTrackId, secondTrackId].entries()) {
+    await repos.tracks.create({
+      id,
+      sequence_id: sequence.id,
+      program_id: program.id, // BOTH tracks, one program — the defect's own arrangement
+      position,
+      name: `Shared pad probe ${position === 0 ? 'first' : 'second'}`,
+      type: 'drum',
+      mixer: JSON.stringify(createDefaultChannelStrip(`track:${id}`)),
+    });
+    // §1.3.1 maps a pad index straight to a note number, so pad 0 is note 0 on both tracks.
+    // One bar of 4/4 at 960 PPQN is 3840 ticks and, at 120 bpm, two seconds. The two tracks
+    // hit in UNISON so every hit is two coherent voices, and removing one halves the render.
+    await repos.midiEvents.replaceTrack(
+      id,
+      [0, 960, 1_920, 2_880].map((tick) => ({
+        id: crypto.randomUUID(),
+        track_id: id,
+        tick_start: tick,
+        duration_ticks: 120,
+        note: 0,
+        velocity: 100,
+        extra: null,
+      })),
+    );
+  }
+
+  await projectService.loadProject(projectId);
+  useProgramStore.getState().setActiveProgram(program.id);
+  const transport = () => useTransportStore.getState();
+  transport().setActiveSequenceId(sequence.id);
+  transport().setPlaybackMode('sequence');
+  transport().setMetronomeEnabled(false);
+  transport().setCountInBars(0);
+  transport().setRecording(false);
+  transport().setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  commitTempo(120);
+
+  /** Render the active sequence and measure the WAV back over real OPFS (spec §9.5, §11.2). */
+  const measure = async (): Promise<number> => {
+    const path = await bounceActiveSequence('probe-shared-pad', ctx);
+    const decoded = decodeWav(new Uint8Array(await (await readFile(path)).arrayBuffer()));
+    const left = decoded.channels[0]!;
+    const right = decoded.channels[1] ?? left;
+    const mono = new Float32Array(left.length);
+    for (let i = 0; i < mono.length; i += 1) mono[i] = (left[i]! + right[i]!) / 2;
+    return rmsBetween(mono, decoded.sampleRate, 0, 2);
+  };
+  const setFader = (channelId: string, level: number): void => {
+    useMixerStore.getState().commit(channelLevelPath(channelId), level);
+  };
+
+  const bothTracksRms = await measure();
+
+  // The defect, stated as a measurement: the second track's voices were on the FIRST track's
+  // strip, so closing the second track's fader changed nothing at all.
+  setFader(`track:${secondTrackId}`, 0);
+  const secondFaderClosedRms = await measure();
+  setFader(`track:${secondTrackId}`, 1);
+
+  // The same defect from the other side: the first track's strip carried both tracks, so
+  // closing it rendered silence rather than half.
+  setFader(`track:${firstTrackId}`, 0);
+  const firstFaderClosedRms = await measure();
+  setFader(`track:${firstTrackId}`, 1);
+
+  // The guard on the decision, not a regression test: one §4.2 strip supplies every
+  // realisation, so §8.5.6's single pad fader still moves both tracks. 0.8 is −12 dB.
+  setFader(padChannel, 0.8);
+  const padFaderRms = await measure();
+  setFader(padChannel, 1);
+
+  // The live path. `bounceService` and `AudioEngine` build the same graph through the same
+  // factories, but by their own routes, so the §5.8 master tap is read as well as the file.
+  const peakOver = async (ms: number): Promise<number> => {
+    const slot = engine.meterRegistry.slotOf('master');
+    let peak = 0;
+    const until = performance.now() + ms;
+    while (performance.now() < until) {
+      if (slot !== undefined) {
+        const reading = engine.meterRegistry.read(slot);
+        peak = Math.max(peak, reading.peakL, reading.peakR);
+      }
+      await delay(16);
+    }
+    return peak;
+  };
+
+  transport().play();
+  await delay(300); // past the first beat, so the meter is reading programme material
+  const livePeakBoth = await peakOver(1_400);
+  setFader(`track:${secondTrackId}`, 0);
+  await delay(300);
+  const livePeakSecondClosed = await peakOver(1_400);
+  transport().stop();
+  await delay(200);
+  setFader(`track:${secondTrackId}`, 1);
+
+  // How many channels the live graph holds under the one §4.2 id — one per track that played
+  // the program, which is the structural half of the same statement.
+  const liveRealisations = engine.graph.channelsFor(padChannel).length;
+
+  // Put the project back: the probe's own rows go, and the load takes its stores with them.
+  // The sequence cascades to both tracks and each track to its events (spec §9.3). The save
+  // first, because §14 (aj) makes `loadProject` REFUSE over unsaved work and the fader
+  // commits above marked the project dirty.
+  await projectService.saveNow();
+  await repos.sequences.remove(sequence.id);
+  await repos.programs.remove(program.id);
+  await projectService.loadProject(projectId);
+
+  return {
+    padChannel,
+    liveRealisations,
+    bothTracksRms,
+    secondFaderClosedRms,
+    firstFaderClosedRms,
+    padFaderRms,
+    livePeakBoth,
+    livePeakSecondClosed,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -3241,6 +3476,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     padStripProof: () => padStripProof(engine),
     sequenceFilterProof: () => sequenceFilterProof(engine),
     trackWithdrawalProof: () => trackWithdrawalProof(engine),
+    sharedPadChannelProof: () => sharedPadChannelProof(engine),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,
