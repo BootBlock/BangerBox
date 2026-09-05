@@ -975,6 +975,90 @@ async function assertShellAndSelfTest(page, label) {
     );
   });
 
+  // A §7.8 lane on a §6 sound-design parameter — `program:<id>.pad:<idx>.filter.cutoff`,
+  // `…filter.resonance`, `…pitch` — rendered as NOTHING in a §9.5 bounce (#138), and live it
+  // reached only the voices sounding at the moment of the ramp, so every note struck between
+  // two automation windows started at the §6 payload's value.
+  //
+  // The two halves are read differently on purpose. A cutoff lane is a LEVEL claim: a 1 kHz
+  // tone through a lowpass opening 60 Hz → 12 kHz is near-silent on beat 1 and open on beat 4.
+  // A pitch lane is a RATE claim, and a level reading cannot tell a louder hit from a faster
+  // one — so each beat also reports how LONG it sounded: two octaves up, a quarter-second
+  // region is consumed in 88 ms.
+  //
+  // It sits HERE, beside the shared-pad-channel, pad-strip and track-withdrawal steps, because
+  // all of them end on a fresh `loadProject` while the two steps below do not.
+  await step(`${label}: a §7.8 lane on a §6 sound-design parameter sounds and renders (#138)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.padLaneProof());
+    const [openFirst, openLast] = r.unpitched;
+    const [pitchedFirst, pitchedLast] = r.pitchSwept;
+    // A silent baseline would leave every ratio below meaningless, so it is asserted first.
+    if (!(openLast.headRms > 0.01)) {
+      throw new Error(
+        `the unautomated bounce is silent (${openLast.headRms.toFixed(5)} RMS at beat 4) — nothing sounded, so this proves nothing`,
+      );
+    }
+    // The pad's own §6 lowpass at 60 Hz against a 1 kHz tone: the bar the lane is measured
+    // against has to be shut, or an open one would read the same either way.
+    const [, shutLast] = r.unautomated;
+    if (!(shutLast.headRms < openLast.headRms * 0.1)) {
+      throw new Error(
+        `the pad's closed §6 lowpass still passed ${shutLast.headRms.toFixed(5)} RMS against ${openLast.headRms.toFixed(5)} open — the cutoff half has no floor to climb from`,
+      );
+    }
+    // The cutoff lane, and the whole of the render half of #138: against the unfixed build the
+    // swept bar and the unautomated one are the same file.
+    const [sweptFirst, sweptLast] = r.cutoffSwept;
+    const sweep = sweptLast.headRms / shutLast.headRms;
+    if (!(sweep > 5)) {
+      throw new Error(
+        `a lane sweeping ${r.cutoffPath} from 60 Hz to 12 kHz rendered ${sweptLast.headRms.toFixed(5)} RMS on beat 4 against ${shutLast.headRms.toFixed(5)} unautomated (×${sweep.toFixed(3)}) — the lane rendered as nothing`,
+      );
+    }
+    // The other end of the same lane: it STARTS at the §6 value, so beat 1 must still be shut.
+    // Without this a fix that simply opened the filter for the whole bar would pass.
+    if (!(sweptFirst.headRms < sweptLast.headRms * 0.2)) {
+      throw new Error(
+        `the swept bar read ${sweptFirst.headRms.toFixed(5)} RMS on beat 1 against ${sweptLast.headRms.toFixed(5)} on beat 4 — a lane from 60 Hz is closed where it starts, not open throughout`,
+      );
+    }
+    // The pitch half. Beat 4 sits at +18 semitones, so its quarter-second region is consumed
+    // in 88 ms — detune IS the playback rate on a §5.2 stage-1 buffer source.
+    if (!(openFirst.endSeconds > 0.2 && openLast.endSeconds > 0.2)) {
+      throw new Error(
+        `the unpitched bar's hits lasted ${openFirst.endSeconds.toFixed(4)} s and ${openLast.endSeconds.toFixed(4)} s — a quarter-second region is what a pitch lane has to shorten`,
+      );
+    }
+    const shortened = pitchedLast.endSeconds / pitchedFirst.endSeconds;
+    if (!(shortened < 0.6)) {
+      throw new Error(
+        `a lane raising ${r.pitchPath} two octaves left beat 4 sounding ${pitchedLast.endSeconds.toFixed(4)} s against ${pitchedFirst.endSeconds.toFixed(4)} s on beat 1 (×${shortened.toFixed(3)}) — the pitch lane did not reach the voice`,
+      );
+    }
+    // …and it is a RATE change rather than a level one: the hit is still there at its head.
+    const head = pitchedLast.headRms / pitchedFirst.headRms;
+    if (!(head > 0.4)) {
+      throw new Error(
+        `beat 4 of the pitched bar read ${pitchedLast.headRms.toFixed(5)} RMS at its head against ${pitchedFirst.headRms.toFixed(5)} on beat 1 (×${head.toFixed(3)}) — a pitch lane makes a hit shorter, not silent`,
+      );
+    }
+    // The live half, through `AudioEngine` rather than `bounceService`. Both writes were made
+    // with the transport STOPPED and no voice sounding, so the only way either can reach the
+    // pass that follows is a value the next voice is BUILT against.
+    if (!(r.liveOpenPeak > 0.05)) {
+      throw new Error(`the master bus was silent on the open live pass (peak ${r.liveOpenPeak.toFixed(5)})`);
+    }
+    const live = r.liveClosedPeak / r.liveOpenPeak;
+    if (!(live < 0.3)) {
+      throw new Error(
+        `the live master peak read ${r.liveClosedPeak.toFixed(5)} after a §7.8 write closed the pad to 60 Hz against ${r.liveOpenPeak.toFixed(5)} at 12 kHz (×${live.toFixed(3)}) — a write made while nothing sounded reached no note of the pass that followed`,
+      );
+    }
+    console.log(
+      `       pad lane: cutoff bounce ${shutLast.headRms.toFixed(5)} RMS unautomated → ${sweptLast.headRms.toFixed(5)} swept (×${sweep.toFixed(2)}), beat 1 of the same bar ${sweptFirst.headRms.toFixed(5)}; pitch bounce beat 4 lasted ${pitchedLast.endSeconds.toFixed(4)} s against ${pitchedFirst.endSeconds.toFixed(4)} s on beat 1 (×${shortened.toFixed(3)}) at ×${head.toFixed(2)} of its head level; live peak ${r.liveOpenPeak.toFixed(5)} open → ${r.liveClosedPeak.toFixed(5)} closed (×${live.toFixed(3)})`,
+    );
+  });
+
   // §7.9 makes song mode the way to play several sequences in order, which only means
   // something if sequence mode plays ONE. The unit tests drive the core with an injected
   // clock; the wire is what they cannot reach, and the defect lived on both sides of it —

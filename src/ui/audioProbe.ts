@@ -178,6 +178,8 @@ export interface AudioProbe {
   trackWithdrawalProof: () => Promise<TrackWithdrawalResult>;
   /** Two tracks on one program each own their §5.2 pad channel (§5.2, §4.2, §6, #141). */
   sharedPadChannelProof: () => Promise<SharedPadChannelResult>;
+  /** A §7.8 lane on a §6 sound-design parameter sounds and renders (§6, §7.8, §9.5, #138). */
+  padLaneProof: () => Promise<PadLaneResult>;
 }
 
 /**
@@ -298,6 +300,39 @@ export interface SharedPadChannelResult {
   readonly livePeakSecondClosed: number;
   /** The same pass with the second track's fader opened to unity — two voices, not one. */
   readonly livePeakBoth: number;
+}
+
+/** How one beat of a §9.5 bounce sounded (see {@link PadLaneResult}). */
+export interface PadLaneBeat {
+  /** RMS over the first 40 ms after the hit — whether it sounded at all, and how loudly. */
+  readonly headRms: number;
+  /**
+   * Seconds from the hit to its last audible frame. Detune IS the playback rate on a §5.2
+   * stage-1 buffer source, so this is what a §7.8 `pitch` lane moves: a quarter-second region
+   * two octaves up is consumed in 88 ms. A level reading cannot tell a louder hit from a
+   * faster one, which is why the pitch half is read here rather than in RMS.
+   */
+  readonly endSeconds: number;
+}
+
+/** Outcome of the §7.8 per-voice lane proof (see {@link AudioProbe.padLaneProof}). */
+export interface PadLaneResult {
+  /** The §7.8 address the cutoff half drives, so a failure names the lane it rode. */
+  readonly cutoffPath: string;
+  /** The §7.8 address the pitch half drives. */
+  readonly pitchPath: string;
+  /** First and last beat of a bounce with the pad's §6 lowpass closed and NO lane. */
+  readonly unautomated: readonly [PadLaneBeat, PadLaneBeat];
+  /** The same bar under a lane sweeping the cutoff 60 Hz → 12 kHz. The defect renders nothing. */
+  readonly cutoffSwept: readonly [PadLaneBeat, PadLaneBeat];
+  /** First and last beat with the filter open and NO pitch lane — both hits full length. */
+  readonly unpitched: readonly [PadLaneBeat, PadLaneBeat];
+  /** The same bar under a lane raising the pad two octaves: the last hit is far shorter. */
+  readonly pitchSwept: readonly [PadLaneBeat, PadLaneBeat];
+  /** §5.8 master peak of a live pass begun AFTER a §7.8 write opened the pad to 12 kHz. */
+  readonly liveOpenPeak: number;
+  /** The same, begun after a §7.8 write closed it to 60 Hz. The defect leaves the two equal. */
+  readonly liveClosedPeak: number;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -1473,6 +1508,19 @@ function rmsBetween(data: Float32Array, sampleRate: number, from: number, to: nu
   let sum = 0;
   for (let i = start; i < end; i += 1) sum += data[i]! * data[i]!;
   return Math.sqrt(sum / (end - start));
+}
+
+/**
+ * Seconds from `from` to the last frame above the noise floor inside `[from, to)` — how long a
+ * hit lasted, which is what a §7.8 `pitch` lane moves (spec §5.4, issue #138).
+ */
+function lastAudibleSeconds(data: Float32Array, sampleRate: number, from: number, to: number): number {
+  const start = Math.max(0, Math.floor(from * sampleRate));
+  const end = Math.min(data.length, Math.ceil(to * sampleRate));
+  for (let i = end - 1; i >= start; i -= 1) {
+    if (Math.abs(data[i]!) > 1e-3) return (i + 1 - start) / sampleRate;
+  }
+  return 0;
 }
 
 /**
@@ -3477,6 +3525,242 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
   };
 }
 
+/**
+ * A §7.8 lane on a §6 sound-design parameter, measured in the WAV a §9.5 bounce wrote and on
+ * the §5.8 master tap of a live pass (issue #138, spec §11.2, §13.5).
+ *
+ * `program:<id>.pad:<idx>.filter.cutoff`, `…filter.resonance` and `…pitch` used to be written
+ * onto each SOUNDING voice, which reaches only the voices that exist at the moment of the
+ * write. That has two consequences and this proof measures both:
+ *
+ *   - a §9.5 render builds every voice of the whole span before it applies any ramp, so
+ *     "the voices sounding now" was all of them at once and the render was given no voice
+ *     pool at all — the lane rendered as NOTHING;
+ *   - live, a pad struck between two automation windows was built from the §6 payload, so
+ *     the lane never reached the note at all until the next window.
+ *
+ * One bar of 4/4 at 120 bpm carries four hits of a 1 kHz tone, one per beat, each a quarter
+ * of a second long — `bounceMixProof`'s own shape, for the same reason: the hits are shorter
+ * than the gaps, so each beat can be read on its own and the bar is long enough for a lane to
+ * be read at its two ends.
+ *
+ * The two halves are measured differently on purpose. A cutoff lane is a LEVEL claim: a 1 kHz
+ * tone through a lowpass opening from 60 Hz to 12 kHz is near-silent on the first beat and open
+ * on the last. A pitch lane is a RATE claim, and a level reading cannot tell a louder hit from
+ * a faster one — so each beat also reports how LONG it sounded: two octaves up, a
+ * quarter-second region is consumed in 88 ms.
+ *
+ * The probe restores the project it found — `installAudioProbe` runs in production builds.
+ * Nothing it changes is committed: the program, arrangement and lanes go in through the
+ * hydration actions, which mark nothing dirty, and the final `loadProject` puts every store
+ * back on the §9.3 rows.
+ */
+async function padLaneProof(engine: AudioEngine): Promise<PadLaneResult> {
+  const { bounceActiveSequence } = await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+  const { programParamPath } = await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A quarter-second 1 kHz tone: an octave above the lowpass's open end is what makes the
+  // sweep unmistakable, and its length is what makes a rate change readable as a shorter hit.
+  const HIT_SECONDS = 0.25;
+  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * HIT_SECONDS), sampleRate);
+  const toneData = tone.getChannelData(0);
+  for (let i = 0; i < toneData.length; i += 1) {
+    toneData[i] = 0.5 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+  }
+  const sample = await importDecodedSample(tone, 'pad lane probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  const programId = crypto.randomUUID();
+  const seqId = crypto.randomUUID();
+  const trackId = crypto.randomUUID();
+  const cutoffPath = programParamPath(programId, 0, 'filter.cutoff');
+  const pitchPath = programParamPath(programId, 0, 'pitch');
+
+  /** The probe's pad, with whichever §6 filter the half being measured needs. */
+  const publishProgram = (cutoff: number): void => {
+    const program = { ...createDefaultDrumProgram('Pad lane probe'), id: programId };
+    const pad = createDefaultPad(0, 'Pad lane probe');
+    pad.playbackMode = 'oneShot'; // note-off is ignored, so each hit plays its region out
+    pad.layers = [layer({ sampleId: sample.id })];
+    // No envelope shaping at all, so what a render measures is the lane and nothing else.
+    pad.envelopes = {
+      ...pad.envelopes,
+      amp: { ...pad.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+    };
+    pad.filter = { type: 'lp', cutoff, resonance: 1, envDepth: 0 };
+    program.pads = [pad];
+    useProgramStore.getState().setPrograms({ [programId]: program });
+  };
+
+  // The sequence carries its OWN §9.3 tempo rather than leaning on the transport's: every
+  // window below is placed in seconds, and an earlier probe leaving a different project tempo
+  // behind would move all four beats out from under them.
+  const sequence = {
+    ...createDefaultSequence(projectId, 0, 'Pad lane probe', seqId),
+    lengthBars: 1,
+    tempo: 120,
+  };
+  const track = createDefaultTrack(seqId, programId, 0, 'Pad lane probe', 'drum', trackId);
+  // §1.3.1 maps a pad index straight to a note number, so pad 0 is note 0. One bar of 4/4 at
+  // 960 PPQN is 3840 ticks and, at 120 bpm, two seconds — a beat every half-second.
+  const beats = [0, 960, 1_920, 2_880].map((tickStart) => ({
+    id: crypto.randomUUID(),
+    tickStart,
+    durationTicks: 120,
+    note: 0,
+    velocity: 100,
+    extra: null,
+  }));
+
+  /** Re-hydrate the arrangement, optionally with one §7.8 lane on it. */
+  const hydrate = (automation: Record<string, AutomationPoint[]> = {}): void => {
+    useSequenceStore.getState().hydrate({
+      sequences: { [seqId]: sequence },
+      tracks: { [trackId]: track },
+      events: { [trackId]: beats },
+      automation,
+      songEntries: [],
+    });
+  };
+
+  /** A two-point §7.8 sequence lane across the whole bar. */
+  const sweep = (
+    targetPath: string,
+    from: number,
+    to: number,
+    curve: 'linear' | 'exp',
+  ): Record<string, AutomationPoint[]> => ({
+    [automationLaneKey('sequence', seqId, targetPath)]: [0, 3_840].map((tick, index) => ({
+      id: crypto.randomUUID(),
+      scope: 'sequence' as const,
+      ownerId: seqId,
+      targetPath,
+      tick,
+      value: index === 0 ? from : to,
+      curve,
+    })),
+  });
+
+  hydrate();
+  const transport = () => useTransportStore.getState();
+  transport().setActiveSequenceId(seqId);
+  transport().setPlaybackMode('sequence');
+  transport().setMetronomeEnabled(false);
+  transport().setCountInBars(0);
+  transport().setRecording(false);
+  transport().setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  commitTempo(120);
+
+  // Every §5.2 strip back to its §4.2 default, `bounceMixProof`'s own `neutral()`: this proof
+  // is about what reaches the VOICE, and a send, a return delay or a master insert left in the
+  // stores by an earlier step smears every hit into the next and makes a length unreadable.
+  // Nothing here is committed, so the closing `loadProject` puts the project's own strips back.
+  useMixerStore.getState().setChannels({
+    master: createDefaultChannelStrip('master'),
+    'return:0': createDefaultChannelStrip('return:0'),
+    'return:1': createDefaultChannelStrip('return:1'),
+    'return:2': createDefaultChannelStrip('return:2'),
+    'return:3': createDefaultChannelStrip('return:3'),
+    [`track:${trackId}`]: createDefaultChannelStrip(`track:${trackId}`),
+  });
+
+  /**
+   * Render the bar and read the first and last beat back from `/bounces/` over real OPFS.
+   *
+   * Both windows start 20 ms into the beat: the §4.3 dezipper takes `PARAM_RAMP_MS` to reach
+   * the first automated value, and that run-in is the graph settling rather than the mix.
+   */
+  const measure = async (): Promise<readonly [PadLaneBeat, PadLaneBeat]> => {
+    const path = await bounceActiveSequence('probe-pad-lane', ctx);
+    const decoded = decodeWav(new Uint8Array(await (await readFile(path)).arrayBuffer()));
+    const left = decoded.channels[0]!;
+    const right = decoded.channels[1] ?? left;
+    const sr = decoded.sampleRate;
+    const mono = new Float32Array(left.length);
+    for (let i = 0; i < mono.length; i += 1) mono[i] = (left[i]! + right[i]!) / 2;
+    const beat = (index: number): PadLaneBeat => ({
+      headRms: rmsBetween(mono, sr, index * 0.5 + 0.02, index * 0.5 + 0.06),
+      endSeconds: lastAudibleSeconds(mono, sr, index * 0.5, index * 0.5 + 0.5),
+    });
+    return [beat(0), beat(3)];
+  };
+
+  // --- the cutoff half: a level claim, with the pad's own filter nearly shut ---------------
+  publishProgram(60);
+  hydrate();
+  const unautomated = await measure();
+  hydrate(sweep(cutoffPath, 60, 12_000, 'exp'));
+  const cutoffSwept = await measure();
+
+  // --- the pitch half: a rate claim, with the filter open so the tone sounds ---------------
+  publishProgram(20_000);
+  hydrate();
+  const unpitched = await measure();
+  // Two octaves across the bar, so the last beat sits at +18 semitones and its quarter-second
+  // region is consumed in 88 ms — well inside the 160 ms its tail window begins at.
+  hydrate(sweep(pitchPath, 0, 24, 'linear'));
+  const pitchSwept = await measure();
+  hydrate();
+
+  // --- the live half ----------------------------------------------------------------------
+  //
+  // Every render above built its own offline graph, so nothing has sounded live yet. Each §7.8
+  // write below is made with the transport STOPPED and no voice sounding, so the only way it
+  // can reach the pass that follows is through a value the next voice is BUILT against.
+  // Writing each sounding voice reached nothing at all here, and every note of the pass was
+  // built from the §6 payload's 60 Hz — which is why the two peaks used to be equal.
+  publishProgram(60);
+  const peakOver = async (ms: number): Promise<number> => {
+    const slot = engine.meterRegistry.slotOf('master');
+    let peak = 0;
+    const until = performance.now() + ms;
+    while (performance.now() < until) {
+      if (slot !== undefined) {
+        const reading = engine.meterRegistry.read(slot);
+        peak = Math.max(peak, reading.peakL, reading.peakR);
+      }
+      await delay(16);
+    }
+    return peak;
+  };
+  const livePass = async (cutoff: number): Promise<number> => {
+    engine.bridge.applyParam(cutoffPath, cutoff);
+    transport().play();
+    await delay(300); // past the first beat, so the meter is reading programme material
+    const peak = await peakOver(1_400);
+    transport().stop();
+    await delay(200);
+    return peak;
+  };
+  const liveOpenPeak = await livePass(12_000);
+  const liveClosedPeak = await livePass(60);
+
+  // Put the project back: the stores return to the §9.3 rows, taking the probe's program,
+  // arrangement and lanes with them.
+  await projectService.loadProject(projectId);
+
+  return {
+    cutoffPath,
+    pitchPath,
+    unautomated,
+    cutoffSwept,
+    unpitched,
+    pitchSwept,
+    liveOpenPeak,
+    liveClosedPeak,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -3521,6 +3805,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     sequenceFilterProof: () => sequenceFilterProof(engine),
     trackWithdrawalProof: () => trackWithdrawalProof(engine),
     sharedPadChannelProof: () => sharedPadChannelProof(engine),
+    padLaneProof: () => padLaneProof(engine),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,
