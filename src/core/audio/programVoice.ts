@@ -40,15 +40,22 @@ export interface ResolvedVoice {
   /** FK → samples table; the engine resolves it to an OPFS path (spec §9.1). */
   readonly sampleId: string;
   /**
-   * The §7.8 `pitch` leaf's own value in semitones — a drum pad's tune, which
-   * `writePadLeaf` moves on every layer together, so it is a PAD value rather than a layer
-   * one. It is kept apart from {@link detuneCents} because a §7.8 lane and a §6 edit both
-   * address exactly this quantity, and the voice pool gives it a summing input of its own
-   * that every voice of the pad shares (spec §6, §7.8, issue #138). Always 0 for a
-   * keygroup: no §7.8 address names a keygroup's voices (its pad key is
-   * `<id>:keygroup`, which `voiceParams.padKeyFor` cannot build).
+   * The §7.8 `pitch` leaf's own value in semitones — see {@link padTuneSemitones}. It is kept
+   * apart from the rest of the repitch because a §7.8 lane and a §6 edit both address exactly
+   * this quantity, and the voice pool gives it a summing input of its own that every voice of
+   * the pad shares (spec §6, §7.8, issue #138). Always 0 for a keygroup: no §7.8 address names
+   * a keygroup's voices (its pad key is `<id>:keygroup`, which `voiceParams.padKeyFor` cannot
+   * build).
    */
   readonly padTuneSemitones: number;
+  /**
+   * How far THIS layer's tune sits from the pad's, in cents (spec §6). §6 stores
+   * `tuneSemitones` per layer and §8.5.5's layer editor sets them independently, while the
+   * §7.8 leaf names one value for the pad — so the difference stays with the voice, and a lane
+   * moves every layer together instead of flattening them onto each other. Always 0 for a
+   * keygroup, which has no layers.
+   */
+  readonly layerTuneCents: number;
   /**
    * The rest of the coupled repitch in cents — a drum layer's fine tune, or a keygroup's
    * key distance plus zone tune (spec §6). This is what the §7.8 `pitch` leaf does NOT own.
@@ -78,6 +85,19 @@ export interface ResolvedVoice {
   readonly polyphony?: number;
   /** Keygroup-only: mono glide time in ms (0 = off, spec §6); undefined for drums. */
   readonly glideMs?: number;
+}
+
+/**
+ * The §7.8 `pitch` leaf's value for a pad, in semitones (spec §6, §7.8).
+ *
+ * `writePadLeaf` moves `tuneSemitones` on EVERY layer together, so the leaf names a value that
+ * belongs to the pad; §6 nonetheless stores one per layer and §8.5.5's layer editor sets them
+ * independently. The FIRST layer is the pad's, which is what `syncLayer/programParams`
+ * publishes as the leaf's current value — this is the one place that rule is written down, so
+ * the value a lane moves and the value a voice is built against cannot disagree.
+ */
+export function padTuneSemitones(pad: Pad): number {
+  return pad.layers[0]?.tuneSemitones ?? 0;
 }
 
 /** Graph channel id for a program's pad (drum) or program-scope voice (keygroup) — spec §4.2. */
@@ -142,9 +162,11 @@ function drumVoice(
   note: number,
   velocity: number,
 ): ResolvedVoice {
+  const padTune = padTuneSemitones(pad);
   return {
     sampleId: layer.sampleId,
-    padTuneSemitones: layer.tuneSemitones,
+    padTuneSemitones: padTune,
+    layerTuneCents: (layer.tuneSemitones - padTune) * 100,
     detuneCents: layer.tuneCents,
     gainDb: layer.gainDb,
     startFrame: layer.startFrame,
@@ -177,6 +199,7 @@ export function resolveKeygroupVoice(
   return {
     sampleId: zone.sampleId,
     padTuneSemitones: 0,
+    layerTuneCents: 0,
     detuneCents: keygroupDetuneCents(note, zone),
     gainDb: zone.gainDb,
     startFrame: 0,
@@ -260,6 +283,7 @@ export function resolvedVoiceToTrigger(
     amp: resolved.envelopes.amp,
     gainDb: resolved.gainDb,
     tuneSemitones: resolved.padTuneSemitones,
+    layerTuneCents: resolved.layerTuneCents,
     tuneCents: resolved.detuneCents,
     startFrame: trim.startFrame,
     endFrame: trim.endFrame,

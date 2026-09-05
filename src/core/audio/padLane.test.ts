@@ -69,6 +69,15 @@ function constantsOf(fake: FakeAudioContext): FakeConstant[] {
   return fake.nodes.filter((n) => n.nodeType === 'constantSource') as unknown as FakeConstant[];
 }
 
+/** The voice's amp-envelope gain — the only gain the pool schedules anything on. */
+function ampGainOf(fake: FakeAudioContext): FakeParam {
+  const node = fake.nodes.find(
+    (n) => n.nodeType === 'gain' && (n as unknown as { gain: FakeParam }).gain.calls.length > 0,
+  );
+  if (!node) throw new Error('no amp gain was scheduled');
+  return (node as unknown as { gain: FakeParam }).gain;
+}
+
 /** The constant source feeding `param`, identified by what it is connected to rather than by order. */
 function feeding(fake: FakeAudioContext, param: FakeParam): FakeConstant | undefined {
   return constantsOf(fake).find((node) => node.paramOutputs.includes(param));
@@ -148,6 +157,75 @@ describe('a §7.8 lane on a §6 sound-design parameter (spec §6, §7.8, issue #
     pool.destroy();
   });
 
+  it('keeps each §6 LAYER at its own tune, and moves them together', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // §6 stores `tuneSemitones` per layer and §8.5.5 sets them independently, while the §7.8
+    // leaf names one value for the pad: the pad's is the FIRST layer's and the rest are carried
+    // as differences from it, so a shared node cannot flatten them onto each other.
+    pool.trigger(spec(context, { id: 'soft', tuneSemitones: 0, layerTuneCents: 0 }));
+    pool.trigger(spec(context, { id: 'hard', when: 1, tuneSemitones: 0, layerTuneCents: 1_200 }));
+    expect(effectiveDetune(fake, sourcesOf(fake)[0]!)).toBe(0);
+    expect(effectiveDetune(fake, sourcesOf(fake)[1]!)).toBe(1_200);
+
+    // A lane moves the PAD, so the octave between the two layers survives it.
+    pool.applyPadParam('p1:0', 'detune', 700, 2);
+    expect(effectiveDetune(fake, sourcesOf(fake)[0]!)).toBe(700);
+    expect(effectiveDetune(fake, sourcesOf(fake)[1]!)).toBe(1_900);
+    pool.destroy();
+  });
+
+  it('re-seeds a lane from the §6 payload when the payload has MOVED, and not otherwise', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const filter = { ...LOWPASS };
+    pool.trigger(spec(context, { id: 'first', filter }));
+    // A §6 edit that never publishes — a keygroup's filter, or a project loaded over the top of
+    // the one open — reaches the node through the next note that carries it.
+    pool.trigger(spec(context, { id: 'edited', when: 1, filter: { ...filter, cutoff: 2_000 } }));
+    expect(effectiveCutoff(fake, filtersOf(fake)[1]!)).toBe(2_000);
+
+    // A §7.8 ramp does not write the store, so an unmoved payload never undoes it.
+    pool.applyPadParam('p1:0', 'filterFrequency', 5_000, 2);
+    pool.trigger(spec(context, { id: 'after', when: 3, filter: { ...filter, cutoff: 2_000 } }));
+    expect(effectiveCutoff(fake, filtersOf(fake)[2]!)).toBe(5_000);
+    pool.destroy();
+  });
+
+  it('releases the lanes of a program whose §6 record leaves the store (spec §3.2)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'gone', programId: 'p1', padKey: 'p1:0', filter: LOWPASS }));
+    pool.trigger(spec(context, { id: 'kept', programId: 'p2', padKey: 'p2:0', filter: LOWPASS }));
+    expect(constantsOf(fake)).toHaveLength(6); // three per pad
+
+    pool.releaseProgramLanes('p1');
+    const stopped = constantsOf(fake).filter((node) => node.stopped);
+    expect(stopped).toHaveLength(3);
+    // The other program's are untouched — a project switch must not silence what it kept.
+    pool.applyPadParam('p2:0', 'filterFrequency', 5_000, 1);
+    expect(effectiveCutoff(fake, filtersOf(fake)[1]!)).toBe(5_000);
+    pool.destroy();
+  });
+
+  it('leaves a voice that has not STARTED to the window that reaches it', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'later', when: 5 }));
+    const gain = ampGainOf(fake);
+    const before = gain.calls.length;
+    // A lane writes every `SCHEDULER_INTERVAL_MS` across a whole §9.5 render, so re-laying a
+    // future voice's declick on every window integrates the same contour once per
+    // (voice × window) — an apparent hang on a long song with a pitch lane.
+    for (let when = 0; when < 1; when += 0.025) pool.applyPadParam('p1:0', 'detune', when * 100, when);
+    expect(gain.calls.length).toBe(before);
+
+    // …and the window that DOES reach it re-lays it, so nothing is lost.
+    pool.applyPadParam('p1:0', 'detune', -1_200, 5);
+    expect(gain.calls.length).toBeGreaterThan(before);
+    pool.destroy();
+  });
+
   it('keeps a §6 layer fine tune on the voice, where no §7.8 leaf addresses it', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
@@ -219,11 +297,9 @@ describe('a §7.8 lane on a §6 sound-design parameter (spec §6, §7.8, issue #
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
     pool.trigger(spec(context, { id: 'swept', when: 0 }));
-    const ampGain = fake.nodes.find(
-      (n) => n.nodeType === 'gain' && (n as unknown as { gain: FakeParam }).gain.calls.length > 0,
-    ) as unknown as { gain: FakeParam };
+    const gain = ampGainOf(fake);
     const fadeEnd = (): number => {
-      const ramps = ampGain.gain.calls.filter((c) => c.method === 'linearRampToValueAtTime');
+      const ramps = gain.calls.filter((c) => c.method === 'linearRampToValueAtTime');
       return ramps[ramps.length - 1]!.args[1]!;
     };
     const unswept = fadeEnd();

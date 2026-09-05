@@ -45,6 +45,15 @@ export interface SyncBridge {
    * live inside the voice rather than on a mixer channel (spec §6, §7.8).
    */
   applyParam: (targetPath: string, value: number) => void;
+
+  /**
+   * A §6 program has left the store, so the graph releases what it hangs off that program
+   * (spec §3.2). Today that is its §7.8 pad-lane nodes, which outlive the voices that borrow
+   * them and so are nobody else's to free — a project loaded over the top of the one open
+   * would otherwise leave every pad it played holding its last automated value, ready to greet
+   * the next program to reuse the id (issue #138).
+   */
+  onProgramRemoved: (programId: string) => void;
 }
 
 export type Unsubscribe = () => void;
@@ -63,6 +72,7 @@ export const noopBridge: SyncBridge = {
   setBpm: () => {},
   onQLinkModeChanged: () => {},
   applyParam: () => {},
+  onProgramRemoved: () => {},
 };
 
 /** Combine several unsubscribers into one (idempotent). */

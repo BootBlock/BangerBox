@@ -9,6 +9,7 @@
  * automation engine uses, so both routes converge on one application path (spec §4.3).
  */
 import { programParamPath } from '@/core/audio/params/registry';
+import { padTuneSemitones } from '@/core/audio/programVoice';
 import type { Pad, Program } from '@/core/project/schemas';
 import { useProgramStore } from '../useProgramStore';
 import type { SyncBridge, Unsubscribe } from './bridge';
@@ -33,9 +34,10 @@ function leafValue(pad: Pad, leaf: (typeof SYNCED_LEAVES)[number]): number {
       return pad.filter.cutoff;
     case 'filter.resonance':
       return pad.filter.resonance;
-    // Pad tune is stored per layer but moves as one pad value (spec §5.5).
+    // Pad tune is stored per layer but moves as one pad value (spec §5.5). The rule for which
+    // layer is the pad's lives beside the voice builder that reads it back (issue #138).
     case 'pitch':
-      return pad.layers[0]?.tuneSemitones ?? 0;
+      return padTuneSemitones(pad);
   }
 }
 
@@ -69,10 +71,22 @@ export function changedPadLeaves(
   return changes;
 }
 
+/**
+ * Programs the store no longer holds (spec §3.2). A project loaded over the top of the one
+ * open replaces the whole map, and `deleteProgram` removes one — either way the graph is left
+ * holding §7.8 pad-lane nodes for a §6 record that no longer exists (issue #138).
+ */
+function removedProgramIds(previous: Record<string, Program>, next: Record<string, Program>): string[] {
+  return Object.keys(previous).filter((programId) => next[programId] === undefined);
+}
+
 export function subscribeProgramParamSync(bridge: SyncBridge): Unsubscribe {
   return useProgramStore.subscribe(
     (state) => state.programs,
     (next, previous) => {
+      for (const programId of removedProgramIds(previous, next)) {
+        bridge.onProgramRemoved(programId);
+      }
       for (const change of changedPadLeaves(previous, next)) {
         bridge.applyParam(change.targetPath, change.value);
       }

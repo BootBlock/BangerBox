@@ -153,6 +153,11 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
     setBpm: (bpm) => graph.setTempo(bpm, context.currentTime),
     onQLinkModeChanged: () => {}, // `core/midi/qlinkRuntime` owns Q-Link mode (spec §10.3)
 
+    // A §6 program has left the store, so its §7.8 pad-lane nodes go with it (spec §3.2,
+    // issue #138). They outlive the voices that borrow them, so the pool is the only thing
+    // that can free them and nothing else would ever ask.
+    onProgramRemoved: (programId) => voicePool()?.releaseProgramLanes(programId),
+
     // Automation dispatch (spec §7.8): resolve the registered target and ramp its param.
     // `when` starts the dezipper ramp; native/insert params ramp identically to live edits.
     // The sync layer's immediate form of the same application (spec §4.3).

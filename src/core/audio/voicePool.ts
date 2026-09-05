@@ -51,7 +51,7 @@ import {
   PITCH_MOD_CENTS,
 } from './voiceModulation';
 import { oscillatorDepthScale, routesForSource } from './modMatrix';
-import { cancelParams, rampParamTarget } from './params/ramps';
+import { cancelParams, rampParamTarget, setParamNow } from './params/ramps';
 import type { ProgramParamTarget } from './voiceParams';
 import { selectChokeVictims, selectStealVictim, type ChokeCandidate, type VoiceRef } from './voiceSelection';
 import { createBufferVoiceSource, createGranularVoiceSource, type VoiceSource } from './voiceSource';
@@ -71,6 +71,14 @@ const MAX_VOICE_DETUNE_CENTS = TUNE_SEMITONES_RANGE[1] * 100 + TUNE_CENTS_RANGE[
  * {@link MAX_VOICE_DETUNE_CENTS} admitted on its own before (issue #138).
  */
 const MAX_PAD_TUNE_CENTS = TUNE_SEMITONES_RANGE[1] * 100;
+
+/**
+ * The furthest a §6 LAYER's tune may sit from its pad's, in cents: both at full scale and
+ * opposed (spec §6). It bounds the voice's own share of the split rather than the pad's, and
+ * the two are bounded separately because each is bounded by a different §6 rule — their SUM is
+ * still the one tune §6 admits, since a layer's tune and the pad's cancel in it.
+ */
+const MAX_LAYER_TUNE_CENTS = 2 * TUNE_SEMITONES_RANGE[1] * 100;
 
 /**
  * The loudest a voice's amp envelope may peak (spec §6, issue #76): the §6 layer gain trim at
@@ -101,7 +109,10 @@ export interface VoiceTriggerSpec extends VoiceSoundDesign {
   readonly padKey: string; // `${programId}:${padIndex}`
   readonly amp: AhdsrEnvelope;
   readonly gainDb: number;
+  /** The §7.8 `pitch` leaf's value — it rides the pad's own lane node (spec §7.8, issue #138). */
   readonly tuneSemitones: number;
+  /** How far this layer's §6 tune sits from the pad's, in cents; 0 where there are no layers. */
+  readonly layerTuneCents?: number;
   readonly tuneCents: number;
   /** Non-destructive per-layer trim in frames (spec §6); omitted/0 with `endFrame` = whole sample. */
   readonly startFrame?: number;
@@ -160,11 +171,15 @@ interface SharedLfo {
  * against has neither problem: it carries the contour once, and each voice hears it for
  * exactly as long as it sounds.
  *
- * A node is created when the pad first sounds, or on the first write if that comes first,
- * and is never re-seeded afterwards: a §6 edit reaches it through the same
- * {@link VoicePool.applyPadParam} the lane does (`syncLayer/programParams`), so both writers
- * move the one value and the later of the two wins — the §7.8 rule every mixer lane already
- * follows.
+ * A node is created when the pad first sounds, or on the first write if that comes first, and
+ * is seeded from the §6 payload then. Afterwards both a §7.8 lane and a §6 edit move it through
+ * {@link VoicePool.applyPadParam} — `syncLayer/programParams` publishes an edit as the same
+ * address — so the later of the two wins, which is the §7.8 rule every mixer lane already
+ * follows. **A trigger re-seeds it when the §6 value it carries has MOVED since the last
+ * trigger**, which is the only way an edit that does NOT publish can reach the node: a
+ * keygroup's `filter` (`changedPadLeaves` skips non-drum programs) and a project or pack
+ * loaded over the top of the one open. A §7.8 ramp does not write the store, so it never looks
+ * like such a move and is never undone by the next note.
  */
 interface PadLane {
   /** Cutoff in Hz, summed into each voice's `filter.frequency` (spec §7.8 `filter.cutoff`). */
@@ -175,6 +190,8 @@ interface PadLane {
   pitch: ConstantSourceNode | null;
   /** The pitch node's current value, which the declick model needs beside each voice's bend. */
   pitchCents: number;
+  /** The §6 payload values the pool saw at the last trigger — see the re-seed rule above. */
+  seen: { cutoff: number | null; resonance: number | null; pitch: number | null };
 }
 
 interface Voice {
@@ -342,7 +359,12 @@ export class VoicePool {
         lane.pitchCents = cents;
         rampParamTarget(node.offset, cents, when);
         for (const voice of this.voices.values()) {
-          if (voice.padKey !== padKey || voice.stopScheduled) continue;
+          // A voice that has not STARTED is skipped, and a later window re-lays it from its own
+          // start: a lane writes every `SCHEDULER_INTERVAL_MS` for the whole span of a §9.5
+          // render, so re-laying every future voice on every window would integrate the same
+          // contour once per (voice × window). A §10.2 bend is one event rather than a stream
+          // and keeps the clamp, because nothing comes back for it.
+          if (voice.padKey !== padKey || voice.stopScheduled || when < voice.startTime) continue;
           this.rescheduleDeclick(voice, when);
         }
         break;
@@ -411,7 +433,13 @@ export class VoicePool {
   private padLane(padKey: string): PadLane {
     const existing = this.padLanes.get(padKey);
     if (existing) return existing;
-    const lane: PadLane = { cutoff: null, resonance: null, pitch: null, pitchCents: 0 };
+    const lane: PadLane = {
+      cutoff: null,
+      resonance: null,
+      pitch: null,
+      pitchCents: 0,
+      seen: { cutoff: null, resonance: null, pitch: null },
+    };
     this.padLanes.set(padKey, lane);
     return lane;
   }
@@ -444,6 +472,46 @@ export class VoicePool {
     lane[kind] = node;
     if (kind === 'pitch') lane.pitchCents = node.offset.value;
     return node;
+  }
+
+  /**
+   * The pad's lane node for `kind` as a VOICE needs it: built and seeded on first use, and
+   * re-seeded where the §6 payload value has moved since the last trigger (see {@link PadLane}).
+   * The value is applied at the note rather than immediately, because the note is what carries
+   * the edit.
+   */
+  private seedLaneNode(
+    lane: PadLane,
+    kind: 'cutoff' | 'resonance' | 'pitch',
+    payload: number,
+    range: readonly [number, number],
+    when: number,
+  ): ConstantSourceNode {
+    const node = this.laneNode(lane, kind, payload, range, when);
+    const previous = lane.seen[kind];
+    lane.seen[kind] = payload;
+    if (previous === null || previous === payload) return node;
+    const value = Number.isFinite(payload) ? clamp(payload, range[0], range[1]) : 0;
+    setParamNow(node.offset, value, when);
+    if (kind === 'pitch') lane.pitchCents = value;
+    return node;
+  }
+
+  /**
+   * Release every §7.8 lane node of a program whose §6 record has left the store (spec §3.2).
+   *
+   * A pad lane outlives its voices by design, so nothing else would ever free it — and a
+   * project loaded over the top of the one open, or a program the user deleted, leaves lanes
+   * that nothing can reach and whose last automated value would greet the next program to
+   * reuse the id. The §5.4 pad key carries the program id ahead of its first colon, which is
+   * colon-free (§14 (am)).
+   */
+  releaseProgramLanes(programId: string): void {
+    for (const [padKey, lane] of [...this.padLanes]) {
+      if (padKey.slice(0, padKey.indexOf(':')) !== programId) continue;
+      for (const node of [lane.cutoff, lane.resonance, lane.pitch]) this.stopLaneNode(node);
+      this.padLanes.delete(padKey);
+    }
   }
 
   private stopLaneNode(node: ConstantSourceNode | null): void {
@@ -568,10 +636,9 @@ export class VoicePool {
     // rides the pad's shared lane node so a §7.8 ramp or a §6 edit moves every voice of the
     // pad — the one already sounding and the one struck a moment later (issue #138). What is
     // left here is the layer fine tune (or a keygroup's key distance) and the static pitch mod.
-    const requestedDetune = spec.tuneCents + stat.detuneCents;
-    const baseDetune = Number.isFinite(requestedDetune)
-      ? clamp(requestedDetune, -MAX_VOICE_DETUNE_CENTS, MAX_VOICE_DETUNE_CENTS)
-      : 0;
+    const baseDetune =
+      boundedCents(spec.layerTuneCents ?? 0, MAX_LAYER_TUNE_CENTS) +
+      boundedCents(spec.tuneCents + stat.detuneCents, MAX_VOICE_DETUNE_CENTS);
 
     const ampGain = this.context.createGain();
     const filterType = spec.filter ? biquadFilterType(spec.filter.type) : null;
@@ -586,9 +653,15 @@ export class VoicePool {
       // shared by every voice of the pad and a lane reaches the next hit as well as this one
       // (issue #138). The voice's own params hold the neutral 0 the nodes sum onto.
       filter.frequency.value = 0;
-      link(this.laneNode(lane, 'cutoff', spec.filter!.cutoff, FILTER_CUTOFF_RANGE, now), filter.frequency);
+      link(
+        this.seedLaneNode(lane, 'cutoff', spec.filter!.cutoff, FILTER_CUTOFF_RANGE, now),
+        filter.frequency,
+      );
       filter.Q.value = 0;
-      link(this.laneNode(lane, 'resonance', spec.filter!.resonance, FILTER_RESONANCE_RANGE, now), filter.Q);
+      link(
+        this.seedLaneNode(lane, 'resonance', spec.filter!.resonance, FILTER_RESONANCE_RANGE, now),
+        filter.Q,
+      );
       ampGain.connect(filter);
       filter.connect(spec.destination);
       // The static §6 cutoff modulation is this VOICE's (velocity, note number, its own
@@ -637,7 +710,13 @@ export class VoicePool {
     // (issue #138). The declick model carries the two on one additive track, because the graph
     // sums the two nodes onto one param.
     link(
-      this.laneNode(lane, 'pitch', spec.tuneSemitones * 100, [-MAX_PAD_TUNE_CENTS, MAX_PAD_TUNE_CENTS], now),
+      this.seedLaneNode(
+        lane,
+        'pitch',
+        spec.tuneSemitones * 100,
+        [-MAX_PAD_TUNE_CENTS, MAX_PAD_TUNE_CENTS],
+        now,
+      ),
       source.detune,
     );
     const detune: DetuneSchedule = {
@@ -960,6 +1039,15 @@ export class VoicePool {
       chokeGroup: v.chokeGroup,
     }));
   }
+}
+
+/**
+ * One detune contribution in cents, bounded by the §6 rule that admits it. A non-finite one
+ * contributes NOTHING rather than the range floor, which `clamp` would make four octaves flat
+ * — a value nobody can interpret contributes nothing (spec §6, issue #76).
+ */
+function boundedCents(cents: number, limit: number): number {
+  return Number.isFinite(cents) ? clamp(cents, -limit, limit) : 0;
 }
 
 /** The portion of a buffer a voice sounds, in buffer seconds (spec §6 trim). */
