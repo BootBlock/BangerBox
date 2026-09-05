@@ -8,10 +8,17 @@
  * (spec §6). Allocation policy is the pure {@link selectStealVictim}/{@link
  * selectChokeVictims} (spec §11.1); this class wires and tears down nodes (spec §3.2).
  */
-import { CHOKE_FADE_MS, DECLICK_FADE_MS, MAX_VOICES, VOICE_STEAL_FADE_MS } from '@/core/constants';
+import {
+  CHOKE_FADE_MS,
+  DECLICK_FADE_MS,
+  LOOKAHEAD_MS,
+  MAX_VOICES,
+  VOICE_STEAL_FADE_MS,
+} from '@/core/constants';
 import { clamp } from '@/core/math';
 import {
   DEFAULT_BPM,
+  ENVELOPE_TIME_MS_RANGE,
   FILTER_CUTOFF_RANGE,
   FILTER_RESONANCE_RANGE,
   GAIN_DB_RANGE,
@@ -182,6 +189,17 @@ interface SharedLfo {
  * keygroup's `filter` (`changedPadLeaves` skips non-drum programs) and a project or pack
  * loaded over the top of the one open. A §7.8 ramp does not write the store, so it never looks
  * like such a move and is never undone by the next note.
+ *
+ * **The two §7.8 amp-ENVELOPE leaves are held here as plain NUMBERS, not as nodes**
+ * (issue #143). An envelope TIME is consumed by JavaScript when a voice starts (spec §6) —
+ * `scheduleAmpAttack` reads it once and writes four boundaries from it — so there is no
+ * `AudioParam` for a node to sum onto, and nothing on the public `AudioParam` surface would
+ * report what such a node held at a note-on that has not happened yet (§14 `(ay)`). The pad
+ * holds the value and the rule is the same one the nodes express: **a voice's §6 amp envelope
+ * is the pad's envelope as of that voice's own note-on.** {@link VoicePool.applyPadParam}
+ * makes that true in both directions — it holds the value for the voices still to be built,
+ * and re-lays the contour of any voice already built whose note-on is at or after the write,
+ * which is the only case a §9.5 render ever presents.
  */
 interface PadLane {
   /** Cutoff in Hz, summed into each voice's `filter.frequency` (spec §7.8 `filter.cutoff`). */
@@ -192,8 +210,18 @@ interface PadLane {
   pitch: ConstantSourceNode | null;
   /** The pitch node's current value, which the declick model needs beside each voice's bend. */
   pitchCents: number;
+  /** The §6 amp attack the pad currently holds, in ms; null until a lane or an edit writes one. */
+  ampAttackMs: number | null;
+  /** The §6 amp release the pad currently holds, in ms; null until a lane or an edit writes one. */
+  ampReleaseMs: number | null;
   /** The §6 payload values the pool saw at the last trigger — see the re-seed rule above. */
-  seen: { cutoff: number | null; resonance: number | null; pitch: number | null };
+  seen: {
+    cutoff: number | null;
+    resonance: number | null;
+    pitch: number | null;
+    ampAttack: number | null;
+    ampRelease: number | null;
+  };
 }
 
 interface Voice {
@@ -235,8 +263,12 @@ interface Voice {
    * The §6 amp envelope and the peak it was built at — the two the §5.4 declick's departure
    * level is evaluated from, on the first lay and on every re-lay (issue #144). `release` is
    * read from here too, rather than banked separately: they are one value.
+   *
+   * The envelope is not `readonly`, because a §7.8 lane on `amp.attack` or `amp.release` may
+   * replace it while the voice's note-on is still in the future (issue #143). Once the voice
+   * has started it never moves again: its attack has already run.
    */
-  readonly amp: AhdsrEnvelope;
+  amp: AhdsrEnvelope;
   readonly ampPeak: number;
   /** Base detune in cents (tune + static pitch mod) — the glide origin (spec §6). */
   readonly baseDetune: number;
@@ -250,6 +282,8 @@ interface Voice {
   consumedUntil: number;
   /** Context time the scheduled declick fade begins (spec §5.4). */
   declickFadeStart: number;
+  /** Context time the region ends, where that fade lands — banked so a re-lay need not re-solve it. */
+  declickEndTime: number;
   /**
    * The EARLIEST fade start this voice has ever had — where its §6 amp contour stopped
    * running (spec §5.4, issue #144). Each lay truncates the AHDSR at its own fade start and
@@ -319,7 +353,12 @@ export class VoicePool {
   release(padKey: string, when: number): void {
     for (const voice of this.voices.values()) {
       if (voice.padKey !== padKey || voice.oneShot || voice.stopScheduled) continue;
-      const end = scheduleAmpRelease(voice.ampGain.gain, when, voice.amp.release);
+      const end = scheduleAmpRelease(
+        voice.ampGain.gain,
+        when,
+        voice.amp.release,
+        this.ampLevelNow(voice, when),
+      );
       this.safeStop(voice, end);
       voice.released = true;
       voice.stopScheduled = true;
@@ -350,6 +389,15 @@ export class VoicePool {
    *
    * Only `detune` walks the voices, and only to move their declick: detune IS the playback
    * rate, so a pitch lane changes when each voice's region runs out (spec §5.4, issue #87).
+   *
+   * **The two amp-ENVELOPE leaves have no node and walk the voices for a different reason**
+   * (issue #143). An envelope time is consumed at a voice's note-on (spec §6), so the pad
+   * holds it for every voice still to be built — and re-lays the contour of a voice already
+   * built whose note-on is at or after this write. That second half is what makes a lane
+   * render: offline every voice of the whole span exists before any ramp is applied, so the
+   * only voices such a write can reach are ones that have not started. Live it is the same
+   * rule reaching the same voices, because a `scheduleBatch` may build a note ahead of the
+   * window that governs it. A voice already SOUNDING is never re-shaped: its attack has run.
    */
   applyPadParam(padKey: string, target: ProgramParamTarget, value: number, when: number): void {
     const lane = this.padLane(padKey);
@@ -382,6 +430,43 @@ export class VoicePool {
           // and keeps the clamp, because nothing comes back for it.
           if (voice.padKey !== padKey || voice.stopScheduled || when < voice.startTime) continue;
           this.rescheduleDeclick(voice, when);
+        }
+        break;
+      }
+      case 'ampAttack':
+      case 'ampRelease': {
+        // A value nobody can interpret contributes nothing, rather than the range FLOOR
+        // `clamp` would send a NaN to — which for an envelope time is an instant attack
+        // (§14 `(ak)`, and the `clamp` trap the handover records).
+        if (!Number.isFinite(value)) break;
+        const ms = clamp(value, ENVELOPE_TIME_MS_RANGE[0], ENVELOPE_TIME_MS_RANGE[1]);
+        const attack = target === 'ampAttack';
+        if (attack) lane.ampAttackMs = ms;
+        else lane.ampReleaseMs = ms;
+        // Only the voices the LIVE engine could have built and not started: §7.1.4 builds a
+        // note at most `LOOKAHEAD_MS` before it sounds, so that horizon is what "a voice whose
+        // note-on has not yet arrived" MEANS, and applying it offline is what makes a render
+        // walk the same set the live pass does. Without it a §9.5 render re-lays every voice of
+        // the whole span once per window — the (voice × window) cost §14 (aw) records as an
+        // apparent hang — and every one of those re-lays is superseded by the window that
+        // finally reaches the voice's own note-on. Windows are `SCHEDULER_INTERVAL_MS` apart
+        // (§7.1.4), well inside the horizon, so no voice is missed by all of them.
+        const horizon = when + LOOKAHEAD_MS / 1000;
+        for (const voice of this.voices.values()) {
+          // The mirror of the `detune` case above: there a voice that has not STARTED is left
+          // to the window that reaches it, because the window will re-lay it from its own
+          // start. Here the window IS what reaches it, so it is the sounding voice that is
+          // left alone and the future one that is re-laid.
+          if (voice.padKey !== padKey || voice.stopScheduled) continue;
+          if (voice.startTime < when || voice.startTime > horizon) continue;
+          // A flat span of a lane moves nothing, and the test is per VOICE rather than on the
+          // pad's held value: a lane that never changes still has to reach a voice its first
+          // window could not see, so short-circuiting the whole walk would lose that voice.
+          if ((attack ? voice.amp.attack : voice.amp.release) === ms) continue;
+          // A release is read at the note-OFF, so moving it schedules nothing and re-laying the
+          // contour for it would rewrite an identical timeline.
+          if (attack) this.relayAmpContour(voice, { ...voice.amp, attack: ms });
+          else voice.amp = { ...voice.amp, release: ms };
         }
         break;
       }
@@ -454,7 +539,9 @@ export class VoicePool {
       resonance: null,
       pitch: null,
       pitchCents: 0,
-      seen: { cutoff: null, resonance: null, pitch: null },
+      ampAttackMs: null,
+      ampReleaseMs: null,
+      seen: { cutoff: null, resonance: null, pitch: null, ampAttack: null, ampRelease: null },
     };
     this.padLanes.set(padKey, lane);
     return lane;
@@ -511,6 +598,66 @@ export class VoicePool {
     setParamNow(node.offset, value, when);
     if (kind === 'pitch') lane.pitchCents = value;
     return node;
+  }
+
+  /**
+   * The §6 amp envelope a voice of this pad is built with (spec §6, §7.8, issue #143): the
+   * pad's §7.8 values where it holds them, and the §6 payload's where it does not.
+   *
+   * The re-seed rule is {@link seedLaneNode}'s, for the same reason and by the same test: a
+   * §7.8 ramp never writes the store, so an unmoved payload cannot look like an edit and can
+   * never undo a lane — while a payload that HAS moved since the last trigger is an edit that
+   * did not publish, and it wins.
+   */
+  private padAmpEnvelope(lane: PadLane, payload: AhdsrEnvelope): AhdsrEnvelope {
+    const attack = this.padAmpTime(lane, 'ampAttack', payload.attack);
+    const release = this.padAmpTime(lane, 'ampRelease', payload.release);
+    if (attack === payload.attack && release === payload.release) return payload;
+    return { ...payload, attack, release };
+  }
+
+  /** One §6 amp time of a pad, resolved by {@link padAmpEnvelope}'s rule. */
+  private padAmpTime(lane: PadLane, kind: 'ampAttack' | 'ampRelease', payload: number): number {
+    const previous = lane.seen[kind];
+    lane.seen[kind] = payload;
+    const held = kind === 'ampAttack' ? lane.ampAttackMs : lane.ampReleaseMs;
+    if (previous === null || previous === payload) return held ?? payload;
+    if (kind === 'ampAttack') lane.ampAttackMs = null;
+    else lane.ampReleaseMs = null;
+    return payload;
+  }
+
+  /**
+   * Re-lay a voice's whole §6 amp contour, and the §5.4 declick that departs from it, for a
+   * voice whose note-on has not yet arrived (spec §6, §5.4, issue #143).
+   *
+   * Everything from the note-on onwards is erased and rewritten, because an envelope time
+   * moves every one of the four boundaries {@link scheduleAmpAttack} writes. The region's END
+   * does not move: an envelope time is not the playback rate, so the fade lands exactly where
+   * it did.
+   *
+   * **`contourFrozenAt` is RE-BASED rather than kept**, because this erases the very freeze it
+   * records. That field is where an earlier lay stopped the §6 AHDSR (issue #144), and a lay is
+   * exactly what `cancelScheduledValues` has just removed — so the point the contour now stops
+   * is this fade's own start, and reading the old one would depart from a level a contour that
+   * runs again never holds. A §10.2 bend on a voice that has not started moves the old value,
+   * which is what makes this reachable rather than theoretical.
+   */
+  private relayAmpContour(voice: Voice, amp: AhdsrEnvelope): void {
+    voice.amp = amp;
+    const param = voice.ampGain.gain;
+    param.cancelScheduledValues(voice.startTime);
+    scheduleAmpAttack(param, voice.ampPeak, amp, voice.startTime);
+    const fadeStart = declickFadeStart(voice.declickEndTime, voice.startTime, DECLICK_FADE_MS);
+    scheduleAmpDeclick(
+      param,
+      voice.declickEndTime,
+      voice.startTime,
+      DECLICK_FADE_MS,
+      ampLevelAt(voice.ampPeak, amp, voice.startTime, fadeStart),
+    );
+    voice.declickFadeStart = fadeStart;
+    voice.contourFrozenAt = fadeStart;
   }
 
   /**
@@ -614,6 +761,30 @@ export class VoicePool {
     const level = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, voice.contourFrozenAt);
     scheduleAmpDeclick(voice.ampGain.gain, endTime, at, DECLICK_FADE_MS, level);
     voice.declickFadeStart = fadeStart;
+    voice.declickEndTime = endTime;
+  }
+
+  /**
+   * The level this voice's amp timeline holds at `when` — what a §5.4 note-off, steal or choke
+   * fade must depart from (spec §5.4, §6).
+   *
+   * Before the fade start it is the contour's value where the contour STOPPED — at `when`, or
+   * at `contourFrozenAt` if an earlier lay froze it before then (issue #144). That is the one
+   * model of the timeline this file keeps, and `rescheduleDeclick` reads the same field for the
+   * same reason; whether the model is right at all is issue #146, and the two must not answer
+   * it differently. Inside the fade it is the fade's own line, which departs from that frozen
+   * level and reaches zero at the region's end — an interruption in the last three milliseconds
+   * of a voice is a corner, and this is what stops it stepping UP.
+   */
+  private ampLevelNow(voice: Voice, when: number): number {
+    if (when <= voice.declickFadeStart) {
+      const at = Math.min(when, voice.contourFrozenAt);
+      return ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, at);
+    }
+    const span = voice.declickEndTime - voice.declickFadeStart;
+    if (span <= 0) return 0;
+    const departure = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, voice.contourFrozenAt);
+    return departure * Math.max(0, 1 - (when - voice.declickFadeStart) / span);
   }
 
   /** The base detune of the sounding voice on a pad (mono glide origin, spec §6), or undefined. */
@@ -726,7 +897,10 @@ export class VoicePool {
     // neutral to fall back to, so it lands on silence — recoverable by fixing the value, where
     // a NaN written to the gain param would poison the chain for the session (§8.5.6).
     const peak = clamp(velocityToGain(spec.velocity, spec.gainDb) * stat.ampFactor, 0, MAX_VOICE_GAIN);
-    scheduleAmpAttack(ampGain.gain, peak, spec.amp, now);
+    // The pad's §7.8 amp-envelope times where it holds them, and the §6 payload's where it
+    // does not — the envelope-time half of {@link PadLane} (issue #143).
+    const amp = this.padAmpEnvelope(lane, spec.amp);
+    scheduleAmpAttack(ampGain.gain, peak, amp, now);
 
     // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6). Wired
     // before the declick because pitch-routed LFOs are part of the rate curve it solves.
@@ -762,13 +936,7 @@ export class VoicePool {
     // asked for it — the declick is the last thing on that timeline, so `cancelAndHoldAtTime`
     // has nothing to rewrite and pins nothing (issue #144).
     const fadeStart = declickFadeStart(endTime, now, DECLICK_FADE_MS);
-    scheduleAmpDeclick(
-      ampGain.gain,
-      endTime,
-      now,
-      DECLICK_FADE_MS,
-      ampLevelAt(peak, spec.amp, now, fadeStart),
-    );
+    scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS, ampLevelAt(peak, amp, now, fadeStart));
 
     source.start(now);
     for (const osc of oscillators) osc.start(now);
@@ -788,7 +956,7 @@ export class VoicePool {
       programId: spec.programId,
       chokeGroup: spec.chokeGroup,
       oneShot: spec.playbackMode === 'oneShot',
-      amp: spec.amp,
+      amp,
       ampPeak: peak,
       baseDetune,
       regionSeconds: source.sourceSeconds,
@@ -796,6 +964,7 @@ export class VoicePool {
       consumedSeconds: 0,
       consumedUntil: now,
       declickFadeStart: fadeStart,
+      declickEndTime: endTime,
       contourFrozenAt: fadeStart,
       startTime: now,
       released: false,
@@ -989,7 +1158,7 @@ export class VoicePool {
   private fadeAndStop(voice: Voice, when: number, fadeMs: number): void {
     voice.released = true;
     voice.stopScheduled = true;
-    this.safeStop(voice, scheduleAmpRelease(voice.ampGain.gain, when, fadeMs));
+    this.safeStop(voice, scheduleAmpRelease(voice.ampGain.gain, when, fadeMs, this.ampLevelNow(voice, when)));
   }
 
   private safeStop(voice: Voice, when?: number): void {

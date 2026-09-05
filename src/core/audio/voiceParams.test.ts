@@ -4,7 +4,7 @@
  * Pure and node-free, so it is unit-testable without a Web Audio context (spec §11.3).
  */
 import { describe, expect, it } from 'vitest';
-import { padKeyFor, programParamChange } from './voiceParams';
+import { isPerVoiceTarget, padKeyFor, programParamChange } from './voiceParams';
 
 describe('padKeyFor (spec §5.4 pad key)', () => {
   it('builds the voice-pool pad key from a program id and pad index', () => {
@@ -34,7 +34,25 @@ describe('programParamChange (spec §7.8 program-scope leaves)', () => {
     expect(programParamChange('pan', -0.25)).toEqual({ target: 'channelPan', value: -0.25 });
   });
 
+  it('maps the two §6 amp-envelope TIMES to the voice they shape (issue #143)', () => {
+    // Both were registered, offered by the §8.5.2 lane selector and named among §10.3's
+    // pad-mode defaults, and this function mapped neither — so a lane on either was inert
+    // live and rendered as nothing at all.
+    expect(programParamChange('amp.attack', 200)).toEqual({ target: 'ampAttack', value: 200 });
+    expect(programParamChange('amp.release', 40)).toEqual({ target: 'ampRelease', value: 40 });
+  });
+
   it('returns null for an unregistered leaf', () => {
     expect(programParamChange('wobble', 1)).toBeNull();
+  });
+});
+
+describe('isPerVoiceTarget (spec §6, §7.8)', () => {
+  it('counts an amp-envelope time as the voice’s, not the pad channel’s', () => {
+    // An envelope time shapes the contour the voice's own amp gain carries (spec §6); the
+    // pad channel below it holds only the §4.2 level and pan.
+    expect(isPerVoiceTarget('ampAttack')).toBe(true);
+    expect(isPerVoiceTarget('ampRelease')).toBe(true);
+    expect(isPerVoiceTarget('channelLevel')).toBe(false);
   });
 });

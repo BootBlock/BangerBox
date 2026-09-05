@@ -49,11 +49,28 @@ describe('changedPadLeaves (spec §4.3)', () => {
     expect(changedPadLeaves(programWith([pad]), programWith([changed]))).toEqual([]);
   });
 
-  it('does not emit envelope times — an AHDSR applies at note-on (spec §6)', () => {
+  it('emits the two §6 amp-envelope times, for the notes already in the lookahead (#143)', () => {
+    // An AHDSR applies at note-on (spec §6), so this cannot re-shape a hit already sounding —
+    // but a note scheduled up to `LOOKAHEAD_MS` ahead has been built and has not started, and
+    // the pool re-lays exactly those. Nothing emitted them at all before issue #143.
     const pad = basePad();
     const changed = {
       ...pad,
-      envelopes: { ...pad.envelopes, amp: { ...pad.envelopes.amp, attack: 500 } },
+      envelopes: { ...pad.envelopes, amp: { ...pad.envelopes.amp, attack: 500, release: 40 } },
+    };
+    expect(changedPadLeaves(programWith([pad]), programWith([changed]))).toEqual([
+      { targetPath: `program:${PROGRAM_ID}.pad:0.amp.attack`, value: 500 },
+      { targetPath: `program:${PROGRAM_ID}.pad:0.amp.release`, value: 40 },
+    ]);
+  });
+
+  it('emits nothing for a §6 envelope field no §7.8 leaf addresses', () => {
+    // `hold`, `decay`, `sustain` and `curve` are §6 fields with no registered address, so a
+    // change to one has no §7.8 path to travel and reaches the next voice through the payload.
+    const pad = basePad();
+    const changed = {
+      ...pad,
+      envelopes: { ...pad.envelopes, amp: { ...pad.envelopes.amp, decay: 500, sustain: 0.2 } },
     };
     expect(changedPadLeaves(programWith([pad]), programWith([changed]))).toEqual([]);
   });

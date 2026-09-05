@@ -15,12 +15,12 @@ import { useProgramStore } from '../useProgramStore';
 import type { SyncBridge, Unsubscribe } from './bridge';
 
 /**
- * The §7.8 leaves that live *inside the voice* and so must be pushed to sounding voices.
- * `amp` and `pan` are deliberately absent: they belong to the pad's mixer channel (see
+ * The §7.8 leaves that live *inside the voice* and so must be pushed to the voices the pool
+ * holds. `amp` and `pan` are deliberately absent: they belong to the pad's mixer channel (see
  * `voiceParams.isPerVoiceTarget`), which `useMixerStore` owns and already syncs. Pushing
  * them from here as well would move the graph while the mixer strip showed the old value.
  */
-const SYNCED_LEAVES = ['filter.cutoff', 'filter.resonance', 'pitch'] as const;
+const SYNCED_LEAVES = ['filter.cutoff', 'filter.resonance', 'pitch', 'amp.attack', 'amp.release'] as const;
 
 export interface ParamChange {
   readonly targetPath: string;
@@ -38,6 +38,10 @@ function leafValue(pad: Pad, leaf: (typeof SYNCED_LEAVES)[number]): number {
     // layer is the pad's lives beside the voice builder that reads it back (issue #138).
     case 'pitch':
       return padTuneSemitones(pad);
+    case 'amp.attack':
+      return pad.envelopes.amp.attack;
+    case 'amp.release':
+      return pad.envelopes.amp.release;
   }
 }
 
@@ -46,8 +50,12 @@ function leafValue(pad: Pad, leaf: (typeof SYNCED_LEAVES)[number]): number {
  * Programs are replaced immutably per edit, so unchanged programs and pads are skipped by
  * reference before any field is compared.
  *
- * Envelope times are deliberately absent: an AHDSR is applied when a voice starts (spec
- * §6), so changing attack or release affects the next hit rather than a sounding one.
+ * The two §6 envelope TIMES are here for the notes already in the §7.1.4 lookahead
+ * (issue #143): an AHDSR is applied when a voice STARTS, so an edit cannot re-shape a hit
+ * already sounding — but a note scheduled up to `LOOKAHEAD_MS` ahead has been BUILT and has
+ * not started, and the pool re-lays exactly those. A hit struck between the edit and the next
+ * window is covered by `programWithLiveGestures` and by the payload the voice is built from,
+ * so this is the third of the three routes rather than the only one.
  */
 export function changedPadLeaves(
   previous: Record<string, Program>,

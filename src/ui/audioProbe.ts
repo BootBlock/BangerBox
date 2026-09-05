@@ -15,9 +15,11 @@ import {
   renderKernelGuardOffline,
   renderLfoPhaseOffline,
   renderLfoRateOffline,
+  renderAmpEnvelopeLaneOffline,
   renderPreviewProfileOffline,
   renderProgramNote,
   renderRampGuardOffline,
+  type AmpEnvelopeLaneResult,
   type AmpProfileResult,
   type DelayEchoResult,
   type EffectRenderResult,
@@ -189,6 +191,8 @@ export interface AudioProbe {
   sharedPadChannelProof: () => Promise<SharedPadChannelResult>;
   /** A §7.8 lane on a §6 sound-design parameter sounds and renders (§6, §7.8, §9.5, #138). */
   padLaneProof: () => Promise<PadLaneResult>;
+  /** A §7.8 lane on a §6 amp-envelope TIME shapes the voices it reaches (§6, §7.8, #143). */
+  ampEnvelopeLaneProof: () => Promise<AmpEnvelopeLaneProofResult>;
 }
 
 /**
@@ -364,6 +368,35 @@ export interface PadLaneResult {
   readonly liveOpenPeak: number;
   /** The same, begun after a §7.8 write closed it to 60 Hz. The defect leaves the two equal. */
   readonly liveClosedPeak: number;
+}
+
+/** One beat of the §7.8 amp-envelope-lane bounce, read as the SHAPE of its own hit. */
+export interface AmpEnvelopeBeat {
+  /**
+   * Seconds from the beat to the first frame at 90 % of that beat's own peak — its §6 attack.
+   *
+   * A level reading and a length reading are both blind to an envelope time, which is what
+   * let issue #144 survive twenty proofs (§14 `(ay)`). A rise time is not.
+   */
+  readonly riseSeconds: number;
+  /** That beat's own peak, so a silent hit cannot pass as a fast one. */
+  readonly peak: number;
+}
+
+/** Outcome of the §7.8 amp-envelope-lane proof (see {@link AudioProbe.ampEnvelopeLaneProof}). */
+export interface AmpEnvelopeLaneProofResult {
+  /** The §7.8 address the attack half drives, so a failure names the lane it rode. */
+  readonly attackPath: string;
+  /** First and last beat of a §9.5 bounce of one bar with NO lane: both rise at once. */
+  readonly unautomated: readonly [AmpEnvelopeBeat, AmpEnvelopeBeat];
+  /** The same bar under a lane sweeping `amp.attack` 1 ms → 400 ms. The defect renders nothing. */
+  readonly attackSwept: readonly [AmpEnvelopeBeat, AmpEnvelopeBeat];
+  /** §5.8 master peak of a live pass begun AFTER a §7.8 write set a 1 ms attack. */
+  readonly liveFastPeak: number;
+  /** The same after a write of an attack LONGER than the region. The defect leaves them equal. */
+  readonly liveSlowPeak: number;
+  /** The direct §11.2 profile of two voices split by one lane — the release half (#143). */
+  readonly voices: AmpEnvelopeLaneResult;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -4051,6 +4084,215 @@ async function padLaneProof(engine: AudioEngine): Promise<PadLaneResult> {
   };
 }
 
+/**
+ * Seconds from `from` until the signal first reaches 90 % of its own peak in `[from, to)` —
+ * the §6 attack of the hit that starts there (spec §6, §11.2, issue #143).
+ */
+function riseSeconds(data: Float32Array, sampleRate: number, from: number, to: number): AmpEnvelopeBeat {
+  const start = Math.max(0, Math.round(from * sampleRate));
+  const end = Math.min(data.length, Math.round(to * sampleRate));
+  let peak = 0;
+  for (let i = start; i < end; i += 1) peak = Math.max(peak, Math.abs(data[i]!));
+  if (peak <= 0) return { riseSeconds: 0, peak: 0 };
+  for (let i = start; i < end; i += 1) {
+    if (Math.abs(data[i]!) >= peak * 0.9) return { riseSeconds: (i - start) / sampleRate, peak };
+  }
+  return { riseSeconds: (end - start) / sampleRate, peak };
+}
+
+/**
+ * A §7.8 lane on `program:<id>.pad:<idx>.amp.attack` or `...amp.release` shapes the voices it
+ * reaches (spec §6, §7.8, §9.5, issue #143).
+ *
+ * Both addresses were registered, offered by the §8.5.2 lane selector and named among §10.3's
+ * pad-mode defaults, and `programParamChange` mapped neither — so both were inert live and
+ * rendered as nothing. **The rule this proves is that a voice's §6 amp envelope is the pad's
+ * envelope as of that voice's own note-on**, which is one rule and the same rule in both
+ * places: a voice already sounding keeps the attack it was built with, and a voice whose
+ * note-on has not yet arrived takes the new one — offline, that second case is every voice of
+ * the render, because a render builds them all before it applies any ramp.
+ *
+ * Three halves, because no one of them would prove the rule alone:
+ *
+ *  1. **A §9.5 bounce** of one bar of four hits under a real §7.8 lane, read back from
+ *     `/bounces/` over real OPFS, measured as each beat's RISE TIME. The hits play a CONSTANT
+ *     sample, so every rendered frame is the voice's own amp gain and a 300 ms attack can be
+ *     told from a 1 ms one — the instrument §14 `(ay)` built for exactly this blindness.
+ *  2. **A live pass** with each write made while the transport is STOPPED, so the only way a
+ *     value can reach the pass that follows is a voice BUILT against it. It is read as a §5.8
+ *     master peak, which an attack longer than the region collapses: the contour never gets
+ *     there before the §5.4 declick takes it away.
+ *  3. **A direct §11.2 profile** of two voices split by one lane, which is where the RELEASE
+ *     half is measured. A §9.5 bounce cannot carry it, because no bounce issues a note-off —
+ *     and neither does the live engine (see the honest limit in §14).
+ *
+ * It neutralises the §5.2 strips before it renders, as `padLaneProof` does and for the same
+ * reason: by the time the smoke reaches this step the project carries a 350 ms delay at 35 %
+ * feedback on its master strip, and a smeared hit has no readable rise.
+ */
+async function ampEnvelopeLaneProof(engine: AudioEngine): Promise<AmpEnvelopeLaneProofResult> {
+  const { bounceActiveSequence } = await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+  const { programParamPath } = await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A constant sample, so the render IS the amp gain (§14 `(ay)`). Its 0.4 s region fits
+  // inside the half-second between beats and is longer than the 300 ms the lane reaches.
+  const HIT_SECONDS = 0.4;
+  const flat = engine.context.createBuffer(1, Math.floor(sampleRate * HIT_SECONDS), sampleRate);
+  flat.getChannelData(0).fill(0.5);
+  const sample = await importDecodedSample(flat, 'amp envelope lane probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  const programId = crypto.randomUUID();
+  const seqId = crypto.randomUUID();
+  const trackId = crypto.randomUUID();
+  const attackPath = programParamPath(programId, 0, 'amp.attack');
+
+  const program = { ...createDefaultDrumProgram('Amp envelope lane probe'), id: programId };
+  const pad = createDefaultPad(0, 'Amp envelope lane probe');
+  pad.playbackMode = 'oneShot'; // note-off is ignored, so each hit plays its region out
+  pad.layers = [layer({ sampleId: sample.id })];
+  pad.filter = { ...pad.filter, type: 'off' }; // nothing may colour the constant sample
+  // A 1 ms attack and nothing else: the only thing that can move the gain is the lane and the
+  // §5.4 declick at the region's end.
+  pad.envelopes = {
+    ...pad.envelopes,
+    amp: { attack: 1, hold: 0, decay: 0, sustain: 1, release: 1, curve: 'linear' },
+  };
+  program.pads = [pad];
+  useProgramStore.getState().setPrograms({ [programId]: program });
+
+  // The sequence carries its OWN §9.3 tempo: every window below is placed in seconds, and an
+  // earlier probe leaving a different project tempo behind would move all four beats.
+  const sequence = {
+    ...createDefaultSequence(projectId, 0, 'Amp envelope lane probe', seqId),
+    lengthBars: 1,
+    tempo: 120,
+  };
+  const track = createDefaultTrack(seqId, programId, 0, 'Amp envelope lane probe', 'drum', trackId);
+  const beats = [0, 960, 1_920, 2_880].map((tickStart) => ({
+    id: crypto.randomUUID(),
+    tickStart,
+    durationTicks: 120,
+    note: 0,
+    velocity: 100,
+    extra: null,
+  }));
+
+  const hydrate = (automation: Record<string, AutomationPoint[]> = {}): void => {
+    useSequenceStore.getState().hydrate({
+      sequences: { [seqId]: sequence },
+      tracks: { [trackId]: track },
+      events: { [trackId]: beats },
+      automation,
+      songEntries: [],
+    });
+  };
+
+  /** A two-point §7.8 sequence lane across the whole bar. */
+  const sweep = (from: number, to: number): Record<string, AutomationPoint[]> => ({
+    [automationLaneKey('sequence', seqId, attackPath)]: [0, 3_840].map((tick, index) => ({
+      id: crypto.randomUUID(),
+      scope: 'sequence' as const,
+      ownerId: seqId,
+      targetPath: attackPath,
+      tick,
+      value: index === 0 ? from : to,
+      curve: 'linear' as const,
+    })),
+  });
+
+  hydrate();
+  const transport = () => useTransportStore.getState();
+  transport().setActiveSequenceId(seqId);
+  transport().setPlaybackMode('sequence');
+  transport().setMetronomeEnabled(false);
+  transport().setCountInBars(0);
+  transport().setRecording(false);
+  transport().setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  commitTempo(120);
+
+  // Every §5.2 strip back to its §4.2 default, `bounceMixProof`'s own `neutral()`. Nothing
+  // here is committed, so the closing `loadProject` puts the project's own strips back.
+  useMixerStore.getState().setChannels({
+    master: createDefaultChannelStrip('master'),
+    'return:0': createDefaultChannelStrip('return:0'),
+    'return:1': createDefaultChannelStrip('return:1'),
+    'return:2': createDefaultChannelStrip('return:2'),
+    'return:3': createDefaultChannelStrip('return:3'),
+    [`track:${trackId}`]: createDefaultChannelStrip(`track:${trackId}`),
+  });
+
+  const measure = async (): Promise<readonly [AmpEnvelopeBeat, AmpEnvelopeBeat]> => {
+    const path = await bounceActiveSequence('probe-amp-envelope-lane', ctx);
+    const decoded = decodeWav(new Uint8Array(await (await readFile(path)).arrayBuffer()));
+    const left = decoded.channels[0]!;
+    const right = decoded.channels[1] ?? left;
+    const sr = decoded.sampleRate;
+    const mono = new Float32Array(left.length);
+    for (let i = 0; i < mono.length; i += 1) mono[i] = (left[i]! + right[i]!) / 2;
+    const beat = (index: number): AmpEnvelopeBeat => riseSeconds(mono, sr, index * 0.5, index * 0.5 + 0.45);
+    return [beat(0), beat(3)];
+  };
+
+  const unautomated = await measure();
+  // 1 ms → 400 ms across the bar, so beat 4 sits at 300 ms — three quarters of the way along
+  // a linear lane, and well inside the 0.4 s region so the contour completes.
+  hydrate(sweep(1, 400));
+  const attackSwept = await measure();
+  hydrate();
+
+  // --- the live half ----------------------------------------------------------------------
+  //
+  // Every render above built its own offline graph, so nothing has sounded live yet. Each
+  // write below is made with the transport STOPPED and no voice sounding, so the only way it
+  // can reach the pass that follows is through a voice BUILT against it.
+  const peakOver = async (ms: number): Promise<number> => {
+    const slot = engine.meterRegistry.slotOf('master');
+    let peak = 0;
+    const until = performance.now() + ms;
+    while (performance.now() < until) {
+      if (slot !== undefined) {
+        const reading = engine.meterRegistry.read(slot);
+        peak = Math.max(peak, reading.peakL, reading.peakR);
+      }
+      await delay(16);
+    }
+    return peak;
+  };
+  const livePass = async (attackMs: number): Promise<number> => {
+    engine.bridge.applyParam(attackPath, attackMs);
+    transport().play();
+    await delay(300); // past the first beat, so the meter is reading programme material
+    const peak = await peakOver(1_400);
+    transport().stop();
+    await delay(200);
+    return peak;
+  };
+  const liveFastPeak = await livePass(1);
+  // Longer than the 0.4 s region, so the contour is taken away by the §5.4 declick a fifth of
+  // the way up and the hit never reaches the level a 1 ms attack gives it.
+  const liveSlowPeak = await livePass(2_000);
+
+  // The release half, which no bounce can carry: nothing in the application issues a note-off.
+  const voices = await renderAmpEnvelopeLaneOffline();
+
+  // Put the project back: the stores return to the §9.3 rows, taking the probe's program,
+  // arrangement and lane with them.
+  await projectService.loadProject(projectId);
+
+  return { attackPath, unautomated, attackSwept, liveFastPeak, liveSlowPeak, voices };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -4097,6 +4339,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     trackWithdrawalProof: () => trackWithdrawalProof(engine),
     sharedPadChannelProof: () => sharedPadChannelProof(engine),
     padLaneProof: () => padLaneProof(engine),
+    ampEnvelopeLaneProof: () => ampEnvelopeLaneProof(engine),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,

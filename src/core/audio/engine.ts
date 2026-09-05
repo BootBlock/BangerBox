@@ -308,8 +308,13 @@ export class AudioEngine {
         }
         return;
       case 'noteOff':
-        // Sequenced note lifetime is carried by `durationSec` on the noteOn, so the voice
-        // releases itself; there is nothing an explicit note-off dispatch would add here.
+        // NOTHING releases a voice, and this comment used to claim otherwise: "sequenced note
+        // lifetime is carried by `durationSec` on the noteOn, so the voice releases itself".
+        // `durationSec` is read by nobody, `VoiceTriggerSpec` has no duration field, and
+        // `VoicePool.release` has no production caller — so every voice plays its whole region
+        // and ends on the §5.4 declick, and the §6 amp release stage is silent. §5.4 asks for
+        // the opposite. Issue #145: an audible change to every voice in the application, and a
+        // §13.3.2 question about the §6 `poly` default rather than a mechanical fix.
         return;
     }
   }
