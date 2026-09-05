@@ -688,6 +688,11 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   rack's first free slot, so a fresh effect lands at the FRONT of a default four-slot strip
   and the empty slots sit behind it. Find it by effect, or by diffing the list. Eight tests
   and two §11.4 probes carried the old assumption.
+- **A removed worktree can leave an EMPTY directory behind under `.claude/worktrees/`.** A
+  lingering shell holds its CWD, so `git worktree remove` and `rm -rf` both fail with
+  "Permission denied" / "Device or resource busy". `slotlimit` is one; `trackwithdraw`,
+  `bouncemix` and `padstrip` were others. `git worktree list` shows only `main`, so they are
+  not another agent's work — delete them if you can and ignore them if you cannot.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
