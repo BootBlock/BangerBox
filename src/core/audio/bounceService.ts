@@ -40,9 +40,17 @@
  * **A §7.8 lane on a §6 sound-design parameter renders** (issue #138): `filter.cutoff`,
  * `filter.resonance` and `pitch` each ride a `ConstantSourceNode` the whole pad shares, which
  * every voice is built against, so a lane reaches a voice for exactly as long as that voice
- * sounds. The two §7.8 amp-ENVELOPE leaves (`amp.attack`, `amp.release`) still do not: an
- * AHDSR is applied when a voice starts (spec §6), and a render builds every voice before it
- * applies any ramp — see issue #143.
+ * sounds. **The two amp-ENVELOPE leaves render too** (issue #143), by the rule that follows
+ * from the order below rather than in spite of it: an AHDSR is applied when a voice STARTS
+ * (spec §6), so a voice's envelope is the pad's as of its own note-on — and because this loop
+ * builds every voice before it applies any ramp, a write reaches back to the voices whose
+ * note-on is at or after it. Live the same rule reaches the same voices.
+ *
+ * **What a render still does not carry is a note-OFF.** The loop triggers and never releases,
+ * so the §6 release stage is silent in every bounce — as it is live, where the §7.1.4
+ * dispatcher discards `noteOff` and `triggerLiveNote(..., false)` reaches only the scheduler.
+ * A §7.8 `amp.release` lane therefore reaches the voice and cannot yet be heard; that is a
+ * §5.4 defect of its own, not this loop's.
  *
  * **What a render cannot see, and does not guess.** A bounce is of COMMITTED state. A §4.1
  * gesture still in flight lives on the transient channel and has not been committed, so a

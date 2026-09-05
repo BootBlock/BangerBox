@@ -214,13 +214,12 @@ interface ResolvedPadLeaf {
  * A program as it sounds RIGHT NOW: its committed state with any in-flight §4.1 gesture on
  * `padIndex` applied (issue #27).
  *
- * A transient reaches the graph through `bridge.applyParam`, which acts on nodes that already
- * exist — so it moves a SOUNDING voice and cannot move one that has not been built yet. While
- * the transient also wrote the store, the voice builder picked the live value up for free;
- * now that it does not, a pad struck mid-turn would be built from the value the turn started
- * from, and the two §10.3 pad-mode encoders bound to `amp.attack` and `amp.release` — which
- * `programParamChange` cannot apply to a live voice at all — would do nothing whatsoever
- * until the 250 ms idle commit.
+ * A transient reaches the graph through `bridge.applyParam`, which acts on what already
+ * exists — a node for the three §7.8 sound-design leaves, and for the two envelope times the
+ * voices the pool is holding (issue #143). Neither can reach a voice that has not been built.
+ * While the transient also wrote the store, the voice builder picked the live value up for
+ * free; now that it does not, a pad struck mid-turn would be built from the value the turn
+ * started from until the 250 ms idle commit.
  *
  * The §9.5 bounce deliberately does NOT call this: a render is of committed state, and a
  * knob held mid-gesture is not part of the arrangement.

@@ -26,6 +26,9 @@ import { resolvedVoiceToTrigger, resolveVoice } from './programVoice';
 import { VoicePool } from './voicePool';
 import { PreviewChannel } from './preview';
 import { DECLICK_FADE_MS } from '@/core/constants';
+import { MixerGraph } from './graph';
+import { createAudioBridge } from './audioBridge';
+import { programParamPath } from './params/registry';
 
 export interface EffectRenderResult {
   inputRms: number;
@@ -633,4 +636,192 @@ export async function renderPreviewProfileOffline(
   const rendered = await context.startRendering();
   preview.destroy();
   return ampProfile(rendered.getChannelData(0), sampleRate);
+}
+
+/**
+ * What one voice's §6 amp contour did, read off a channel that carries only that voice
+ * (spec §6, §5.4, §11.2, issue #143).
+ *
+ * A rise and a fall are the two things an envelope TIME is: no level reading and no length
+ * reading can tell a 1 ms attack from a 300 ms one, which is why §14 `(ay)` had to profile a
+ * voice rather than sample its ends.
+ */
+export interface AmpEnvelopeVoiceProfile {
+  /** Seconds from the note-on until the gain first reaches 90 % of the voice's own plateau. */
+  readonly riseSeconds: number;
+  /** Seconds from the note-off until the gain falls below 5 % of that plateau. */
+  readonly fallSeconds: number;
+  /** The plateau itself — a floor of zero here would make both numbers meaningless. */
+  readonly plateau: number;
+}
+
+/** Outcome of {@link renderAmpEnvelopeLaneOffline}. */
+export interface AmpEnvelopeLaneResult {
+  readonly attackPath: string;
+  readonly releasePath: string;
+  /** The voice struck BEFORE the lane moved — §6 says its AHDSR was applied when it started. */
+  readonly sounding: AmpEnvelopeVoiceProfile;
+  /** The voice struck AFTER it, which is the whole of what the two leaves address. */
+  readonly struckAfter: AmpEnvelopeVoiceProfile;
+  /** The §6 payload's own times, in ms, so the ratios below have their baseline stated. */
+  readonly payloadAttackMs: number;
+  readonly payloadReleaseMs: number;
+  /** The times the lane wrote, in ms. */
+  readonly laneAttackMs: number;
+  readonly laneReleaseMs: number;
+}
+
+/** Profile one channel of the render as a rise and a fall around a known note-off. */
+function envelopeProfile(
+  data: Float32Array,
+  sampleRate: number,
+  startSeconds: number,
+  offSeconds: number,
+): AmpEnvelopeVoiceProfile {
+  let plateau = 0;
+  for (let i = 0; i < data.length; i += 1) plateau = Math.max(plateau, Math.abs(data[i]!));
+  if (plateau <= 0) return { riseSeconds: 0, fallSeconds: 0, plateau: 0 };
+
+  const from = Math.max(0, Math.round(startSeconds * sampleRate));
+  let rise = 0;
+  for (let i = from; i < data.length; i += 1) {
+    if (Math.abs(data[i]!) >= plateau * 0.9) {
+      rise = (i - from) / sampleRate;
+      break;
+    }
+  }
+  const off = Math.max(0, Math.round(offSeconds * sampleRate));
+  let fall = (data.length - off) / sampleRate;
+  for (let i = off; i < data.length; i += 1) {
+    if (Math.abs(data[i]!) < plateau * 0.05) {
+      fall = (i - off) / sampleRate;
+      break;
+    }
+  }
+  return { riseSeconds: rise, fallSeconds: fall, plateau };
+}
+
+/**
+ * Profile the §6 amp contour of two voices of one pad, separated by a §7.8 lane on
+ * `amp.attack` and `amp.release` (spec §6, §7.8, §11.2, issue #143).
+ *
+ * Both voices play a CONSTANT sample, so every rendered frame IS that voice's amp gain and a
+ * 300 ms attack can be told from a 1 ms one without estimating an envelope from a tone — the
+ * instrument §14 `(ay)` built. Each voice is given its own channel of the render, because the
+ * two overlap and a summed reading could not attribute either shape.
+ *
+ * **The write travels the real §7.8 dispatch**: `createAudioBridge.applyAutomation` parses the
+ * registered address, `programParamChange` maps it, and the pool applies it — the three the
+ * defect broke at the second step. It is made with the first voice already sounding and the
+ * second not yet started, which is the whole of the rule under test.
+ *
+ * The note-off is issued directly, because nothing in the application issues one yet: the
+ * §7.1.4 dispatcher discards `noteOff` and `triggerLiveNote(..., false)` reaches only the
+ * scheduler, so the §6 release stage is unreachable in production. That is a §5.4 defect of
+ * its own and it is filed, not fixed here — the release half of this proof is a claim about
+ * where the lane's value LANDS, which is the release ramp `VoicePool.release` schedules.
+ */
+export async function renderAmpEnvelopeLaneOffline(): Promise<AmpEnvelopeLaneResult> {
+  const sampleRate = 48_000;
+  const seconds = 3;
+  const context = new OfflineAudioContext(2, Math.floor(sampleRate * seconds), sampleRate);
+
+  const payloadAttackMs = 1;
+  const payloadReleaseMs = 20;
+  const laneAttackMs = 300;
+  const laneReleaseMs = 500;
+
+  const programId = 'amp-lane-offline';
+  const program = { ...createDefaultDrumProgram('Amp envelope lane'), id: programId };
+  const pad = createDefaultPad(0);
+  pad.playbackMode = 'poly'; // §5.4: only a `poly` or `mono` pad answers a note-off at all
+  pad.layers = [{ ...createDefaultVelocityLayer('offline'), velocityStart: 0, velocityEnd: 127 }];
+  pad.filter = { ...pad.filter, type: 'off' };
+  pad.envelopes = {
+    ...pad.envelopes,
+    amp: {
+      attack: payloadAttackMs,
+      hold: 0,
+      decay: 0,
+      sustain: 1,
+      release: payloadReleaseMs,
+      curve: 'linear',
+    },
+  };
+  program.pads = [pad];
+
+  const attackPath = programParamPath(programId, 0, 'amp.attack');
+  const releasePath = programParamPath(programId, 0, 'amp.release');
+  const empty: AmpEnvelopeVoiceProfile = { riseSeconds: 0, fallSeconds: 0, plateau: 0 };
+  const resolved = resolveVoice(program, 0, 127);
+  if (!resolved) {
+    return {
+      attackPath,
+      releasePath,
+      sounding: empty,
+      struckAfter: empty,
+      payloadAttackMs,
+      payloadReleaseMs,
+      laneAttackMs,
+      laneReleaseMs,
+    };
+  }
+
+  const pool = new VoicePool(context);
+  const graph = new MixerGraph(context);
+  const bridge = createAudioBridge({ graph, context, voicePool: () => pool });
+
+  // One channel per voice: the two overlap, and a summed render could attribute neither.
+  const merger = context.createChannelMerger(2);
+  merger.connect(context.destination);
+  const lane = (index: number): GainNode => {
+    const gain = context.createGain();
+    gain.connect(merger, 0, index);
+    return gain;
+  };
+
+  const buffer = constantBuffer(context, 2.5);
+  const soundingStart = 0;
+  const afterStart = 1;
+  const noteOff = 1.6;
+  pool.trigger(
+    resolvedVoiceToTrigger(resolved, {
+      id: 'sounding',
+      buffer,
+      destination: lane(0),
+      when: soundingStart,
+      velocity: 127,
+      programId,
+      bpm: DEFAULT_BPM,
+    }),
+  );
+  // The write lands while the first voice is sounding and before the second exists.
+  bridge.applyAutomation(attackPath, laneAttackMs, 0.5, 0.5);
+  bridge.applyAutomation(releasePath, laneReleaseMs, 0.5, 0.5);
+  pool.trigger(
+    resolvedVoiceToTrigger(resolved, {
+      id: 'after',
+      buffer,
+      destination: lane(1),
+      when: afterStart,
+      velocity: 127,
+      programId,
+      bpm: DEFAULT_BPM,
+    }),
+  );
+  pool.release(resolved.padKey, noteOff);
+
+  const rendered = await context.startRendering();
+  pool.destroy();
+  graph.destroy();
+  return {
+    attackPath,
+    releasePath,
+    sounding: envelopeProfile(rendered.getChannelData(0), sampleRate, soundingStart, noteOff),
+    struckAfter: envelopeProfile(rendered.getChannelData(1), sampleRate, afterStart, noteOff),
+    payloadAttackMs,
+    payloadReleaseMs,
+    laneAttackMs,
+    laneReleaseMs,
+  };
 }

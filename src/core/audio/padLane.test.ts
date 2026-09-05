@@ -14,7 +14,12 @@
  * context and read back what each param and each node ended up holding.
  */
 import { describe, expect, it } from 'vitest';
-import { createDefaultEnvelope, type ModRoute, type PadFilter } from '@/core/project/schemas';
+import {
+  createDefaultEnvelope,
+  type AhdsrEnvelope,
+  type ModRoute,
+  type PadFilter,
+} from '@/core/project/schemas';
 import { createFakeAudioContext, liveNodeCount, type FakeAudioContext } from '@/test/mocks/audioContext';
 import { VoicePool, type VoiceTriggerSpec } from './voicePool';
 
@@ -69,13 +74,42 @@ function constantsOf(fake: FakeAudioContext): FakeConstant[] {
   return fake.nodes.filter((n) => n.nodeType === 'constantSource') as unknown as FakeConstant[];
 }
 
+/** Every voice's amp-envelope gain, in the order the voices were built. */
+function ampGainsOf(fake: FakeAudioContext): FakeParam[] {
+  return fake.nodes
+    .filter((n) => n.nodeType === 'gain' && (n as unknown as { gain: FakeParam }).gain.calls.length > 0)
+    .map((n) => (n as unknown as { gain: FakeParam }).gain);
+}
+
 /** The voice's amp-envelope gain — the only gain the pool schedules anything on. */
 function ampGainOf(fake: FakeAudioContext): FakeParam {
-  const node = fake.nodes.find(
-    (n) => n.nodeType === 'gain' && (n as unknown as { gain: FakeParam }).gain.calls.length > 0,
-  );
-  if (!node) throw new Error('no amp gain was scheduled');
-  return (node as unknown as { gain: FakeParam }).gain;
+  const gain = ampGainsOf(fake)[0];
+  if (!gain) throw new Error('no amp gain was scheduled');
+  return gain;
+}
+
+/**
+ * How long the §6 attack currently written on an amp gain lasts, in seconds.
+ *
+ * `scheduleAmpAttack` opens with `setValueAtTime(0, when)` followed by a linear ramp to the
+ * peak, so the LAST such pair is the contour in force — a re-lay cancels and rewrites, and
+ * what matters is what the timeline ends up holding.
+ */
+function ampAttackSeconds(gain: FakeParam): number {
+  for (let i = gain.calls.length - 2; i >= 0; i -= 1) {
+    const open = gain.calls[i]!;
+    const ramp = gain.calls[i + 1]!;
+    if (open.method !== 'setValueAtTime' || open.args[0] !== 0) continue;
+    if (ramp.method !== 'linearRampToValueAtTime') continue;
+    return ramp.args[1]! - open.args[1]!;
+  }
+  throw new Error('no amp attack was scheduled');
+}
+
+/** How long the release ramp scheduled at `when` lasts, in seconds. */
+function ampReleaseSeconds(gain: FakeParam, when: number): number {
+  const ramps = gain.calls.filter((call) => call.method === 'linearRampToValueAtTime');
+  return ramps[ramps.length - 1]!.args[1]! - when;
 }
 
 /** The constant source feeding `param`, identified by what it is connected to rather than by order. */
@@ -329,5 +363,128 @@ describe('a §7.8 lane on a §6 sound-design parameter (spec §6, §7.8, issue #
     pool.destroy();
     expect(lanes.every((node) => node.stopped)).toBe(true);
     expect(liveNodeCount(fake)).toBe(0);
+  });
+});
+
+/**
+ * The two §7.8 amp-ENVELOPE leaves (spec §6, §7.8, issue #143).
+ *
+ * `program:<id>.pad:<idx>.amp.attack` and `...amp.release` were registered, offered by the
+ * §8.5.2 lane selector and named among §10.3's pad-mode defaults, and `programParamChange`
+ * mapped neither — so both were inert live and rendered as nothing.
+ *
+ * They cannot ride a `ConstantSourceNode` the way the other three do: an envelope TIME is
+ * consumed by JavaScript when a voice starts (spec §6), never sampled continuously by the
+ * graph. The pad holds the value instead, and **a voice's §6 amp envelope is the pad's
+ * envelope as of that voice's own note-on** — one rule, and the same rule live and in a §9.5
+ * render. A voice already sounding is never re-shaped; a voice whose note-on has not yet
+ * arrived is, because offline every voice of the render is built before any ramp.
+ */
+describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)', () => {
+  const FAST: AhdsrEnvelope = { attack: 1, hold: 0, decay: 0, sustain: 1, release: 120, curve: 'linear' };
+
+  it('reaches a voice struck AFTER the ramp, and leaves the sounding one alone', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'before', amp: FAST }));
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 0.5);
+    pool.trigger(spec(context, { id: 'after', when: 1, amp: FAST }));
+
+    const [first, second] = ampGainsOf(fake);
+    // The sounding voice keeps the attack it was built with: its attack has already run, and
+    // the §5.4 declick has already departed from the contour that laid it.
+    expect(ampAttackSeconds(first!)).toBeCloseTo(0.001, 9);
+    // The one the defect lost: built from the §6 payload's 1 ms a full automation window
+    // after the lane had already moved the pad to 200 ms.
+    expect(ampAttackSeconds(second!)).toBeCloseTo(0.2, 9);
+    pool.destroy();
+  });
+
+  it('re-shapes a voice whose note-on has not yet arrived, which is what a §9.5 render needs', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // Offline the whole render is built before any ramp is applied, so "the voices sounding
+    // now" is empty and a value merely remembered for the next voice renders as nothing.
+    pool.trigger(spec(context, { id: 'future', when: 5, amp: FAST }));
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 1);
+    expect(ampAttackSeconds(ampGainsOf(fake)[0]!)).toBeCloseTo(0.2, 9);
+    pool.destroy();
+  });
+
+  it('gives each voice the value the lane held at its OWN note-on', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'early', when: 1, amp: FAST }));
+    pool.trigger(spec(context, { id: 'late', when: 3, amp: FAST }));
+    // A §9.5 render applies its windows in time order, so each voice keeps the last value
+    // written at or before its own note-on.
+    pool.applyPadParam('p1:0', 'ampAttack', 100, 0);
+    pool.applyPadParam('p1:0', 'ampAttack', 300, 2);
+
+    const [early, late] = ampGainsOf(fake);
+    expect(ampAttackSeconds(early!)).toBeCloseTo(0.1, 9);
+    expect(ampAttackSeconds(late!)).toBeCloseTo(0.3, 9);
+    pool.destroy();
+  });
+
+  it('gives the release the voice releases with (spec §5.4 note-off)', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'before', amp: FAST }));
+    pool.applyPadParam('p1:0', 'ampRelease', 400, 0.5);
+    pool.trigger(spec(context, { id: 'after', when: 1, amp: FAST }));
+    pool.release('p1:0', 2);
+
+    const [first, second] = ampGainsOf(fake);
+    expect(ampReleaseSeconds(first!, 2)).toBeCloseTo(0.12, 9);
+    expect(ampReleaseSeconds(second!, 2)).toBeCloseTo(0.4, 9);
+    pool.destroy();
+  });
+
+  it('re-seeds from the §6 payload when the payload has MOVED, and not otherwise', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'first', amp: FAST }));
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 0.5);
+    // A §7.8 ramp does not write the store, so an unmoved payload never undoes it.
+    pool.trigger(spec(context, { id: 'unmoved', when: 1, amp: FAST }));
+    expect(ampAttackSeconds(ampGainsOf(fake)[1]!)).toBeCloseTo(0.2, 9);
+    // A §6 edit that never publishes reaches the pad through the next note that carries it.
+    pool.trigger(spec(context, { id: 'edited', when: 2, amp: { ...FAST, attack: 30 } }));
+    expect(ampAttackSeconds(ampGainsOf(fake)[2]!)).toBeCloseTo(0.03, 9);
+    pool.destroy();
+  });
+
+  it('moves nothing across a flat span of a lane', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'future', when: 5, amp: FAST }));
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 1);
+    const settled = ampGainsOf(fake)[0]!.calls.length;
+    // A lane writes every `SCHEDULER_INTERVAL_MS` for the whole span of a §9.5 render, so an
+    // unchanged value has to cost nothing rather than re-lay every future voice.
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 1.5);
+    expect(ampGainsOf(fake)[0]!.calls.length).toBe(settled);
+    pool.destroy();
+  });
+
+  it('reaches only the pad it addresses', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'other', when: 5, padKey: 'p1:1', amp: FAST }));
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 1);
+    expect(ampAttackSeconds(ampGainsOf(fake)[0]!)).toBeCloseTo(0.001, 9);
+    pool.destroy();
+  });
+
+  it('refuses a non-finite time rather than collapsing the contour', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'future', when: 5, amp: FAST }));
+    // `clamp` maps NaN to its MINIMUM, which for an envelope time is 0 ms — an instant attack
+    // rather than no change at all. A value nobody can interpret contributes nothing (§14 (ak)).
+    pool.applyPadParam('p1:0', 'ampAttack', Number.NaN, 1);
+    expect(ampAttackSeconds(ampGainsOf(fake)[0]!)).toBeCloseTo(0.001, 9);
+    pool.destroy();
   });
 });

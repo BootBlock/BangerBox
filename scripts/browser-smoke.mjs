@@ -1170,6 +1170,87 @@ async function assertShellAndSelfTest(page, label) {
     );
   });
 
+  // The other two §7.8 per-voice leaves: `amp.attack` and `amp.release`. Both were registered,
+  // offered by the §8.5.2 lane selector and named among §10.3's pad-mode defaults, and
+  // `programParamChange` mapped neither — so both were inert live and rendered as nothing.
+  //
+  // An envelope time is invisible to every reading the smoke made before it. A level cannot
+  // see it (the contour reaches the same plateau either way) and a length cannot (the region
+  // ends where the buffer runs out whatever shape got it there), which is exactly the
+  // blindness that let issue #144 survive twenty proofs. The reading here is a RISE TIME, on
+  // hits that play a CONSTANT sample so every rendered frame is the voice's own amp gain.
+  //
+  // It sits beside the pad-lane step above because it ends on the same fresh `loadProject`.
+  await step(`${label}: a §7.8 lane on a §6 amp-envelope time shapes the voice (#143)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.ampEnvelopeLaneProof());
+    const [flatFirst, flatLast] = r.unautomated;
+    const [sweptFirst, sweptLast] = r.attackSwept;
+    // A silent bounce would leave every rise time below meaningless, so it is asserted first.
+    if (!(flatLast.peak > 0.05 && sweptLast.peak > 0.05)) {
+      throw new Error(
+        `the bounces are silent (${flatLast.peak.toFixed(5)} and ${sweptLast.peak.toFixed(5)} peak on beat 4) — nothing sounded, so this proves nothing`,
+      );
+    }
+    // The baseline: with no lane, every hit of the bar rises at the pad's own 1 ms.
+    if (!(flatFirst.riseSeconds < 0.02 && flatLast.riseSeconds < 0.02)) {
+      throw new Error(
+        `the unautomated bar rose in ${flatFirst.riseSeconds.toFixed(4)} s and ${flatLast.riseSeconds.toFixed(4)} s — a 1 ms §6 attack is what the lane has to lengthen`,
+      );
+    }
+    // The whole of the render half of #143: against the unfixed build the swept bar and the
+    // unautomated one are the same file, because a lane on this address reached nothing.
+    if (!(sweptLast.riseSeconds > 0.2)) {
+      throw new Error(
+        `a lane sweeping ${r.attackPath} from 1 ms to 400 ms left beat 4 rising in ${sweptLast.riseSeconds.toFixed(4)} s against ${flatLast.riseSeconds.toFixed(4)} s unautomated — the lane rendered as nothing`,
+      );
+    }
+    // The other end of the same lane: it STARTS at the §6 value, so beat 1 must still be fast.
+    // Without this a fix that simply lengthened every attack of the bar would pass.
+    if (!(sweptFirst.riseSeconds < 0.02)) {
+      throw new Error(
+        `the swept bar rose in ${sweptFirst.riseSeconds.toFixed(4)} s on beat 1 — a lane from 1 ms is fast where it starts, not slow throughout`,
+      );
+    }
+    // The live half. Both writes were made with the transport STOPPED and no voice sounding,
+    // so the only way either can reach the pass that follows is a voice BUILT against it.
+    if (!(r.liveFastPeak > 0.05)) {
+      throw new Error(`the master bus was silent on the fast live pass (peak ${r.liveFastPeak.toFixed(5)})`);
+    }
+    const live = r.liveSlowPeak / r.liveFastPeak;
+    if (!(live < 0.5)) {
+      throw new Error(
+        `the live master peak read ${r.liveSlowPeak.toFixed(5)} after a §7.8 write set a 2 s attack against ${r.liveFastPeak.toFixed(5)} at 1 ms (×${live.toFixed(3)}) — a write made while nothing sounded reached no note of the pass that followed`,
+      );
+    }
+    // The release half, and the sounding-voice half of the rule, from the direct §11.2
+    // profile. No bounce can carry a release: nothing in the application issues a note-off.
+    const { sounding, struckAfter, laneAttackMs, laneReleaseMs } = r.voices;
+    if (!(sounding.plateau > 0 && struckAfter.plateau > 0)) {
+      throw new Error(
+        `the two profiled voices peaked at ${sounding.plateau.toFixed(5)} and ${struckAfter.plateau.toFixed(5)} — neither sounded`,
+      );
+    }
+    // A voice already SOUNDING keeps the envelope it was built with: its attack has run.
+    if (!(sounding.riseSeconds < 0.02 && sounding.fallSeconds < 0.1)) {
+      throw new Error(
+        `the sounding voice rose in ${sounding.riseSeconds.toFixed(4)} s and fell in ${sounding.fallSeconds.toFixed(4)} s — a lane arriving mid-note must not re-shape it`,
+      );
+    }
+    if (!(struckAfter.riseSeconds > 0.2)) {
+      throw new Error(
+        `the voice struck after the lane rose in ${struckAfter.riseSeconds.toFixed(4)} s against the ${laneAttackMs} ms the lane wrote — amp.attack reached no voice`,
+      );
+    }
+    if (!(struckAfter.fallSeconds > 0.3)) {
+      throw new Error(
+        `the voice struck after the lane fell in ${struckAfter.fallSeconds.toFixed(4)} s against the ${laneReleaseMs} ms the lane wrote — amp.release reached no voice`,
+      );
+    }
+    console.log(
+      `       amp envelope lane: bounce beat 4 rose in ${flatLast.riseSeconds.toFixed(4)} s unautomated → ${sweptLast.riseSeconds.toFixed(4)} s swept, beat 1 of the same bar ${sweptFirst.riseSeconds.toFixed(4)} s; live peak ${r.liveFastPeak.toFixed(5)} fast → ${r.liveSlowPeak.toFixed(5)} slow (×${live.toFixed(3)}); profiled voices rose ${sounding.riseSeconds.toFixed(4)} s / ${struckAfter.riseSeconds.toFixed(4)} s and fell ${sounding.fallSeconds.toFixed(4)} s / ${struckAfter.fallSeconds.toFixed(4)} s`,
+    );
+  });
+
   // §7.9 makes song mode the way to play several sequences in order, which only means
   // something if sequence mode plays ONE. The unit tests drive the core with an injected
   // clock; the wire is what they cannot reach, and the defect lived on both sides of it —
