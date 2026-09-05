@@ -157,16 +157,20 @@ describe('mixer graph topology (spec §5.2)', () => {
     const { context } = createFakeAudioContext();
     const graph = new MixerGraph(context);
     const track = graph.ensureTrackChannel('t1');
-    const pad = graph.ensurePadChannel('pad:prog1:0', 't1', track.input);
+    const pad = graph.ensurePadChannel('pad:prog1:0', 't1', track.channel.input);
+    expect(track.created).toBe(true);
     expect(pad.created).toBe(true);
-    expect(graph.channelsFor('track:t1')).toEqual([track]);
+    expect(graph.channelsFor('track:t1')).toEqual([track.channel]);
     expect(graph.channelsFor('pad:prog1:0')).toEqual([pad.channel]);
     expect(graph.channelsFor('master')).toEqual([graph.master]);
     expect(graph.channelsFor('return:2')).toEqual([graph.returns[2]]);
     expect(graph.channelsFor('track:nothing')).toEqual([]);
-    // ensure* is idempotent, and only the first call reports having built anything.
-    expect(graph.ensureTrackChannel('t1')).toBe(track);
-    const again = graph.ensurePadChannel('pad:prog1:0', 't1', track.input);
+    // ensure* is idempotent, and only the first call reports having built anything — which
+    // is what tells a caller to seed the channel from its §4.2 strip exactly once.
+    const trackAgain = graph.ensureTrackChannel('t1');
+    expect(trackAgain.channel).toBe(track.channel);
+    expect(trackAgain.created).toBe(false);
+    const again = graph.ensurePadChannel('pad:prog1:0', 't1', track.channel.input);
     expect(again.channel).toBe(pad.channel);
     expect(again.created).toBe(false);
     graph.destroy();
@@ -175,7 +179,7 @@ describe('mixer graph topology (spec §5.2)', () => {
   it('tears the whole graph down leaving no connected nodes (spec §3.2)', () => {
     const { context, fake } = createFakeAudioContext();
     const graph = new MixerGraph(context);
-    const track = graph.ensureTrackChannel('t1');
+    const track = graph.ensureTrackChannel('t1').channel;
     graph.ensurePadChannel('pad:prog1:0', 't1', track.input);
     graph.destroy();
     expect(liveNodeCount(fake)).toBe(0);
@@ -193,8 +197,8 @@ describe('mixer graph topology (spec §5.2)', () => {
     it('gives each track its own realisation of the pad channel, into its own input', () => {
       const { context } = createFakeAudioContext();
       const graph = new MixerGraph(context);
-      const trackA = graph.ensureTrackChannel('a');
-      const trackB = graph.ensureTrackChannel('b');
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
       const padA = graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input);
       const padB = graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input);
 
@@ -215,8 +219,8 @@ describe('mixer graph topology (spec §5.2)', () => {
     it('resolves the §4.2 id to every realisation, so one strip write reaches them all', () => {
       const { context } = createFakeAudioContext();
       const graph = new MixerGraph(context);
-      const trackA = graph.ensureTrackChannel('a');
-      const trackB = graph.ensureTrackChannel('b');
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
       const padA = graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input).channel;
       const padB = graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input).channel;
 
@@ -231,8 +235,8 @@ describe('mixer graph topology (spec §5.2)', () => {
     it('sends the tempo fan-out to every realisation (spec §7.2)', () => {
       const { context } = createFakeAudioContext();
       const graph = new MixerGraph(context);
-      const trackA = graph.ensureTrackChannel('a');
-      const trackB = graph.ensureTrackChannel('b');
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
       graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input);
       graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input);
       // Master, four returns, two tracks and BOTH pad realisations.
@@ -243,8 +247,8 @@ describe('mixer graph topology (spec §5.2)', () => {
     it('takes a deleted track’s pad realisation with it and leaves the other sounding', () => {
       const { context, fake } = createFakeAudioContext();
       const graph = new MixerGraph(context);
-      const trackA = graph.ensureTrackChannel('a');
-      const trackB = graph.ensureTrackChannel('b');
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
       graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input);
       const padB = graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input).channel;
       const before = liveNodeCount(fake);
@@ -264,8 +268,8 @@ describe('mixer graph topology (spec §5.2)', () => {
     it('destroys every realisation when the §4.2 strip itself leaves (spec §5.3)', () => {
       const { context, fake } = createFakeAudioContext();
       const graph = new MixerGraph(context);
-      const trackA = graph.ensureTrackChannel('a');
-      const trackB = graph.ensureTrackChannel('b');
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
       graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input);
       graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input);
 
@@ -281,8 +285,8 @@ describe('mixer graph topology (spec §5.2)', () => {
     it('tears down both realisations on a full teardown (spec §3.2)', () => {
       const { context, fake } = createFakeAudioContext();
       const graph = new MixerGraph(context);
-      const trackA = graph.ensureTrackChannel('a');
-      const trackB = graph.ensureTrackChannel('b');
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
       graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input).channel.setLevel(0.5, 0);
       graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input).channel.setPan(0.3, 0);
       graph.destroy();
@@ -294,7 +298,7 @@ describe('mixer graph topology (spec §5.2)', () => {
   it('leaves no param holding automation after teardown (spec §3.2)', () => {
     const { context, fake } = createFakeAudioContext();
     const graph = new MixerGraph(context);
-    const track = graph.ensureTrackChannel('t1');
+    const track = graph.ensureTrackChannel('t1').channel;
     const pad = graph.ensurePadChannel('pad:prog1:0', 't1', track.input).channel;
     pad.setLevel(0.5, 0);
     pad.setPan(0.3, 0);

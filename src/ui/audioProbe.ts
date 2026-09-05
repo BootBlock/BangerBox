@@ -290,14 +290,14 @@ export interface SharedPadChannelResult {
   readonly padFaderRms: number;
   /**
    * §5.8 master peak on the FIRST live pass, with an 80 Hz lowpass already in the pad strip's
-   * insert rack. Both realisations are built by that pass, so this reads what a freshly built
-   * one carries: near zero when it was seeded from the §4.2 strip, the open tone when not.
+   * insert rack and the second track's fader already at 0 — both set before either channel
+   * existed. Near zero when a freshly built channel is seeded from its §4.2 strip.
    */
-  readonly livePeakPadFiltered: number;
-  /** §5.8 master peak with the transport rolling, that insert bypassed, and both faders at unity. */
-  readonly livePeakBoth: number;
-  /** The same peak with the second track's fader closed mid-transport. */
+  readonly livePeakSeeded: number;
+  /** The same pass with that insert bypassed; the second track's fader is still at 0. */
   readonly livePeakSecondClosed: number;
+  /** The same pass with the second track's fader opened to unity — two voices, not one. */
+  readonly livePeakBoth: number;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -3249,7 +3249,10 @@ async function insertLimitProof(engine: AudioEngine): Promise<InsertLimitResult>
  * the fix would trade one silent strip for another.
  *
  * The live half is measured too, because `bounceService` and `AudioEngine` build the graph
- * through the same factories but on their own paths.
+ * through the same factories but on their own paths. It also measures the OTHER thing a
+ * lazily built channel needs: every track and pad channel is created on its first note, long
+ * after the one `resyncAll` that `startAudioEngine` runs, so both a track's saved fader and a
+ * pad's insert rack reach it only through `AudioBridge.seedChannel`.
  *
  * The probe owns its arrangement as real §9.3 ROWS and creates them rather than borrowing the
  * project's, then deletes them and reloads: `installAudioProbe` runs in production builds.
@@ -3392,11 +3395,17 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
   // factories, but by their own routes, so the §5.8 master tap is read as well as the file.
   //
   // Nothing has played live yet — every bounce above built its own offline graph — so the
-  // engine holds no realisation of this pad. An 80 Hz lowpass goes into the strip's insert
-  // rack FIRST, two octaves below the tone, so the realisations the next pass builds are
-  // built after the edit. §6 carries a pad's inserts but `ResolvedVoice` does not, so the
-  // payload seed cannot supply them: only `AudioBridge.seedChannel` can, and this is what
-  // says it ran. The bounces above are taken before it, on a clean rack.
+  // engine holds no channel for either track and no realisation of this pad. TWO edits go in
+  // before the first note, and the pass that follows measures both seeds in turn:
+  //
+  //   - an 80 Hz lowpass in the PAD strip's insert rack, two octaves below the tone. §6
+  //     carries a pad's inserts but `ResolvedVoice` does not, so the payload seed cannot
+  //     supply them — only `AudioBridge.seedChannel` can.
+  //   - the second TRACK's fader at 0. `startAudioEngine` ran its one `resyncAll` before any
+  //     track channel existed and `mixerSync` pushes only what CHANGED, so without the same
+  //     seed the channel arrives at unity and the fader is inert until it is moved again.
+  //
+  // The bounces above are taken before both, on a clean rack and unity faders.
   const mixer = () => useMixerStore.getState();
   const addedFilter = mixer().addInsert(padChannel, 'filter');
   // `addInsert` fills the §1.3.1 rack's first FREE slot, which is not `inserts.at(-1)`.
@@ -3410,6 +3419,7 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
   }
   // §7.8 numbers a slot 1-based over the §4.2 array (spec §7.8, §14 (ar)).
   mixer().commit(insertParamPath(padChannel, filterIndex + 1, 'cutoff'), 80);
+  setFader(`track:${secondTrackId}`, 0);
 
   const peakOver = async (ms: number): Promise<number> => {
     const slot = engine.meterRegistry.slotOf('master');
@@ -3427,18 +3437,19 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
 
   transport().play();
   await delay(300); // past the first beat, so the meter is reading programme material
-  const livePeakPadFiltered = await peakOver(1_400);
+  const livePeakSeeded = await peakOver(1_400);
   // Bypassed rather than removed: `removeInsert` still shrinks the rack (issue #142), and
   // this proof has no business depending on that. §5.7's bypass is true bypass via routing.
   mixer().setInsertEnabled(padChannel, filterSlotId, false);
   await delay(300);
-  const livePeakBoth = await peakOver(1_400);
-  setFader(`track:${secondTrackId}`, 0);
-  await delay(300);
   const livePeakSecondClosed = await peakOver(1_400);
+  // The second track's fader, opened for the first time — its channel was built with the 0
+  // it was loaded with, so this is the reading that says the seed took.
+  setFader(`track:${secondTrackId}`, 1);
+  await delay(300);
+  const livePeakBoth = await peakOver(1_400);
   transport().stop();
   await delay(200);
-  setFader(`track:${secondTrackId}`, 1);
 
   // How many channels the live graph holds under the one §4.2 id — one per track that played
   // the program, which is the structural half of the same statement.
@@ -3460,9 +3471,9 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
     secondFaderClosedRms,
     firstFaderClosedRms,
     padFaderRms,
-    livePeakPadFiltered,
-    livePeakBoth,
+    livePeakSeeded,
     livePeakSecondClosed,
+    livePeakBoth,
   };
 }
 

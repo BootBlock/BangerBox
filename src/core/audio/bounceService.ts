@@ -150,7 +150,7 @@ async function renderSegments(
    * every channel it needs before that one pass.
    */
   const padChannelFor = (trackId: string, resolved: ResolvedVoice): ChannelHandle => {
-    const track = graph.ensureTrackChannel(trackId);
+    const track = graph.ensureTrackChannel(trackId).channel;
     const { channel: pad, created } = graph.ensurePadChannel(resolved.channelId, trackId, track.input);
     if (created) {
       pad.setLevel(resolved.mixer.level, 0, false);

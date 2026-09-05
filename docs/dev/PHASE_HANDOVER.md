@@ -6,7 +6,7 @@ MUST reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the shared-pad-channel work merged to `main` (`--no-ff`). All eight §12 phases were
 already complete; this was a defect closure against §4.2/§5.2/§5.3/§8.5.6, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1963 unit tests**, `test:e2e`
+`package.json` `config.phase` remains **"8"**. Suite: **1965 unit tests**, `test:e2e`
 real-browser smoke (dev + offline, **78/78 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
 
@@ -26,10 +26,18 @@ one to trigger it. The Pads tab still shows one strip per assigned pad of the ac
 because there is still exactly one set of values per pad — a selector would assert per-track pad
 values that §6 has nowhere to store.
 
-**A pad realisation built mid-session is SEEDED, through `AudioBridge.seedChannel`.** The §6
-payload first, then the §4.2 store where it has a strip — the §14 (ar) order. `ResolvedVoice`
-carries a pad's `mixer` but not its `inserts`, so that call is the only way an insert rack reaches
-a channel built after the edit that put it there.
+**EVERY lazily built channel is SEEDED, through `AudioBridge.seedChannel`.** A track channel is
+built on the track's first note and a pad realisation on the first hit that needs it — both long
+after `startAudioEngine`'s single `resyncAll`, and `mixerSync` pushes only what CHANGED. Without
+it a project loaded with a track fader at 0.3 played that track at unity until the user moved it,
+and `ResolvedVoice` carries a pad's `mixer` but not its `inserts`, so it is also the only way an
+insert rack reaches a channel built after the edit that put it there.
+
+**The insert chain is wired on a MICROTASK, and that is a §11.5 requirement.** `seedChannel` runs
+on §7.6's audition path (`triggerLiveNote` → `soundResolvedVoice` → the pool, `when` = now), and
+`createInsert('reverb')` synthesises its impulse response on the main thread. Building it before
+`voicePool.trigger` would spend the whole 30 ms touch-to-sound budget on the first hit of a pad
+that carries one.
 
 **A channel holds `globalInsertLimit` insert slots (clamped to 1–8 as the settings enter the
 store), and no effect may occupy a position past them.** §1.3.1 gives every channel 4, "configurable 1–8", and `addInsert` appended without
@@ -775,9 +783,20 @@ transient channel still stand. New this work:
   the store has one, then the §5.2 effective mute, which is derived from the whole mixer and so
   is written even where the strip is absent. It is per-channel rather than a narrowed
   `resyncAll` because `applyInserts` destroys and rebuilds a chain, and rebuilding one that is
-  already sounding would glitch it.
-- **`applyStrip` is the one write of a §4.2 strip onto a channel**, shared by `resyncAll` and
-  `seedChannel`. A new §4.2 field goes there once.
+  already sounding would glitch it. **Every lazily built channel goes through it** — a track's
+  on its first note, a pad realisation's on the first hit that needs it — because
+  `startAudioEngine`'s one `resyncAll` runs before either exists and `mixerSync` pushes only
+  what changed.
+- **It wires the insert chain on a MICROTASK, and that is not an optimisation.** It runs on
+  §7.6's audition path with `when` = now, and `createInsert('reverb')` synthesises an impulse
+  response on the main thread — §11.5's 30 ms touch-to-sound budget is what forbids doing that
+  before `voicePool.trigger`. The microtask re-asks the graph whether it still holds the
+  channel, because a program change or a track delete may have destroyed it in between.
+- **`applyStripParams` is the one write of a §4.2 strip's continuous params onto a channel**,
+  shared by `resyncAll` and `seedChannel`; `applyInserts` is the separate half, because only
+  one of the two callers defers it. A new §4.2 continuous field goes in `applyStripParams` once.
+- **`AudioEngine.trackChannel(trackId)` is the one place a track group is fetched**, and it is
+  what seeds a new one. Reaching `graph.ensureTrackChannel` directly from the engine skips that.
 - **`removeTrackChannel(trackId)` destroys the track's own pad realisations first.** A new thing
   the graph hangs off a track goes there too, or it outlives the input it is connected to.
 
@@ -1514,10 +1533,20 @@ added to the `check:orphans` allowlist.
 - **`seedChannel`'s call from `AudioEngine` is proven by the browser step's lowpass reading.**
   There is no call from a §9.5 render, because a render creates every channel before its one
   `resyncAll` pass.
-- **Every regression test was proven against the code it was written to catch**, by four
+- **A lazily built TRACK channel had never been seeded either.** The review's first finding,
+  pre-existing and no part of #141, closed with the same mechanism one line away: measured at
+  a live master peak of **0.13589** against **0.27213** at unity (×0.499) with a fader set
+  before the channel existed, where the unseeded build read **0.27618** against **0.27960**
+  (×0.988).
+- **The very first hit of a pad whose rack was edited before its realisation existed can pass a
+  few milliseconds of DRY signal**, because the microtask that wires the chain is itself what
+  costs. Deliberate: the alternative is a main-thread stall on §7.6's audition path.
+- **Every regression test was proven against the code it was written to catch**, by six
   mutations: `ensurePadChannel` keying by the channel id alone — the defect as filed (4
   failures); the bridge writing to `channelsFor(id)[0]` (2); `seedChannel` applying no strip
-  (1); and `removeTrackChannel` leaving the track's pad realisations (1).
+  (1); `removeTrackChannel` leaving the track's pad realisations (1); `seedChannel` applying
+  its chain synchronously (2); and `trackChannel` seeding nothing, which has no unit test and
+  is browser-only.
 - **The defect was measured in the browser too**, by the first of those mutations: 1 realisation,
   `secondFaderClosedRms` **0.061621618782488896** against a `bothTracksRms` of
   **0.061621618782488896** — identical to every digit — `firstFaderClosedRms` **0**, and a live
@@ -1527,9 +1556,10 @@ added to the `check:orphans` allowlist.
   console errors. Both tracks hit one pad on the same four beats of a bar; the bounce read
   **0.06162 RMS** with both faders at unity, **0.03081** (×0.5000) with the second closed and
   **0.03081** (×0.5000) with the first; the pad strip at 0.8 rendered ×0.2512; the live §5.8
-  master peak went **0.28322 → 0.14218** (×0.502) on the second fader, the pad's own 80 Hz
-  lowpass held that peak at **0.00355** (×0.013), and the graph held **2** channels under the
-  one pad id.
+  master peak read **0.13589** with the second track's fader at 0 against **0.27213** at unity
+  (×0.499), the pad's own 80 Hz lowpass held that peak at **0.00276** (×0.020), and the graph
+  held **2** channels under the one pad id. Both live edits were made BEFORE either channel
+  existed, so that pass measures the seeding as well as the routing.
 
 **#135 was CLOSED by the previous work.** One new issue was filed while closing it — `removeInsert`
 drops a slot from the array rather than emptying it, shifting every §7.8 address behind it
@@ -1970,6 +2000,6 @@ remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1963**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**1965**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **78/78 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.

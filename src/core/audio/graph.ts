@@ -27,14 +27,15 @@ import {
 /** Number of global send/return channels (spec §1.3.1). */
 const RETURN_COUNT = 4;
 
-/** A pad channel and whether this call is what built it (spec §5.2, §6). */
-export interface PadChannelResult {
+/** A channel the graph holds, and whether this call is what built it (spec §5.2, §5.3). */
+export interface EnsuredChannel {
   readonly channel: ChannelHandle;
   /**
-   * True only for the call that created the instance, so the caller seeds it exactly once.
+   * True only for the call that created the channel, so the caller seeds it exactly once.
    * The graph reports it rather than the caller remembering: a caller's own "already seeded"
-   * set outlives {@link MixerGraph.removePadChannel}, and a rebuilt channel would then keep
-   * the §4.2 defaults `createChannelStrip` gives it.
+   * set outlives {@link MixerGraph.removePadChannel} and
+   * {@link MixerGraph.removeTrackChannel}, and a rebuilt channel would then keep the §4.2
+   * defaults `createChannelStrip` gives it.
    */
   readonly created: boolean;
 }
@@ -65,16 +66,24 @@ export class MixerGraph {
     this.monitorBus.connect(context.destination); // parallel to master (spec §5.9)
   }
 
-  /** The track channel for `trackId`, created and wired to master + returns if absent. */
-  ensureTrackChannel(trackId: string): ChannelHandle {
+  /**
+   * The track channel for `trackId` (spec §5.2 stages 5–7), created and wired to master +
+   * returns if absent.
+   *
+   * A track channel is built lazily, on the track's first note — long after the one
+   * `resyncAll` that `startAudioEngine` runs, and `mixerSync` only pushes what CHANGED. So
+   * `created` matters here for the same reason it does for a pad: nothing else will ever
+   * put the §4.2 strip the project was loaded with onto this channel.
+   */
+  ensureTrackChannel(trackId: string): EnsuredChannel {
     const channelId = `track:${trackId}`;
     const existing = this.tracks.get(channelId);
-    if (existing) return existing;
+    if (existing) return { channel: existing, created: false };
     const channel = createTrackChannel(this.context, trackId); // id = `track:<trackId>`
     channel.output.connect(this.master.input);
     this.wireSends(channel);
     this.tracks.set(channelId, channel);
-    return channel;
+    return { channel, created: true };
   }
 
   /**
@@ -85,7 +94,7 @@ export class MixerGraph {
    * other half of the key: a second track playing the same program gets its OWN instance
    * here, and the two never share a node (issue #141).
    */
-  ensurePadChannel(channelId: string, trackId: string, trackInput: AudioNode): PadChannelResult {
+  ensurePadChannel(channelId: string, trackId: string, trackInput: AudioNode): EnsuredChannel {
     let byTrack = this.pads.get(channelId);
     if (byTrack === undefined) {
       byTrack = new Map<string, ChannelHandle>();

@@ -47,29 +47,36 @@ export type AudioBridge = SyncBridge & {
   /**
    * Apply the §4.2 strip and the §5.2 effective mute to ONE freshly built channel.
    *
-   * A pad channel is realised per track (issue #141), so a second track playing the same
-   * program builds its instance mid-session — after `resyncAll` has run and after any edit
-   * the strip has had. Seeding just that instance is what {@link AudioBridge.resyncAll}
-   * cannot do: rebuilding the insert chain of a realisation that is already sounding would
-   * glitch it. Does nothing where the store holds no strip for the id, which is every pad of
-   * a program that is not the active one — there the §6 payload is the only value there is.
+   * Every track and pad channel is built LAZILY, on its first note — long after the single
+   * `resyncAll` that `startAudioEngine` runs, and `mixerSync` only pushes what CHANGED. So
+   * without this a track loaded with its fader at 0.3 plays at unity until the user moves
+   * it, and a pad realised for a second track (issue #141) arrives at the §4.2 defaults
+   * `createChannelStrip` gives it. Seeding ONE channel is what
+   * {@link AudioBridge.resyncAll} cannot do: it writes by id, and rebuilding the insert
+   * chain of a realisation that is already sounding would glitch it.
+   *
+   * Does nothing where the store holds no strip for the id — every pad of a program that is
+   * not the active one, where the §6 payload is the only value there is — beyond the §5.2
+   * mute, which is derived from the whole mixer and applies regardless.
+   *
+   * **The insert chain is wired on a MICROTASK, and that is not an optimisation.** This runs
+   * on §7.6's audition path (`triggerLiveNote` → `soundResolvedVoice` → the pool, with
+   * `when` = now), and `createInsert('reverb')` synthesises its impulse response on the main
+   * thread — up to ten seconds of stereo audio. Building it before `voicePool.trigger` would
+   * spend §11.5's whole 30 ms touch-to-sound budget on the first hit of a pad that carries
+   * one. The voice's own start time is fixed before the chain is built, so the note sounds
+   * on time and the chain is wired within the same turn.
    */
   seedChannel: (channel: ChannelHandle) => void;
   /** Apply a scheduled automation ramp to a registered target (spec §7.8). */
   applyAutomation: (targetPath: string, value: number, when: number, rampEnd: number) => void;
 };
 
-/** Write one §4.2 strip onto one graph channel, without the §4.3 dezipper (spec §4.3). */
-function applyStrip(
-  context: BaseAudioContext,
-  channel: ChannelHandle,
-  strip: ChannelStrip,
-  now: number,
-): void {
+/** Write a §4.2 strip's continuous params onto one channel, no §4.3 dezipper (spec §4.3). */
+function applyStripParams(channel: ChannelHandle, strip: ChannelStrip, now: number): void {
   channel.setLevel(strip.level, now, false);
   channel.setPan(strip.pan, now, false);
   strip.sendLevels.forEach((level, i) => channel.setSendGain(i, level, now, false));
-  applyInserts(context, channel, strip.inserts);
 }
 
 function applyInserts(
@@ -223,7 +230,10 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
         if (!includeChannel(id)) continue;
         // Track/pad channels are built lazily on first use, and a pad has one realisation
         // per track playing its program (issue #141) — so this is 0..N, never exactly 1.
-        for (const channel of graph.channelsFor(id)) applyStrip(context, channel, strip, now);
+        for (const channel of graph.channelsFor(id)) {
+          applyStripParams(channel, strip, now);
+          applyInserts(context, channel, strip.inserts);
+        }
       }
       applyEffectiveMutes(includeChannel);
     },
@@ -231,12 +241,20 @@ export function createAudioBridge({ graph, context, voicePool = () => null }: Br
     seedChannel: (channel) => {
       const now = context.currentTime;
       const strip = useMixerStore.getState().channels[channel.id];
-      if (strip !== undefined) applyStrip(context, channel, strip, now);
+      if (strip !== undefined) applyStripParams(channel, strip, now);
       // The §5.2 mute is derived from the WHOLE mixer, so it is read even where the strip
-      // itself is absent: a soloed track elsewhere silences this realisation from its first
+      // itself is absent: a soloed track elsewhere silences this channel from its first
       // note rather than from the next mute edit.
       const muted = computeEffectiveMutes(useMixerStore.getState().channels)[channel.id] ?? false;
       channel.setMuted(muted, now);
+      if (strip === undefined || strip.inserts.every((slot) => slot.effectType === null)) return;
+      queueMicrotask(() => {
+        // The channel may have gone in the meantime — a program change or a track delete
+        // destroys it (spec §5.3) — and writing a chain onto a destroyed handle would leave
+        // the orphaned nodes §3.2 forbids. The graph is what knows.
+        if (!graph.channelsFor(channel.id).includes(channel)) return;
+        applyInserts(context, channel, strip.inserts);
+      });
     },
   };
 

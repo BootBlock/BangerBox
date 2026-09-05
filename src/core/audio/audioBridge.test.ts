@@ -111,8 +111,9 @@ describe('audio bridge (spec §4.3, §5.2)', () => {
     expect(padOnB.calls).toEqual([['setMuted', true, context.currentTime]]);
   });
 
-  // A realisation built after the strip was edited — the second track's first hit — is seeded
-  // from the store, not left at the §4.2 defaults `createChannelStrip` gives it (issue #141).
+  // A channel built after its strip was edited — a track's first note, or a pad realised for
+  // a second track (issue #141) — is seeded from the store, not left at the §4.2 defaults
+  // `createChannelStrip` gives it.
   it('seeds one freshly built channel from its strip and the §5.2 mutes', () => {
     const fresh = recordingChannel('pad:prog1:0');
     const { context } = createFakeAudioContext();
@@ -133,10 +134,62 @@ describe('audio bridge (spec §4.3, §5.2)', () => {
       ['setSendGain', 1, 0, context.currentTime, false],
       ['setSendGain', 2, 0, context.currentTime, false],
       ['setSendGain', 3, 0, context.currentTime, false],
-      ['setInserts', [false, false, false, false]],
-      // Another pad is soloed, so this realisation is silent from its very first note.
+      // Another pad is soloed, so this channel is silent from its very first note.
       ['setMuted', true, context.currentTime],
     ]);
+    // An empty §1.3.1 rack needs no chain, so nothing is deferred for it either.
+    expect(fresh.calls.some(([method]) => method === 'setInserts')).toBe(false);
+  });
+
+  // The chain is wired on a MICROTASK: `seedChannel` runs on §7.6's audition path, where
+  // `createInsert('reverb')` synthesises an impulse response on the main thread. Building it
+  // before `voicePool.trigger` would spend §11.5's touch-to-sound budget on the first hit.
+  it('defers a freshly built channel’s insert chain off the trigger path (spec §11.5)', async () => {
+    const fresh = recordingChannel('pad:prog1:0');
+    const { context } = createFakeAudioContext();
+    const graph = fakeGraph({ 'pad:prog1:0': fresh });
+    const bridge = createAudioBridge({ graph, context });
+    useMixerStore.setState({
+      channels: {
+        'pad:prog1:0': {
+          ...createDefaultChannelStrip('pad:prog1:0'),
+          inserts: [
+            { id: 'slot-1', effectType: 'filter', enabled: true, params: {} },
+            ...createDefaultChannelStrip('pad:prog1:0').inserts.slice(1),
+          ],
+        },
+      },
+    });
+
+    bridge.seedChannel(fresh.handle);
+    expect(fresh.calls.some(([method]) => method === 'setInserts')).toBe(false);
+
+    await Promise.resolve();
+    expect(fresh.calls.at(-1)).toEqual(['setInserts', [true, false, false, false]]);
+  });
+
+  it('drops the deferred chain when the channel has gone (spec §3.2, §5.3)', async () => {
+    const doomed = recordingChannel('pad:prog1:0');
+    const { context } = createFakeAudioContext();
+    // The graph no longer holds this handle — a program change or a track delete destroyed
+    // it between the seed and the microtask.
+    const bridge = createAudioBridge({ graph: fakeGraph({}), context });
+    useMixerStore.setState({
+      channels: {
+        'pad:prog1:0': {
+          ...createDefaultChannelStrip('pad:prog1:0'),
+          inserts: [
+            { id: 'slot-1', effectType: 'filter', enabled: true, params: {} },
+            ...createDefaultChannelStrip('pad:prog1:0').inserts.slice(1),
+          ],
+        },
+      },
+    });
+
+    bridge.seedChannel(doomed.handle);
+    await Promise.resolve();
+
+    expect(doomed.calls.some(([method]) => method === 'setInserts')).toBe(false);
   });
 
   it('seeds a channel with no strip from the §5.2 mutes alone (spec §6)', () => {

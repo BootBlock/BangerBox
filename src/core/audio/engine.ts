@@ -129,7 +129,7 @@ export class AudioEngine {
     const projectId = useProjectStore.getState().projectId || DEMO_PROGRAM_ID;
     const path = await ensureDemoSampleInOpfs(projectId);
     const buffer = await this.sampleCache.get(path);
-    const track = this.graph.ensureTrackChannel(DEMO_TRACK_ID);
+    const track = this.trackChannel(DEMO_TRACK_ID);
     const pad = this.graph.ensurePadChannel(DEMO_PAD_CHANNEL, DEMO_TRACK_ID, track.input).channel;
     this.voicePool.trigger({
       id: crypto.randomUUID(),
@@ -391,6 +391,21 @@ export class AudioEngine {
   }
 
   /**
+   * The §5.2 track group for `trackId`, seeded from its §4.2 strip on the call that BUILDS it.
+   *
+   * A track channel is built lazily, on the track's first note. `startAudioEngine` runs its
+   * one `resyncAll` before any of them exist and `mixerSync` only pushes what changed, so
+   * without this a project loaded with a track fader at 0.3, a pan, an open send, an insert
+   * rack or `mute: true` plays that track at unity, centred, dry and unmuted until the user
+   * touches the control.
+   */
+  private trackChannel(trackId: string): ChannelHandle {
+    const { channel, created } = this.graph.ensureTrackChannel(trackId);
+    if (created) this.bridge.seedChannel(channel);
+    return channel;
+  }
+
+  /**
    * This track's realisation of the pad channel for a resolved voice, created under the
    * track group (spec §5.2 stage 5) and seeded once, in the §14 (ar) order: the §6 payload
    * first, then the §4.2 strip where the store has one.
@@ -402,7 +417,7 @@ export class AudioEngine {
    * outlive `removePadChannel` and leave a rebuilt channel unseeded.
    */
   private ensureProgramChannel(trackId: string, resolved: ResolvedVoice): ChannelHandle {
-    const track = this.graph.ensureTrackChannel(trackId);
+    const track = this.trackChannel(trackId);
     const { channel: pad, created } = this.graph.ensurePadChannel(resolved.channelId, trackId, track.input);
     if (created) {
       const now = this.context.currentTime;
@@ -428,7 +443,7 @@ export class AudioEngine {
     // nothing, which is what "the track stopped" has to mean.
     if (useSequenceStore.getState().tracks[event.trackId] === undefined) return;
     this.scheduledNotes++;
-    const track = this.graph.ensureTrackChannel(event.trackId);
+    const track = this.trackChannel(event.trackId);
     const pad = this.graph.ensurePadChannel(
       `pad:${event.trackId}:${event.note}`,
       event.trackId,

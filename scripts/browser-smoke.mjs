@@ -942,32 +942,36 @@ async function assertShellAndSelfTest(page, label) {
         `the pad strip at 0.8 rendered ×${padRatio.toFixed(4)} of the unedited bounce — a −12 dB pad fader is 0.2512 on every realisation of it`,
       );
     }
-    // The live path, through `AudioEngine` rather than `bounceService`. A meter reading is
-    // looser than an offline render, so the bound only has to separate "halved" from the
-    // ×1.0 the defect gives.
+    // The live path, through `AudioEngine` rather than `bounceService`, and the one place a
+    // LAZILY built channel is measured: every track and pad channel is created on its first
+    // note, long after `startAudioEngine`'s single `resyncAll`. Both edits below were made
+    // before either channel existed.
     if (!(r.livePeakBoth > 0.05)) {
       throw new Error(
         `the master bus was silent with both tracks playing (peak ${r.livePeakBoth.toFixed(5)})`,
       );
     }
-    // A realisation built mid-session is seeded from the §4.2 strip. §6 carries a pad's
-    // inserts but `ResolvedVoice` does not, so an 80 Hz lowpass sitting in the rack before
-    // the first note can only reach a fresh realisation through `AudioBridge.seedChannel` —
-    // two octaves below the tone, so an unseeded one is the open peak rather than a quiet one.
-    const seededRatio = r.livePeakPadFiltered / r.livePeakBoth;
-    if (!(seededRatio < 0.2)) {
-      throw new Error(
-        `the pad's own 80 Hz lowpass left the master peak at ${r.livePeakPadFiltered.toFixed(5)} against ${r.livePeakBoth.toFixed(5)} bypassed (×${seededRatio.toFixed(3)}) — a realisation built after the edit was not seeded from its §4.2 strip`,
-      );
-    }
+    // The second track's channel was built with the fader it was LOADED with, at 0. A meter
+    // reading is looser than an offline render, so the bound only has to separate "halved"
+    // from the ×1.0 an unseeded channel — or a shared pad channel — gives.
     const liveRatio = r.livePeakSecondClosed / r.livePeakBoth;
     if (!(liveRatio > 0.25 && liveRatio < 0.75)) {
       throw new Error(
-        `the live master peak went ${r.livePeakBoth.toFixed(5)} → ${r.livePeakSecondClosed.toFixed(5)} (×${liveRatio.toFixed(3)}) when the second track's fader closed — two unison voices becoming one is about half`,
+        `the live master peak read ${r.livePeakSecondClosed.toFixed(5)} with the second track's fader at 0 against ${r.livePeakBoth.toFixed(5)} at unity (×${liveRatio.toFixed(3)}) — two unison voices becoming one is about half, and ×1.0 means the fader reached neither the channel it was built with nor its own track`,
+      );
+    }
+    // §6 carries a pad's inserts but `ResolvedVoice` does not, so an 80 Hz lowpass sitting in
+    // the rack before the first note can only reach a fresh realisation through
+    // `AudioBridge.seedChannel` — two octaves below the tone, so an unseeded one reads the
+    // open peak rather than a quiet one.
+    const seededRatio = r.livePeakSeeded / r.livePeakSecondClosed;
+    if (!(seededRatio < 0.2)) {
+      throw new Error(
+        `the pad's own 80 Hz lowpass left the master peak at ${r.livePeakSeeded.toFixed(5)} against ${r.livePeakSecondClosed.toFixed(5)} bypassed (×${seededRatio.toFixed(3)}) — a channel built after the edit was not seeded from its §4.2 strip`,
       );
     }
     console.log(
-      `       shared pad channel: ${r.liveRealisations} realisations of ${r.padChannel}; bounce ${r.bothTracksRms.toFixed(5)} RMS → ${r.secondFaderClosedRms.toFixed(5)} (×${secondRatio.toFixed(4)}) on the second fader and ${r.firstFaderClosedRms.toFixed(5)} (×${firstRatio.toFixed(4)}) on the first; pad fader ×${padRatio.toFixed(4)}; live peak ${r.livePeakBoth.toFixed(5)} → ${r.livePeakSecondClosed.toFixed(5)} (×${liveRatio.toFixed(3)}), and ${r.livePeakPadFiltered.toFixed(5)} (×${seededRatio.toFixed(3)}) with the pad's own lowpass seeded into both`,
+      `       shared pad channel: ${r.liveRealisations} realisations of ${r.padChannel}; bounce ${r.bothTracksRms.toFixed(5)} RMS → ${r.secondFaderClosedRms.toFixed(5)} (×${secondRatio.toFixed(4)}) on the second fader and ${r.firstFaderClosedRms.toFixed(5)} (×${firstRatio.toFixed(4)}) on the first; pad fader ×${padRatio.toFixed(4)}; live peak ${r.livePeakBoth.toFixed(5)} at unity → ${r.livePeakSecondClosed.toFixed(5)} (×${liveRatio.toFixed(3)}) with a fader the channel was BUILT with, and ${r.livePeakSeeded.toFixed(5)} (×${seededRatio.toFixed(3)}) with the pad's own lowpass seeded in too`,
     );
   });
 
