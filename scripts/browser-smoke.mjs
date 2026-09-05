@@ -398,6 +398,11 @@ async function assertShellAndSelfTest(page, label) {
   // region. The §5.9 audition is measured beside it because it declicks through one helper.
   await step(`${label}: the declick lands on the region end and is 3 ms long (#87, #144)`, async () => {
     const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.declickContourProof());
+    // Logged BEFORE the assertions, unlike every other step here: the profile IS the evidence
+    // for #144, and a run that trips on one of its six numbers should still report the rest.
+    console.log(
+      `       declick: region ${r.flatSeconds.toFixed(4)} s flat → ${r.sweptSeconds.toFixed(4)} s swept an octave down, ending on ${r.sweptFinalMagnitude.toFixed(5)}; voice gain ${r.voiceProfile.headGain.toFixed(5)} head → ${r.voiceProfile.midGain.toFixed(5)} mid → ${r.voiceProfile.fadeStartGain.toFixed(5)} at −${r.declickMs} ms, fading in ${r.voiceProfile.fadeMs.toFixed(2)} ms; preview gain ${r.previewProfile.headGain.toFixed(5)} → ${r.previewProfile.midGain.toFixed(5)} → ${r.previewProfile.fadeStartGain.toFixed(5)}, fading in ${r.previewProfile.fadeMs.toFixed(2)} ms`,
+    );
     // Issue #87: an octave-down pitch sweep halves the rate at note-on, so the region is longer.
     if (!(r.flatSeconds > 0.1)) {
       throw new Error(`the unmodulated voice sounded for ${r.flatSeconds.toFixed(4)} s — nothing played`);
@@ -440,9 +445,6 @@ async function assertShellAndSelfTest(page, label) {
         );
       }
     }
-    console.log(
-      `       declick: region ${r.flatSeconds.toFixed(4)} s flat → ${r.sweptSeconds.toFixed(4)} s swept an octave down (×${stretched.toFixed(3)}), ending on ${r.sweptFinalMagnitude.toFixed(5)}; voice gain ${r.voiceProfile.headGain.toFixed(5)} head → ${r.voiceProfile.midGain.toFixed(5)} mid → ${r.voiceProfile.fadeStartGain.toFixed(5)} at −${r.declickMs} ms, fading in ${r.voiceProfile.fadeMs.toFixed(2)} ms; preview gain ${r.previewProfile.headGain.toFixed(5)} → ${r.previewProfile.midGain.toFixed(5)} → ${r.previewProfile.fadeStartGain.toFixed(5)}, fading in ${r.previewProfile.fadeMs.toFixed(2)} ms`,
-    );
   });
 
   await step(`${label}: a synced LFO follows the tempo (spec §6, issue #107)`, async () => {
