@@ -708,13 +708,21 @@ async function assertShellAndSelfTest(page, label) {
     // What this step added, it takes back, through §8.5.6's own Remove control — so no later
     // step mixes through an effect it did not ask for.
     await slot.getByRole('button', { name: /^Remove insert \d+, Delay$/ }).click();
-    // Counted by EFFECT rather than by slot count: `removeInsert` drops the slot from the
-    // array rather than emptying it in place, so the rack is one shorter afterwards (#142).
+    // Counted by EFFECT, because `addInsert` fills the rack's first free slot and the slot
+    // count alone cannot tell a full rack from an empty one. The rack's LENGTH is asserted
+    // beside it: a removal empties a slot in place and never drops it, so the panel shows the
+    // same number of rows afterwards as before (#142).
     await page.waitForFunction(
       (n) => document.querySelectorAll('[data-testid^="insert-slot-"][aria-label$="Delay"]').length === n,
       delaysBefore,
       { timeout: 5_000 },
     );
+    const slotsAfterRemoval = await slots.count();
+    if (slotsAfterRemoval !== namesAfter.length) {
+      throw new Error(
+        `removing the delay took the rack from ${namesAfter.length} slots to ${slotsAfterRemoval} — a removal empties a slot, it does not drop it`,
+      );
+    }
     await page.getByTestId('mode-tab-main').click();
   });
 
@@ -761,6 +769,51 @@ async function assertShellAndSelfTest(page, label) {
     }
     console.log(
       `       insert limit: ${r.occupiedCount}/${r.limit} slots after 12 adds, slot ${r.drivenSlot} took the master peak ${r.openPeak.toFixed(5)} → ${r.closedPeak.toFixed(5)}`,
+    );
+  });
+
+  // §14 (ar) made a §7.8 `slotN` address 1-based over the §4.2 slot ARRAY, so
+  // `insert:track:<id>:slot2.cutoff` means "whatever is in slot 2". `removeInsert` dropped the
+  // slot from that array rather than emptying it, so a removal slid every effect behind it
+  // onto somebody else's address — the editing-side half of what §14 (ar) fixed for the
+  // wiring side. It is an audio claim on both sides, so both are measured in the WAV a §9.5
+  // bounce writes: the emptied slot's address must reach nothing, and the address behind it
+  // must still drive the filter it names, statically and under a §7.8 lane.
+  await step(`${label}: removing an insert moves no other slot's §7.8 address (#142)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.insertRemoveProof());
+    if (r.slotsAfter !== r.slotsBefore) {
+      throw new Error(
+        `removing one insert took ${r.channelId} from ${r.slotsBefore} slots to ${r.slotsAfter} — the §1.3.1 rack does not shrink`,
+      );
+    }
+    if (r.survivingSlot !== 2) {
+      throw new Error(
+        `after removing slot 1 the surviving filter answers to slot ${r.survivingSlot} — it was, and stays, slot 2`,
+      );
+    }
+    // A vacuity guard before either ratio: a silent chain would satisfy any fall.
+    if (!(r.openRms > 0.01)) {
+      throw new Error(`the open chain rendered nothing (${r.openRms.toFixed(5)} RMS)`);
+    }
+    // The pair that SWAPS under the defect, which is what makes each half falsifiable.
+    if (!(r.removedSlotClosedRms > r.openRms * 0.9)) {
+      throw new Error(
+        `closing the REMOVED slot's own address left ${r.removedSlotClosedRms.toFixed(5)} RMS against ${r.openRms.toFixed(5)} open — it reached an effect that is no longer there`,
+      );
+    }
+    if (!(r.survivingSlotClosedRms < r.openRms * 0.25)) {
+      throw new Error(
+        `closing slot 2 left ${r.survivingSlotClosedRms.toFixed(5)} RMS against ${r.openRms.toFixed(5)} open — the address behind the removal reached nothing`,
+      );
+    }
+    // The §7.8 lane, on the slot behind the removal: 60 Hz on beat 1, 12 kHz by beat 4.
+    if (!(r.laneLastBeatRms > r.laneFirstBeatRms * 8)) {
+      throw new Error(
+        `a lane on slot 2 rendered ${r.laneFirstBeatRms.toFixed(5)} → ${r.laneLastBeatRms.toFixed(5)} RMS across the bar — it drove nothing the removal left behind`,
+      );
+    }
+    console.log(
+      `       insert remove: ${r.slotsBefore}→${r.slotsAfter} slots, survivor on slot ${r.survivingSlot}; open ${r.openRms.toFixed(5)}, removed-slot address ${r.removedSlotClosedRms.toFixed(5)}, slot 2 closed ${r.survivingSlotClosedRms.toFixed(5)}; lane ${r.laneFirstBeatRms.toFixed(5)} → ${r.laneLastBeatRms.toFixed(5)}`,
     );
   });
 
@@ -967,7 +1020,7 @@ async function assertShellAndSelfTest(page, label) {
     const seededRatio = r.livePeakSeeded / r.livePeakSecondClosed;
     if (!(seededRatio < 0.2)) {
       throw new Error(
-        `the pad's own 80 Hz lowpass left the master peak at ${r.livePeakSeeded.toFixed(5)} against ${r.livePeakSecondClosed.toFixed(5)} bypassed (×${seededRatio.toFixed(3)}) — a channel built after the edit was not seeded from its §4.2 strip`,
+        `the pad's own 80 Hz lowpass left the master peak at ${r.livePeakSeeded.toFixed(5)} against ${r.livePeakSecondClosed.toFixed(5)} with it removed (×${seededRatio.toFixed(3)}) — a channel built after the edit was not seeded from its §4.2 strip`,
       );
     }
     console.log(

@@ -1,14 +1,28 @@
-# BangerBox — Phase Handover (after the per-voice lane closure)
+# BangerBox — Phase Handover (after the insert-removal closure)
 
-Generated at the close of the §7.8 per-voice lane work per Protocol Alpha (spec §13.1). A new
+Generated at the close of the §7.8 insert-removal work per Protocol Alpha (spec §13.1). A new
 session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the per-voice lane work merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §6/§7.8/§9.5/§10.2, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1983 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **80/80 steps**), plus `lint`, `type-check`, `format:check`
+**State:** the insert-removal work merged to `main` (`--no-ff`). All eight §12 phases were
+already complete; this was a defect closure against §1.3.1/§5.2/§7.8/§8.5.6, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1999 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **82/82 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
+
+**Removing an insert EMPTIES its slot; it never drops the slot from the rack.** `removeInsert`
+wrote `prev.inserts.filter(...)`, and §14 (ar) made a §7.8 `slotN` address 1-based over that
+§4.2 array on both sides of the graph — so every address BEHIND a removal slid onto a different
+effect, and the §1.3.1 rack got one slot shorter every time. A removal now changes exactly one
+slot, keeps its id, and returns before `commit` when there is nothing to remove. §8.5.6 disables
+Remove on an empty slot, from the same fact the bypass toggle beside it already reads. See §2
+(ax) and §4.
+
+**A rack NEVER gets shorter, and an over-long one is no exception.** A rack of nine admitted
+whole (§14 (au)) that loses one is a rack of nine. Truncating on the way out would silently
+delete the effects past the limit that admission deliberately kept — §14 (ap)'s "the stored
+value always wins" for the third time. The cost is stated rather than hidden: a removal used to
+be the one thing that shortened a rack, and nothing shortens one now.
 
 **A §7.8 per-voice leaf names a §6 field of the PAD, and a lane REPLACES the patch's static
 value.** `program:<id>.pad:<idx>.filter.cutoff`, `…filter.resonance` and `…pitch` were written
@@ -171,6 +185,41 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(ax) — the insert-removal closure (§1.3.1, §5.2, §7.8, §8.5.6).** The ⚑ items below are
+  settled policy a new session should treat as binding, not as spec text:
+  - **A removal EMPTIES one slot and moves nothing else.** A §7.8 `slotN` address is the
+    slot's POSITION in the §4.2 array (§14 (ar)), so dropping the slot slid every effect
+    behind it onto somebody else's address — a lane on `slot3` driving what had been in
+    `slot4`, and every §8.5.10 axis and §10.3 binding behind it moving too.
+  - ⚑ **A rack never gets SHORTER, over-long ones included.** §5.2 calls the chain "insert
+    slots (default 4)" and `createDefaultChannelStrip` opens exactly that many empty ones, so
+    an empty slot is a first-class thing rather than an absence. Truncating an over-long rack
+    on the way out would delete the effects past the limit that §14 (au)'s admission kept, and
+    would do it from a gesture that named one slot.
+  - ⚑ **The emptied slot keeps its own ID**, exactly as `addInsert` and `replaceInsert` do.
+    The id is the SLOT's handle — the §8.5.6 React key and what every control in the row passes
+    back — not the effect's, and nothing in the §7.8 grammar addresses a slot by id.
+  - ⚑ **The other two fields are restated rather than merged** (`effectType: null,
+enabled: false, params: {}`), so an emptied slot is indistinguishable from one
+    `createEmptyInsertSlot` built. §14 (an)'s "an empty slot reads as empty, never as bypassed"
+    is a property of the DATA, which §8.5.6 then reads straight.
+  - ⚑ **A removal that removes nothing is not an edit.** The action returns before `commit`
+    for a slot id the channel does not hold and for a slot already empty; it used to leave a
+    §4.5 entry that undid nothing and a §4.4 dirty key that saved nothing.
+  - ⚑ **`removeInsert` keeps its `void` return.** `addInsert` and `replaceInsert` speak an
+    `InsertSlotResult` because they can refuse for a reason the user must hear. This one
+    cannot: §8.5.6 disables the control where there is nothing to remove.
+  - ⚑ **The GRAPH needed nothing, and that was proven rather than assumed.**
+    `ChannelHandle.setInserts` has taken one entry per slot with `null` where empty since
+    §14 (ar), and every index-based reader already guards `effectType === null`.
+  - ⚑ **A §7.8 lane or §10.3 binding on the removed slot is NOT cleaned up, and no longer
+    needs to be.** The lane names the SLOT, the slot still exists, and it is empty — so the
+    lane writes nothing until an effect goes back there. Under the old behaviour it silently
+    re-pointed instead.
+  - ⚑ **The REORDER is untouched.** It neither creates a slot nor changes the array's length,
+    so §14 (au)'s "a reorder needs no rule" still holds. Moving an effect between §7.8
+    addresses is what a reorder is FOR, which is what makes it a different question.
 
 - **(aw) — the per-voice lane closure (§6, §7.8, §9.5, §10.2).** The ⚑ items below are
   settled policy a new session should treat as binding, not as spec text:
@@ -798,10 +847,13 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   its own program to avoid the defect; `trackWithdrawalProof` still does, and there is no
   reason to change it. What a new probe must not do is assume ONE pad channel per id —
   `graph.channelsFor(padChannel)` returns one per track that has played it.
-- **`inserts.at(-1)` is NOT "the slot an add just created".** `addInsert` fills the §1.3.1
-  rack's first free slot, so a fresh effect lands at the FRONT of a default four-slot strip
-  and the empty slots sit behind it. Find it by effect, or by diffing the list. Eight tests
-  and two §11.4 probes carried the old assumption.
+- **`inserts.at(-1)` is NOT "the slot an add just created", and the rack's LENGTH is not its
+  contents.** `addInsert` fills the §1.3.1 rack's first free slot, so a fresh effect lands at
+  the FRONT of a default four-slot strip and the empty slots sit behind it; and `removeInsert`
+  EMPTIES a slot rather than dropping it, so the length is unchanged after one. Find an effect
+  by effect, or by diffing the list. Eight tests and two §11.4 probes carried the old add
+  assumption; the smoke's insert-panel step and `sharedPadChannelProof` carried the old removal
+  one.
 - **A §11.4 probe that measures a VOICE must NEUTRALISE the §5.2 strips first**, as
   `bounceMixProof` does. By the time the smoke reaches the late steps the project carries a
   350 ms delay at 35 % feedback on its MASTER strip, left by the §8.5.6 insert-panel step,
@@ -826,7 +878,7 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   "Permission denied" / "Device or resource busy". `voicelane` is one; `padchannel`,
   `slotlimit`, `trackwithdraw`, `bouncemix` and `padstrip` were others, and both `padchannel`
   and `slotlimit` DID delete once their shells had gone, so try again before assuming
-  otherwise. `git worktree list` shows only `main`, so they are not another agent's work —
+  otherwise. `voicelane` was still busy at the close of this work, so it was left alone. `git worktree list` shows only `main`, so they are not another agent's work —
   delete them if you can and ignore them if you cannot.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
@@ -983,6 +1035,17 @@ transient channel still stand. New this work:
   re-derive.
 - **`InsertSlotResult` is the third store result type**, beside `AssignResult` and
   `AutomationEditResult`, and carries a finished sentence for the same reason.
+  `removeInsert` deliberately does NOT return one: it cannot refuse for a reason the user has
+  to hear, and §8.5.6 disables its control where there is nothing to remove.
+- **`removeInsert` EMPTIES a slot in place and never drops it**, so the rack keeps its
+  §1.3.1 length and every §7.8 address behind the removal keeps its meaning (§14 (ax)). It
+  restates `createEmptyInsertSlot`'s own three fields onto the slot and keeps the slot's id.
+  A new action that takes an effect OUT of a chain does the same; the only surface that may
+  move an effect between §7.8 addresses is §8.5.6's reorder, which is what a reorder is for.
+- **A store action that can be a no-op returns BEFORE `commit`.** `removeInsert` used to
+  record a §4.5 entry that undid nothing and a §4.4 dirty key that saved nothing for a slot
+  id no channel held. The undo history is what a user reads back; a step in it that changes
+  nothing is a step they have to press through.
 - **Admission (`setChannels`, `upsertChannel`) is deliberately NOT bounded.** See §2 (au) —
   the stored value always wins. A new admission path inherits that, not the limit. The one
   consequence is that §8.5.6's REORDER, which writes through `upsertChannel`, has to decline
@@ -1437,7 +1500,15 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store slice, field or action changed this work; the §4.3 BRIDGE gained one method.**
+**No store slice, field or action SIGNATURE changed this work; one `useMixerStore` action
+changed what it writes.** `removeInsert(channelId, slotId)` still returns `void`, and now
+EMPTIES the named slot in place — `effectType: null, enabled: false, params: {}`, the slot's
+own id kept — rather than filtering it out of the array. It also returns before `commit` for
+a slot id the channel does not hold and for one already empty, so a no-op records no §4.5
+entry and marks no §4.4 dirty key. §8.5.6's Remove control is disabled on an empty slot.
+
+From the previous work, and unchanged: **no store slice, field or action changed; the §4.3
+BRIDGE gained one method.**
 `SyncBridge.onProgramRemoved(programId)` is how a §6 program leaving the store reaches the
 graph, and `subscribeProgramParamSync` reports it from the diff it already computes. It is a
 genuine §4.3 hook — the audio bridge releases that program's §7.8 pad-lane nodes — unlike the
@@ -1542,7 +1613,12 @@ Changes from the previous work, recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-**Mode changes this work:** two, both §1.3.1. `InsertPanel` reports a store refusal as a
+**Mode changes this work:** one. `InsertPanel` disables its Remove button on an EMPTY slot,
+from the same `!effectType` the bypass toggle beside it already reads — a removal now empties a
+slot rather than dropping it (§14 (ax)), so there is nothing for the control to do there. No
+primitive or shell component changed.
+
+From the previous work, and unchanged: two mode changes, both §1.3.1. `InsertPanel` reports a store refusal as a
 `warning` toast, disables its Add picker on a full channel and disables the Replace select on
 a slot past the limit — the `LayersEditor` shape for a §6 cap. `ProjectsPanel` gained an
 **Insert slots** select (1–8) beside Sample rate and Bit depth, the first thing that can move
@@ -1629,15 +1705,58 @@ per §14 (ak) — clamp in range, refuse a non-finite one, throw on a bad struct
 **`check:stubs` reports ZERO open stubs.** Outstanding work lives in GitHub issues, not in code
 comments.
 
-**A §7.8 lane on a §6 sound-design parameter now sounds and renders** (#138); the two
-amp-envelope leaves do not (#143), and the §5.4 declick has never been 3 ms long (#144).
+**Removing an insert now EMPTIES its slot** (#142), so no §7.8 address behind it moves and the
+§1.3.1 rack keeps its length. **A §7.8 lane on a §6 sound-design parameter sounds and renders**
+(#138); the two amp-envelope leaves do not (#143), and the §5.4 declick has never been 3 ms long
+(#144).
 
 **STILL OUTSTANDING FROM PHASE 8 — READ THIS FIRST:**
 
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#138 is CLOSED by this work.** Two new issues were filed while closing it — a §7.8 lane on
+**#142 is CLOSED by this work.** No new issue was filed while closing it, and nothing was added
+to the `check:orphans` allowlist.
+
+**Honest scope notes for the insert-removal work:**
+
+- **An over-long chain can no longer shrink back AT ALL.** A removal used to be the one thing
+  that shortened a rack, so a nine-slot chain admitted from a project could be worn down towards
+  the §1.3.1 limit one effect at a time — by accident, and at the cost of moving every address
+  behind each removal. Nothing truncates now: `moveSlot` declines to walk an effect past the
+  limit, admission keeps what it is given (§14 (au)), and a removal empties in place. The rows
+  past the limit are permanent; they hold no effect once emptied, and §8.5.6 disables Replace on
+  them and says why in its `title`.
+- **A §7.8 lane or a §10.3 binding on a slot whose effect was removed is inert, not deleted.**
+  It names the SLOT, the slot still exists, and it is empty — so it writes nothing until an
+  effect goes back there, which is what `replaceInsert` has always relied on.
+- **`writeScalar` mints a new `inserts` array on every insert-parameter commit, and `mixerSync`
+  diffs that field by IDENTITY**, so committing a knob destroys and rebuilds the whole serial
+  chain. Pre-existing, unchanged by this work, and named here only because the new probe
+  exercises it four times per render pass.
+- **A pad strip's removal reaches the §6 payload through `padStripMirror`** and needed nothing
+  of its own: the mirror copies the whole `inserts` array when its identity moves, so an emptied
+  slot persists exactly as a filled one does.
+- **Every regression test was proven against the code it was written to catch**: 11 of
+  `insertRemove.test.ts`'s 13 assertions fail against the unfixed store — the 2 that pass are
+  guards, the undo restore and a channel with no strip — and all 3 of the new `InsertPanel`
+  assertions fail, two through the store and one against a panel that offered Remove
+  unconditionally. Two mutations isolate the halves: restoring the `filter` alone fails 9 of the
+  13, and dropping the panel's `disabled` fails the third panel assertion alone. No EXISTING
+  test pinned the defect, because nothing tested `removeInsert` at all.
+- **The defect was measured in the browser too**, by the probe itself against the unfixed build:
+  the rack went 4 slots to 3, the surviving filter answered to slot **1**, closing the REMOVED
+  slot's own address collapsed the bar to **0.0014113271483088823 RMS** while closing slot 2 left
+  **0.09645453540569808** — the open reading to every digit — and a §7.8 `exp` lane on slot 2
+  rendered **0.1283099264644539 → 0.1283099267698972**, identical to nine digits. With the fix
+  the first two readings SWAP.
+- **Measured in a real browser**: 82/82 smoke steps at ports 5342/5343, dev and offline, no
+  console errors. `insertRemoveProof` renders four bounces of one bar and reads each back from
+  `/bounces/` over real OPFS: the rack went 4 slots to 4, the survivor stayed on slot 2, the open
+  chain read **0.10246 RMS**, the removed slot's address left **0.10246** and slot 2's left
+  **0.00144**, and the lane on slot 2 rendered **0.00067 → 0.12756** across the bar.
+
+**#138 was CLOSED by the previous work.** Two new issues were filed while closing it — a §7.8 lane on
 `amp.attack` or `amp.release` reaches nothing (#143), and the §5.4 declick fades from the
 note-on rather than from 3 ms before the region end (#144). Nothing was added to the
 `check:orphans` allowlist.
@@ -1704,8 +1823,8 @@ was added to the `check:orphans` allowlist.
   `padStripsForProgram` publishes no strip for it either way.
 - **The `pad:<trackId>:<note>` channel the demo fallback builds is unchanged.** It already
   carried a track in its id, so it has exactly one realisation, and it is not a §6 pad.
-- **`removeInsert` still shrinks the rack** (#142), which is why the §11.4 step BYPASSES its
-  probe filter rather than removing it.
+- **`sharedPadChannelProof` now REMOVES its probe filter** where it used to bypass one, because
+  #142 is closed.
 - **Choke groups and mono retrigger stay program-scoped** per §5.4 — see §2 (av).
 - **`seedChannel`'s call from `AudioEngine` is proven by the browser step's lowpass reading.**
   There is no call from a §9.5 render, because a render creates every channel before its one
@@ -1740,7 +1859,7 @@ was added to the `check:orphans` allowlist.
 
 **#135 was CLOSED by the previous work.** One new issue was filed while closing it — `removeInsert`
 drops a slot from the array rather than emptying it, shifting every §7.8 address behind it
-(#142). Nothing was added to the `check:orphans` allowlist.
+(#142), since closed by §14 (ax). Nothing was added to the `check:orphans` allowlist.
 
 **Honest scope notes for the insert-limit work:**
 
@@ -1753,11 +1872,9 @@ drops a slot from the array rather than emptying it, shifting every §7.8 addres
   `rowToProjectSettings` copies the column through and §9.6 types it as a bare number, so a
   hand-edited row or an import can carry anything. Inert before; enforcing the limit made
   `20` mean unreachable chains and `0` mean a channel locked out of inserts.
-- **`removeInsert` still SHRINKS the rack**, so removing slot 2 of four moves the filter that
-  was in slot 3 onto the `slot2` address and every §7.8 lane and §10.3 binding behind it with
-  it. Pre-existing, the editing-side half of what §14 (ar) fixed for the wiring side, and out
-  of scope here — issue #142. It is why the §11.4 insert-panel step now counts EFFECTS after
-  a removal rather than slots.
+- **`removeInsert` used to SHRINK the rack**, which is why the §11.4 insert-panel step counts
+  EFFECTS after a removal rather than slots. Closed since, by §14 (ax); the step now asserts the
+  rack's LENGTH beside that count.
 - **A project already carrying a chain over the limit is left exactly as it is**, and nothing
   warns the user that the slots past the limit cannot be addressed. §8.5.6 disables the
   Replace select on them and says why in its `title`; there is no project-level notice, and
@@ -1869,7 +1986,7 @@ sound-design parameter still renders as nothing (#138), listed below. Nothing wa
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-**#141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**, and #139, #140, #142, #143
+**#142, #141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**, and #139, #140, #143
 and #144 remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
@@ -1880,8 +1997,6 @@ and #144 remain open.
   after the cancel time. Audible on every voice, live and in every §9.5 bounce, and a fix means
   the caller supplying the level the fade departs from. Found profiling the amp gain of a
   bounced hit while closing #138.
-- **#142** `removeInsert` drops the slot from the array rather than emptying it, so every §7.8
-  address behind the removed one shifts onto a different effect.
 - **#143** a §7.8 lane on `program:<id>.pad:<idx>.amp.attack` or `…amp.release` reaches
   nothing: `programParamChange` maps neither, so both are inert live and render as nothing.
   An AHDSR is applied at note-on, so there is no param to sum onto.
@@ -2171,6 +2286,6 @@ and #144 remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1983**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **80/80 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1999**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **82/82 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.

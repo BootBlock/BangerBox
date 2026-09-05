@@ -264,6 +264,11 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                     size="sm"
                     iconOnly
                     icon={<IconRemove size={14} aria-hidden="true" />}
+                    // An EMPTY slot has nothing to remove, and a removal now EMPTIES a slot
+                    // rather than dropping it (issue #142) — so the button would do nothing
+                    // at all here. Disabled for the same reason, and from the same fact, as
+                    // the bypass toggle beside it (spec §3.4).
+                    disabled={!effectType}
                     onClick={() => mixer().removeInsert(channelId, slot.id)}
                   />
                 </div>
