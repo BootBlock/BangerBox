@@ -601,7 +601,7 @@ export class VoicePool {
     const remaining = voice.regionSeconds - voice.consumedSeconds;
     if (remaining <= 0) return;
     // Erase the stale fade first: holding at its own start leaves the amp on the level the
-    // AHDSR had reached there, which is where the timeline stands from that moment onwards.
+    // contour reached before it stopped, which is what the timeline holds from there onwards.
     voice.ampGain.gain.cancelAndHoldAtTime(voice.declickFadeStart);
     const endTime = regionEndTime(voice.detune, at, remaining);
     const fadeStart = declickFadeStart(endTime, at, DECLICK_FADE_MS);
