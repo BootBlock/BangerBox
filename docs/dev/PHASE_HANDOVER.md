@@ -6,7 +6,7 @@ and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the declick work merged to `main` (`--no-ff`). All eight §12 phases were already
 complete; this was a defect closure against §5.4/§5.9, not a new phase, so `package.json`
-`config.phase` remains **"8"**. Suite: **2014 unit tests**, `test:e2e` real-browser smoke
+`config.phase` remains **"8"**. Suite: **2015 unit tests**, `test:e2e` real-browser smoke
 (dev + offline, **84/84 steps**), plus `lint`, `type-check`, `format:check` and `verify`
 (**no open stubs**).
 
@@ -224,9 +224,11 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
     fade beginning at its note-on. Its degenerate case is stated rather than hidden: a voice
     shorter than its own §6 attack departs from silence and is silent — unchanged by this
     work, and pinned by a test so it is not rediscovered as a defect.
-  - ⚑ **A RE-LAID fade reads the contour no later than the OLD fade start.** The erase freezes
-    the timeline there, and where the first fade truncated a running decay that is the last
-    point the contour reaches at all.
+  - ⚑ **A RE-LAID fade reads the contour where it STOPPED — the EARLIEST fade start the
+    voice has had, tracked as a running minimum in `Voice.contourFrozenAt`.** Reading the
+    previous one is right for a single retune and wrong for every one after it; a §7.8 pitch
+    lane re-lays every `SCHEDULER_INTERVAL_MS`, so the level walks down a frozen contour a
+    window at a time.
   - ⚑ **The §5.9 preview shared the helper and shared the defect to five decimal places.** It
     passes unity, which is where an audition's own amp sits for its whole life.
   - ⚑ **Absolute RMS figures recorded in §14 since (t) are superseded**; ratios, peaks and
@@ -998,9 +1000,11 @@ transient channel still stand. New this work:
   reads `ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, …)`; `PreviewChannel` passes 1.
 - **`Voice` carries `amp` and `ampPeak`, and `releaseMs` is gone.** The envelope IS the release
   time, and the same two fields are what every re-lay evaluates the departure level from.
-- **`rescheduleDeclick` reads the contour at `Math.min(newFadeStart, voice.declickFadeStart)`.**
-  Erasing the stale fade freezes the timeline at the old start, so a retune that pushes the end
-  later must not read a contour that has stopped running.
+- **`rescheduleDeclick` reads the contour at `voice.contourFrozenAt`, a running MINIMUM of
+  every fade start the voice has had.** Each lay truncates the §6 AHDSR at its own fade start
+  and nothing restarts it, so that earliest point is where the contour stopped. Reading
+  `declickFadeStart` — the fade currently in force — is right for one retune and wrong for
+  every one after it, which is the defect the review caught.
 - **`scheduleAmpRelease` stays as it is and shares no helper with the declick**, for the reason
   in the header. A new interruption fade goes through it; a new END-of-region fade does not.
 
@@ -1828,10 +1832,15 @@ to the `check:orphans` allowlist.
 - **A browser without `cancelAndHoldAtTime` was never affected.** The issue #109 polyfill
   computes the held value from its own shadow timeline and inserts it unconditionally, so the
   declick was already correct there and is unchanged.
-- **Every regression test was proven against the code it was written to catch**, by six
-  mutations: the defect as filed fails 9, a re-lay reading a stopped contour fails 1, §5.4's
-  start clamp removed fails 4, the §6 `curve` ignored fails 2, the sustain stage ignored fails
-  4, and a preview departing from silence fails 1.
+- **Every regression test was proven against the code it was written to catch**, by seven
+  mutations: the defect as filed fails 9, a re-lay reading a stopped contour fails 1, a re-lay
+  reading the previous fade start rather than the earliest fails 1, §5.4's start clamp removed
+  fails 4, the §6 `curve` ignored fails 2, the sustain stage ignored fails 4, and a preview
+  departing from silence fails 1.
+- **The review found one defect, and this work INTRODUCED it rather than making it
+  reachable.** A re-lay read the level at the previous fade start; the single-retune test
+  passed under it. `Voice.contourFrozenAt` is the running minimum, and a second test drives
+  two successive retunes. Nothing else surfaced.
 - **Measured in a real browser**: 84/84 smoke steps at ports 5342/5343, dev and offline, no
   console errors. Voice gain 1.00000 head → 1.00000 mid → 1.00000 three milliseconds before the
   end, fading in 1.50 ms; the §5.9 preview the same three numbers. Against the unfixed build,
@@ -2402,6 +2411,6 @@ and #143 remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**2014**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**2015**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **84/84 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
