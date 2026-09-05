@@ -10,8 +10,8 @@ already complete; this was a defect closure against §1.3.1/§4.2/§8.5.6, not a
 real-browser smoke (dev + offline, **76/76 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
 
-**A channel holds `globalInsertLimit` insert slots, and no effect may occupy a position past
-them.** §1.3.1 gives every channel 4, "configurable 1–8", and `addInsert` appended without
+**A channel holds `globalInsertLimit` insert slots (clamped to 1–8 as the settings enter the
+store), and no effect may occupy a position past them.** §1.3.1 gives every channel 4, "configurable 1–8", and `addInsert` appended without
 consulting it — so the FIRST effect a user added landed on slot 5 of a four-slot rack and the
 fifth on slot 9, where the §7.8 grammar stops parsing and the panel's own knobs, every
 automation lane and every §10.3 binding go dead while the effect sounds. `addInsert` now FILLS
@@ -772,7 +772,13 @@ transient channel still stand. New this work:
 - **`InsertSlotResult` is the third store result type**, beside `AssignResult` and
   `AutomationEditResult`, and carries a finished sentence for the same reason.
 - **Admission (`setChannels`, `upsertChannel`) is deliberately NOT bounded.** See §2 (au) —
-  the stored value always wins. A new admission path inherits that, not the limit.
+  the stored value always wins. A new admission path inherits that, not the limit. The one
+  consequence is that §8.5.6's REORDER, which writes through `upsertChannel`, has to decline
+  to walk an effect past the limit itself; it is the only surface that can.
+- **`useProjectStore.applyProject` clamps `globalInsertLimit` to `GLOBAL_INSERT_LIMIT_RANGE`.**
+  The §9.3 column has no CHECK and §9.6 types it as a bare number, so the clamp is where the
+  settings ENTER the store — covering hydration, an import and a pack at once. A new §4.2
+  setting that BOUNDS something is clamped there too, not only in its own setter.
 
 **Insert slots and their §7.8 addresses (spec §5.7, §7.8):**
 
@@ -1399,6 +1405,15 @@ drops a slot from the array rather than emptying it, shifting every §7.8 addres
 
 **Honest scope notes for the insert-limit work:**
 
+- **A §11.4 probe restores every §9.3 COLUMN it writes.** `flushProject` writes
+  `insert_limit` as well as `payload`, and the first pass put only the payload back — so a
+  user who had chosen 8 slots lost them on every probe run, in a production build. The §14
+  (ap) probe rule, one level up, and the second time in three entries the restore has been
+  narrower than the save.
+- **An out-of-range `insert_limit` is clamped in `applyProject`.** §9.3 declares no CHECK,
+  `rowToProjectSettings` copies the column through and §9.6 types it as a bare number, so a
+  hand-edited row or an import can carry anything. Inert before; enforcing the limit made
+  `20` mean unreachable chains and `0` mean a channel locked out of inserts.
 - **`removeInsert` still SHRINKS the rack**, so removing slot 2 of four moves the filter that
   was in slot 3 onto the `slot2` address and every §7.8 lane and §10.3 binding behind it with
   it. Pre-existing, the editing-side half of what §14 (ar) fixed for the wiring side, and out
@@ -1430,6 +1445,11 @@ drops a slot from the array rather than emptying it, shifting every §7.8 addres
   unaddressable; a looping 1 kHz tone into the §5.2 master input read **0.49939** with every
   slot opened to 20 kHz through its own §7.8 address and **0.00320** with slot 4 alone closed
   to 80 Hz; a nine-slot chain was admitted whole and `replaceInsert` still refused its slot 9.
+  Re-run after the review's four fixes: the same 76/76 and the same numbers.
+- **The review's own three code fixes were each proven by mutation**: `applyProject` without
+  the clamp (2 failures), `replaceInsert` reusing the full-chain sentence (1), and the
+  Move-later button unbounded (1). The fourth — the probe's `insert_limit` restore — has no
+  unit test; it is browser-only, and the smoke re-run is its proof.
 
 **#137 was CLOSED by the previous work.** One new issue was filed while closing it — two tracks
 that play the same program share one §5.2 pad channel, wired to whichever triggered it first
