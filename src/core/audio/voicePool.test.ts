@@ -254,6 +254,25 @@ describe('voice endings (spec §5.4 declick)', () => {
     pool.destroy();
   });
 
+  it('reads a re-laid fade from where the erase froze the timeline, not from a contour that has stopped', () => {
+    // A 60 ms region under the default 60 ms decay is still decaying when its fade begins, so
+    // the first lay's `cancelAndHoldAtTime` truncated the AHDSR there and the contour does not
+    // run past it. Bending down an octave 10 ms in doubles what is left and pushes the fade to
+    // 107 ms — past the point the timeline was frozen at. The level it departs from is
+    // therefore the contour's at 57 ms (0.63936), not the sustain level it would have reached
+    // by 107 ms had it kept running (0.62992); reading the later one steps the amp down.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'frozen', when: 0, startFrame: 0, endFrame: 2_880 })); // 60 ms
+    pool.applyProgramDetune('p1', -1200, 0.01);
+    const departure = paramCalls(ampGain(fake))
+      .filter((c) => c.method === 'setValueAtTime')
+      .at(-1);
+    expect(departure?.args[1]).toBeCloseTo(0.11 - 0.003, 6);
+    expect(departure?.args[0]).toBeCloseTo(0.63936, 5);
+    pool.destroy();
+  });
+
   it('clamps a voice shorter than the fade to its own start, and departs from the contour there', () => {
     // §5.4 clamps the fade's START, so a 2 ms region gets a 2 ms fade rather than one
     // beginning 1 ms before the voice exists. With a flat §6 envelope the contour is already
