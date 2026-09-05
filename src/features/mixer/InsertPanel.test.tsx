@@ -41,6 +41,85 @@ function renderPanel() {
   );
 }
 
+describe('InsertPanel and the §1.3.1 slot limit (issue #135)', () => {
+  /** Fill every slot within the limit, so the next add has nowhere to go. */
+  function fillChain(limit = 4) {
+    const strip = createDefaultChannelStrip(CHANNEL, limit);
+    useMixerStore.getState().setChannels({
+      [CHANNEL]: {
+        ...strip,
+        inserts: strip.inserts.map((slot) => ({ ...slot, effectType: 'delay' as const, enabled: true })),
+      },
+    });
+  }
+
+  it('disables the Add picker once every slot within the limit is in use', () => {
+    fillChain();
+    renderPanel();
+    expect(screen.getByLabelText(`Add an insert effect to ${CHANNEL}`)).toBeDisabled();
+  });
+
+  it('leaves the Add picker operable while a slot is free', () => {
+    renderPanel();
+    expect(screen.getByLabelText(`Add an insert effect to ${CHANNEL}`)).toBeEnabled();
+  });
+
+  it('fills the first EMPTY slot rather than appending past the rack', async () => {
+    const user = userEvent.setup();
+    // The default two-slot fixture leaves slots 3 and 4 of the rack free.
+    const strip = createDefaultChannelStrip(CHANNEL);
+    useMixerStore.getState().setChannels({
+      [CHANNEL]: {
+        ...strip,
+        inserts: [{ ...strip.inserts[0]!, effectType: 'delay', enabled: true }, ...strip.inserts.slice(1)],
+      },
+    });
+    renderPanel();
+
+    await user.selectOptions(screen.getByLabelText(`Add an insert effect to ${CHANNEL}`), 'reverb');
+
+    expect(stripNow().inserts).toHaveLength(4);
+    expect(stripNow().inserts[1]!.effectType).toBe('reverb');
+  });
+
+  /**
+   * A slot PAST the limit exists only in a chain a project already carried — admitted whole
+   * rather than truncated (§14 (ap)). Nothing can address it, so nothing may fill it.
+   */
+  it('disables Replace on a slot the limit forbids, and the store refuses it anyway', () => {
+    const strip = createDefaultChannelStrip(CHANNEL, 6);
+    useMixerStore.getState().setChannels({ [CHANNEL]: strip });
+    renderPanel();
+
+    expect(screen.getByLabelText('Replace insert 4')).toBeEnabled();
+    expect(screen.getByLabelText('Replace insert 5')).toBeDisabled();
+    expect(screen.getByLabelText('Replace insert 6')).toBeDisabled();
+
+    // The control being disabled is the panel's half; the store refusing is the rule itself,
+    // and it holds whether or not a surface asked politely first.
+    const refusal = useMixerStore.getState().replaceInsert(CHANNEL, stripNow().inserts[5]!.id, 'delay');
+    expect(refusal.ok).toBe(false);
+    expect(stripNow().inserts[5]!.effectType).toBeNull();
+  });
+
+  /**
+   * The refusal the disabled controls above do NOT cover: a channel with no strip at all. The
+   * panel cannot know the chain is full there — it has no chain — so the Add picker is live
+   * and the store's own sentence is what the user gets (spec §4.2, §8.1).
+   */
+  it('shows the store’s own refusal as a toast rather than doing nothing', async () => {
+    const user = userEvent.setup();
+    useMixerStore.getState().setChannels({});
+    useUIStore.setState({ toasts: [] });
+    renderPanel();
+
+    await user.selectOptions(screen.getByLabelText(`Add an insert effect to ${CHANNEL}`), 'reverb');
+
+    expect(useUIStore.getState().toasts.at(-1)?.message).toContain(CHANNEL);
+    expect(useUIStore.getState().toasts.at(-1)?.tone).toBe('warning');
+  });
+});
+
 describe('InsertPanel replace (spec §8.5.6)', () => {
   it('swaps the effect without moving the slot or the rest of the chain', async () => {
     const user = userEvent.setup();

@@ -23,7 +23,7 @@
  * `<li>` carries the same name, for browsing by list item.
  */
 import { useMemo } from 'react';
-import { useMixerStore } from '@/store';
+import { freeInsertSlot, useMixerStore, useProjectStore, useUIStore, type InsertSlotResult } from '@/store';
 import { useQLinkFocus } from '@/ui/useQLinkFocus';
 import {
   EFFECT_PARAM_CHOICES,
@@ -60,6 +60,19 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
   // Memoised so the empty fallback keeps a stable identity for the focus-registry memo.
   const inserts = useMemo(() => strip?.inserts ?? [], [strip]);
   const mixer = () => useMixerStore.getState();
+  // spec §1.3.1 — how many slots this channel may hold (§9.3 `projects.insert_limit`). The
+  // store owns the rule; this only decides which controls are worth offering (issue #135).
+  const insertLimit = useProjectStore((s) => s.globalInsertLimit);
+  const chainFull = freeInsertSlot(inserts, insertLimit) === null;
+
+  /**
+   * Show a store refusal verbatim (spec §4.2). `addInsert` and `replaceInsert` return a
+   * finished sentence because the store is the only layer that knows which rule refused; a
+   * silent return is what made the §8.5.6 picker read as broken past the limit (issue #135).
+   */
+  const report = (result: InsertSlotResult) => {
+    if (!result.ok) useUIStore.getState().pushToast(result.reason, 'warning');
+  };
 
   /**
    * Screen-mode Q-Link parameters for this panel — spec §10.3's own example: "opening a
@@ -107,10 +120,19 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
               value=""
               onChange={(event) => {
                 if (!event.target.value) return;
-                mixer().addInsert(channelId, event.target.value as EffectType);
+                report(mixer().addInsert(channelId, event.target.value as EffectType));
               }}
+              // A full channel says so on the control rather than only in a toast after the
+              // fact — the `LayersEditor` precedent for a §6 cap (spec §1.3.1, issue #135).
+              // The store still refuses, because the store owns the rule.
+              disabled={chainFull}
+              title={
+                chainFull
+                  ? `All ${insertLimit} insert slots are in use. Remove or replace one first.`
+                  : undefined
+              }
               data-testid="insert-add"
-              className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs font-normal text-bb-text normal-case"
+              className="rounded-bb-sm border border-bb-line bg-bb-raised px-2 py-1 text-xs font-normal text-bb-text normal-case disabled:opacity-50"
             >
               <option value="">Choose an effect…</option>
               {availableEffects.map((effect) => (
@@ -131,6 +153,8 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
           {inserts.map((slot, index) => {
             const effectType = slot.effectType;
             const ranges = effectType ? EFFECT_PARAM_RANGES[effectType] : {};
+            // Past the §1.3.1 limit the §7.8 grammar addresses nothing here (issue #135).
+            const beyondLimit = index >= insertLimit;
             // What every control in this slot is named after (spec §8.2).
             const slotName = effectType
               ? `insert ${index + 1}, ${EFFECT_LABELS[effectType]}`
@@ -157,10 +181,20 @@ export function InsertPanel({ channelId, availableEffects, onClose }: InsertPane
                     value={effectType ?? ''}
                     onChange={(event) => {
                       if (!event.target.value) return;
-                      mixer().replaceInsert(channelId, slot.id, event.target.value as EffectType);
+                      report(mixer().replaceInsert(channelId, slot.id, event.target.value as EffectType));
                     }}
+                    // A slot PAST the §1.3.1 limit exists only in a chain a project already
+                    // carried (see `withCompleteInserts`): an effect put there would sound
+                    // while every §7.8 address on it stayed dead, so the store refuses and
+                    // the control says so rather than looking operable (issue #135).
+                    disabled={beyondLimit}
+                    title={
+                      beyondLimit
+                        ? `Slot ${index + 1} is past this project's limit of ${insertLimit} insert slots, so nothing can address it.`
+                        : undefined
+                    }
                     data-testid={`insert-replace-${index}`}
-                    className="flex-1 rounded-bb-sm border border-bb-line bg-bb-base px-2 py-1 text-xs font-semibold text-bb-text"
+                    className="flex-1 rounded-bb-sm border border-bb-line bg-bb-base px-2 py-1 text-xs font-semibold text-bb-text disabled:opacity-50"
                   >
                     {!effectType && <option value="">Empty slot</option>}
                     {availableEffects.map((effect) => (

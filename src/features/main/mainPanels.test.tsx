@@ -69,6 +69,17 @@ beforeEach(() => {
   useTransportStore.getState().setActiveSequenceId(SEQUENCE.id);
 });
 
+describe('ProjectsPanel settings (spec §1.3.1, §9.3)', () => {
+  it('sets the §1.3.1 insert-slot limit — nothing else could change it (issue #135)', async () => {
+    const user = userEvent.setup();
+    render(<ProjectsPanel />);
+
+    await user.selectOptions(screen.getByLabelText('Insert slots per channel'), '8');
+
+    expect(useProjectStore.getState().globalInsertLimit).toBe(8);
+  });
+});
+
 describe('SequencesPanel', () => {
   it('adds a sequence — the action #40 reported no component could reach', async () => {
     const user = userEvent.setup();

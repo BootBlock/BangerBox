@@ -33,6 +33,23 @@ import { publishTransient, settleTransient } from './transientChannel';
 import { commit } from './commit';
 import { useProjectStore } from './useProjectStore';
 
+/**
+ * What a slot action did (spec §1.3.1, issue #135). A refusal carries a finished sentence
+ * rather than a code, exactly as `useProgramStore`'s `AssignResult` and `useSequenceStore`'s
+ * `AutomationEditResult` do, and for the same reason: every caller does the same thing with
+ * it — shows it to the user — and the store is the only layer that knows which rule refused.
+ *
+ * `addInsert` returned `void` before this, so a channel already full swallowed the request in
+ * silence and the §8.5.6 picker read as broken.
+ */
+export type InsertSlotResult = { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
+const SLOT_ACCEPTED: InsertSlotResult = { ok: true };
+
+function refuseSlot(reason: string): InsertSlotResult {
+  return { ok: false, reason };
+}
+
 interface MixerState {
   channels: Record<string, ChannelStrip>;
 
@@ -54,9 +71,14 @@ interface MixerState {
   setMute: (channelId: string, mute: boolean) => void;
   setSolo: (channelId: string, solo: boolean) => void;
 
-  addInsert: (channelId: string, effectType: EffectType) => void;
+  /**
+   * Put an effect in this channel's first free insert slot (spec §8.5.6, §1.3.1).
+   *
+   * Refuses once every slot within the §1.3.1 limit is occupied — see {@link InsertSlotResult}.
+   */
+  addInsert: (channelId: string, effectType: EffectType) => InsertSlotResult;
   /** Swap the effect in one slot, keeping its chain position (spec §8.5.6). */
-  replaceInsert: (channelId: string, slotId: string, effectType: EffectType) => void;
+  replaceInsert: (channelId: string, slotId: string, effectType: EffectType) => InsertSlotResult;
   removeInsert: (channelId: string, slotId: string) => void;
   setInsertEnabled: (channelId: string, slotId: string, enabled: boolean) => void;
 }
@@ -260,6 +282,18 @@ function writeScalar(strip: ChannelStrip, field: ScalarField, value: number): Ch
  * anything reads them, and neither can be corrected downstream without leaving the store
  * itself wrong. It hands back the same strip when nothing was missing, so the §4.3
  * `inserts`-identity diff does not fire on a hydrate.
+ *
+ * ## What it deliberately does NOT do: bound the chain (issue #135)
+ *
+ * A §9.6 import, a §9.8 pack or a project saved before the §1.3.1 limit was enforced can
+ * carry a chain longer than the limit. Three answers were available — refuse the project,
+ * truncate it, or keep it — and this is §14 (ap)'s "the stored value always wins and nothing
+ * is repaired" one level up. Refusing makes a project unopenable over an insert slot;
+ * truncating silently deletes an effect the user made and a §9.5 bounce would then render
+ * differently from the one they last heard. So the chain is admitted WHOLE and it sounds.
+ * What sits past the limit stays unaddressable — the pre-existing §7.8 consequence, not made
+ * worse — and nothing the app itself builds can reach that state, because the limit is
+ * applied where a slot is CREATED (`addInsert`, `replaceInsert`).
  */
 function withCompleteInserts(strip: ChannelStrip): ChannelStrip {
   let changed = false;
@@ -270,6 +304,51 @@ function withCompleteInserts(strip: ChannelStrip): ChannelStrip {
     return { ...slot, params };
   });
   return changed ? { ...strip, inserts } : strip;
+}
+
+/**
+ * How many insert slots this channel may hold — the §1.3.1 limit (issue #135).
+ *
+ * §1.3.1 gives every channel 4 slots, "configurable 1–8 via `globalInsertLimit`", and §9.3
+ * carries the value per project in `projects.insert_limit`. It bounds a CHANNEL, not the
+ * project: §1.3.1's own wording is "4 insert slots per pad, per track, and on the master".
+ * The §5.2 returns are not named there — they are the one strip §5.2 describes without an
+ * insert stage of its own — but they have strips, §8.5.6 edits their inserts on its own tab
+ * and a `insert:return:0:slot9.mix` address goes dead exactly as a track's does. One rule for
+ * every strip, therefore: a second would be a second thing to forget.
+ *
+ * Read at the moment of the edit rather than captured, so lowering the limit takes effect on
+ * the next add without anything having to re-derive the strips.
+ */
+function insertSlotLimit(): number {
+  return useProjectStore.getState().globalInsertLimit;
+}
+
+/**
+ * The slot position an effect may be created at, or null when §1.3.1 forbids any (issue #135).
+ *
+ * The rack is `limit` slots long (§5.2 "serial chain of insert slots (default 4)"), and
+ * `createDefaultChannelStrip` opens it with that many EMPTY ones — so "add" means *fill the
+ * first free slot*, and only a rack shorter than the limit grows. Appending unconditionally
+ * put the very first effect a user added on slot 5 of a four-slot rack, and the fifth on slot
+ * 9, where the §7.8 grammar stops parsing and every address on it dies.
+ *
+ * A chain that is ALREADY longer than the limit still yields its own empty slots inside the
+ * limit; what it may never do is gain a position past one. See {@link withCompleteInserts}
+ * for why such a chain is admitted at all.
+ *
+ * Exported so §8.5.6 can disable its Add picker on a full channel from the SAME rule the
+ * store refuses by, rather than restating it and drifting (spec §3.4).
+ */
+export function freeInsertSlot(inserts: readonly InsertSlotState[], limit: number): number | null {
+  const free = inserts.findIndex((slot, index) => index < limit && slot.effectType === null);
+  if (free >= 0) return free;
+  return inserts.length < limit ? inserts.length : null;
+}
+
+/** The refusal both creating actions give when §1.3.1 leaves nowhere to put an effect. */
+function fullChainReason(limit: number): string {
+  return `All ${limit} insert slots on this channel are in use. Remove or replace one first.`;
 }
 
 /** Map a channel id to the entity whose persistence owns its strip (spec §5.2, §9.3). */
@@ -408,32 +487,50 @@ export const useMixerStore = create<MixerState>()(
 
     addInsert: (channelId, effectType) => {
       const prev = get().channels[channelId];
-      if (prev === undefined) return;
+      if (prev === undefined) return refuseSlot(`There is no ${channelId} channel to add an insert to.`);
+      // spec §1.3.1 — the rack is `globalInsertLimit` slots long, so an add FILLS the first
+      // free one and only a short rack grows. Past the limit there is nowhere to put it, and
+      // an effect there would sound while every §7.8 address on it went dead (issue #135).
+      const limit = insertSlotLimit();
+      const index = freeInsertSlot(prev.inserts, limit);
+      if (index === null) return refuseSlot(fullChainReason(limit));
       // The §5.7 defaults, not an empty record: `createInsert` merges them on the graph side,
       // so a slot without them sounds at one value and reads as its range floor (issue #131).
+      // A slot being filled keeps its own id, exactly as `replaceInsert` does — the id is the
+      // slot's handle (React key, and what the panel passes back to remove or bypass it).
       const slot: InsertSlotState = {
-        ...createEmptyInsertSlot(),
+        ...(prev.inserts[index] ?? createEmptyInsertSlot()),
         effectType,
         enabled: true,
         params: defaultEffectParams(effectType),
       };
-      const write = (inserts: InsertSlotState[]) =>
+      const inserts = [...prev.inserts];
+      inserts[index] = slot;
+      const write = (next: InsertSlotState[]) =>
         set((state) => ({
-          channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } },
+          channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts: next } },
         }));
       commit({
         label: 'Add insert',
-        apply: () => write([...prev.inserts, slot]),
+        apply: () => write(inserts),
         revert: () => write(prev.inserts),
         dirtyKeys: [mixerChannelDirtyKey(channelId)],
       });
+      return SLOT_ACCEPTED;
     },
 
     replaceInsert: (channelId, slotId, effectType) => {
       const prev = get().channels[channelId];
-      if (prev === undefined) return;
-      const target = prev.inserts.find((slot) => slot.id === slotId);
-      if (target === undefined || target.effectType === effectType) return;
+      if (prev === undefined) return refuseSlot(`There is no ${channelId} channel to replace an insert on.`);
+      const slotIndex = prev.inserts.findIndex((slot) => slot.id === slotId);
+      const target = prev.inserts[slotIndex];
+      if (target === undefined) return refuseSlot('That insert slot is no longer on this channel.');
+      // spec §1.3.1 — the other of the two actions that may OCCUPY a slot (§14 (ap)). Only an
+      // over-long chain admitted from a project has a slot here at all; filling one would put
+      // a sounding effect where no §7.8 address reaches (issue #135).
+      const limit = insertSlotLimit();
+      if (slotIndex >= limit) return refuseSlot(fullChainReason(limit));
+      if (target.effectType === effectType) return SLOT_ACCEPTED;
       const write = (inserts: InsertSlotState[]) =>
         set((state) => ({
           channels: { ...state.channels, [channelId]: { ...state.channels[channelId]!, inserts } },
@@ -468,6 +565,7 @@ export const useMixerStore = create<MixerState>()(
         revert: () => write(prev.inserts),
         dirtyKeys: [mixerChannelDirtyKey(channelId)],
       });
+      return SLOT_ACCEPTED;
     },
 
     removeInsert: (channelId, slotId) => {

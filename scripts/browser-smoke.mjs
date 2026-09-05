@@ -666,12 +666,30 @@ async function assertShellAndSelfTest(page, label) {
     await page.getByTestId('mixer-tab').getByRole('radio', { name: 'Master' }).click();
     await page.getByTestId('mixer-inserts-master').click();
     const slots = page.locator('[data-testid^="insert-slot-"]');
-    const before = await slots.count();
+    const delays = page.locator('[data-testid^="insert-slot-"][aria-label$="Delay"]');
+    // `addInsert` FILLS the first free slot of the §1.3.1 rack rather than appending past it
+    // (issue #135), so the slot this step created is neither the last nor at a known index —
+    // and the master chain may already carry inserts this step did not put there. It is found
+    // by diffing the list's own names, and everything below is scoped to that one list item.
+    const labelsOf = () =>
+      slots.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label') ?? ''));
+    const namesBefore = await labelsOf();
+    const delaysBefore = await delays.count();
     await page.getByTestId('insert-add').selectOption('delay');
-    // `addInsert` appends, so the slot this step created is the last one — and the master
-    // chain may already carry inserts this step did not put there. Everything below is scoped
-    // to that one list item rather than matched across the panel.
-    const slot = slots.nth(before);
+    await page.waitForFunction(
+      (previous) => {
+        const now = [...document.querySelectorAll('[data-testid^="insert-slot-"]')].map(
+          (node) => node.getAttribute('aria-label') ?? '',
+        );
+        return now.length !== previous.length || now.some((name, i) => name !== previous[i]);
+      },
+      namesBefore,
+      { timeout: 5_000 },
+    );
+    const namesAfter = await labelsOf();
+    const added = namesAfter.findIndex((name, i) => name !== namesBefore[i]);
+    if (added < 0) throw new Error('adding a delay changed no insert slot in the panel at all');
+    const slot = slots.nth(added);
     const time = slot.getByRole('slider', { name: /^Time, insert \d+, Delay$/ });
     await time.waitFor({ timeout: 5_000 });
     const announced = await time.getAttribute('aria-valuetext');
@@ -690,10 +708,60 @@ async function assertShellAndSelfTest(page, label) {
     // What this step added, it takes back, through §8.5.6's own Remove control — so no later
     // step mixes through an effect it did not ask for.
     await slot.getByRole('button', { name: /^Remove insert \d+, Delay$/ }).click();
-    if ((await slots.count()) !== before) {
-      throw new Error(`removing the added insert left ${await slots.count()} slots, not ${before}`);
-    }
+    // Counted by EFFECT rather than by slot count: `removeInsert` drops the slot from the
+    // array rather than emptying it in place, so the rack is one shorter afterwards (#142).
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('[data-testid^="insert-slot-"][aria-label$="Delay"]').length === n,
+      delaysBefore,
+      { timeout: 5_000 },
+    );
     await page.getByTestId('mode-tab-main').click();
+  });
+
+  // §1.3.1 gives every channel 4 insert slots, "configurable 1–8", and `addInsert` appended
+  // without consulting it — so the fifth effect a user added landed on slot 9, where the §7.8
+  // grammar stops parsing. The effect went on SOUNDING while the panel's own knobs, every
+  // automation lane and every §10.3 binding on it addressed nothing. Both halves are audio
+  // claims, so both are measured on the real graph: a 1 kHz tone into the §5.2 master input,
+  // every occupied slot opened through its OWN §7.8 address, then the last one closed.
+  await step(`${label}: a channel's insert chain is bounded and every slot is reachable (#135)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.insertLimitProof());
+    if (r.slotCount !== r.limit || r.occupiedCount !== r.limit) {
+      throw new Error(
+        `twelve adds left ${r.slotCount} slots (${r.occupiedCount} occupied) on ${r.channelId} — §1.3.1 allows ${r.limit}`,
+      );
+    }
+    if (r.refusalReason === '') {
+      throw new Error('the store never refused an add — a full channel swallowed the request in silence');
+    }
+    if (r.deadSlots.length > 0) {
+      throw new Error(
+        `slots [${r.deadSlots.join(', ')}] hold an effect no §7.8 address can reach — the knobs on them are dead`,
+      );
+    }
+    // A vacuity guard before the ratio: a silent chain would satisfy any fall.
+    if (!(r.openPeak > 0.05)) {
+      throw new Error(`the open chain passed nothing (master peak ${r.openPeak.toFixed(5)})`);
+    }
+    // Two octaves above an 80 Hz lowpass. Under the defect the write reaches nothing at all
+    // and the two readings are the same number.
+    if (!(r.closedPeak < r.openPeak * 0.25)) {
+      throw new Error(
+        `closing slot ${r.drivenSlot} by its §7.8 address left the master peak at ${r.closedPeak.toFixed(5)} against ${r.openPeak.toFixed(5)} — the address reached nothing`,
+      );
+    }
+    // A chain a §9.6 import can carry is kept WHOLE — refusing the project or truncating it
+    // are the two answers §14 (ap) rules out — while the store still refuses to fill a slot
+    // past the limit.
+    if (r.admittedOverLongSlots !== 9) {
+      throw new Error(`an imported nine-slot chain was cut to ${r.admittedOverLongSlots} slots on admission`);
+    }
+    if (!r.replaceBeyondLimitRefused) {
+      throw new Error('replacing a slot past the §1.3.1 limit was allowed — nothing could address it');
+    }
+    console.log(
+      `       insert limit: ${r.occupiedCount}/${r.limit} slots after 12 adds, slot ${r.drivenSlot} took the master peak ${r.openPeak.toFixed(5)} → ${r.closedPeak.toFixed(5)}`,
+    );
   });
 
   // A pad's mixer strip is the §6 payload's own values wearing a §4.2 shape (issue #133), and
