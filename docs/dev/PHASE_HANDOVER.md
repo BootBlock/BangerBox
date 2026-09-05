@@ -1,14 +1,38 @@
-# BangerBox — Phase Handover (after the insert-removal closure)
+# BangerBox — Phase Handover (after the end-of-buffer declick closure)
 
-Generated at the close of the §7.8 insert-removal work per Protocol Alpha (spec §13.1). A new
-session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
-MUST reuse the patterns recorded here rather than inventing parallel ones.
+Generated at the close of the §5.4 end-of-buffer declick work per Protocol Alpha (spec §13.1). A
+new session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code,
+and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the insert-removal work merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §1.3.1/§5.2/§7.8/§8.5.6, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1999 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **82/82 steps**), plus `lint`, `type-check`, `format:check`
-and `verify` (**no open stubs**).
+**State:** the declick work merged to `main` (`--no-ff`). All eight §12 phases were already
+complete; this was a defect closure against §5.4/§5.9, not a new phase, so `package.json`
+`config.phase` remains **"8"**. Suite: **2014 unit tests**, `test:e2e` real-browser smoke
+(dev + offline, **84/84 steps**), plus `lint`, `type-check`, `format:check` and `verify`
+(**no open stubs**).
+
+**The §5.4 declick is 3 ms long, and it departs from a level the CALLER supplies.**
+`scheduleAmpDeclick` used `cancelAndHoldAtTime(fadeStart)` as its anchor, and that method pins a
+held value only where there is an event at or after the cancel time to REWRITE. A voice's amp
+timeline has nothing after its decay, so nothing was inserted and the following
+`linearRampToValueAtTime(0, endTime)` interpolated from the note-on — **every voice in the
+application faded across its whole length**, live and in every §9.5 bounce, from §14 (t) until
+now. See §2 (ay) and §4.
+
+**Nothing on the public `AudioParam` surface reports the value a contour WILL hold at a future
+time.** `param.value` answers for now. That is why the level is computed rather than read:
+`ampLevelAt` evaluates the §6 AHDSR from the same four boundaries `scheduleAmpAttack` writes, so
+the model and the sound cannot drift apart. A new fade that is the LAST thing on its timeline
+needs the same treatment.
+
+**`scheduleAmpRelease` is right to anchor on `cancelAndHoldAtTime`, and must keep doing so.** A
+release, a steal and a choke all interrupt a voice whose declick ramp is still queued beyond
+them, so there IS an event to rewrite. Two helpers, one asking the param and one told by the
+caller, is the honest shape of that difference rather than a duplication.
+
+**Every previous proof of the declick read a voice's ENDS**, and both are satisfied by a fade
+that runs the whole length of a voice: it still finishes at the region's end and still lands on
+near-silence. Reading the SHAPE in between is what found it. A claim about how a voice sounds
+over its life needs a profile, not two samples.
 
 **Removing an insert EMPTIES its slot; it never drops the slot from the rack.** `removeInsert`
 wrote `prev.inserts.filter(...)`, and §14 (ar) made a §7.8 `slotN` address 1-based over that
@@ -185,6 +209,28 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(ay) — the end-of-buffer declick closure (§5.4, §5.9, §6, §9.5, §11.2, §11.4).** The ⚑ items
+  below are settled policy a new session should treat as binding, not as spec text:
+  - **The fade departs from the level the voice's own §6 amp contour holds where it begins**,
+    and the caller supplies it. `cancelAndHoldAtTime` cannot: it inserts a held value only
+    where an event stands at or after the cancel time, and the declick is the last thing on
+    that timeline.
+  - ⚑ **One rule covers every §6 stage, and the released case never arrives.** At sustain the
+    level is `peak × sustain`; mid-attack, mid-hold or mid-decay it is the contour's value
+    there; and a RELEASED voice does not reach the code at all, because `scheduleAmpRelease`
+    erased the fade and every re-lay path skips a voice that has stopped.
+  - ⚑ **The clamp is on the fade's START**, as §5.4 already said. A 2 ms region gets a 2 ms
+    fade beginning at its note-on. Its degenerate case is stated rather than hidden: a voice
+    shorter than its own §6 attack departs from silence and is silent — unchanged by this
+    work, and pinned by a test so it is not rediscovered as a defect.
+  - ⚑ **A RE-LAID fade reads the contour no later than the OLD fade start.** The erase freezes
+    the timeline there, and where the first fade truncated a running decay that is the last
+    point the contour reaches at all.
+  - ⚑ **The §5.9 preview shared the helper and shared the defect to five decimal places.** It
+    passes unity, which is where an audition's own amp sits for its whole life.
+  - ⚑ **Absolute RMS figures recorded in §14 since (t) are superseded**; ratios, peaks and
+    lengths are not. See §11 for the measured pairs.
 
 - **(ax) — the insert-removal closure (§1.3.1, §5.2, §7.8, §8.5.6).** The ⚑ items below are
   settled policy a new session should treat as binding, not as spec text:
@@ -864,8 +910,18 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   whatever tempo it was working at.
 - **`cancelAndHoldAtTime` anchors a later ramp only when there is an event at or after the
   cancel time to rewrite.** On an otherwise-empty timeline it inserts nothing and the following
-  `linearRampToValueAtTime` interpolates from the preceding event — see issue #144, which is
-  what that costs the §5.4 declick.
+  `linearRampToValueAtTime` interpolates from the preceding event. That was issue #144, now
+  closed: a ramp that is the LAST thing on its timeline has to be given the level it departs
+  from. `rampParamLinear` (§14 (ar)) and `scheduleAmpRelease` anchor the same way, deliberately,
+  for params that are already carrying something later.
+- **A voice's amp gain can be profiled directly by playing a CONSTANT sample.** Every rendered
+  frame is then the gain itself, so a 3 ms fade can be told from a 250 ms one without estimating
+  an envelope from a tone. `renderAmpProfileOffline` and `renderPreviewProfileOffline` in
+  `offlineTest.ts` are that instrument; reach for it before asserting anything about how a voice
+  sounds over its life.
+- **`declickContourProof` had NO smoke caller for the whole of its life**, so it guarded nothing
+  (issue #87's proof included). Before extending a probe, check `scripts/browser-smoke.mjs` for
+  the step that drives it — `grep '__bangerboxAudioProbe\.'` lists every one that exists.
 - **The shell's working directory DRIFTS between tool calls, and a `gh` invocation resets it to
   the main checkout.** Two commits landed on `main` in the primary checkout that way and had to
   be moved with `format-patch` + `am`. Pass `git -C <abs worktree>` or `cd <abs worktree> &&`
@@ -875,12 +931,12 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   those files on its FIRST pass, before any mutation has been applied.
 - **A removed worktree can leave an EMPTY directory behind under `.claude/worktrees/`.** A
   lingering shell holds its CWD, so `git worktree remove` and `rm -rf` both fail with
-  "Permission denied" / "Device or resource busy". `voicelane` and `slotshift` are two;
-  `padchannel`, `slotlimit`, `trackwithdraw`, `bouncemix` and `padstrip` were others, and both
-  `padchannel` and `slotlimit` DID delete once their shells had gone, so try again before
-  assuming otherwise. Both `voicelane` and `slotshift` were still busy at the close of this
-  work, so both were left alone. `git worktree list` shows only `main`, so they are not
-  another agent's work — delete them if you can and ignore them if you cannot.
+  "Permission denied" / "Device or resource busy". `voicelane` is one; `slotshift`,
+  `padchannel`, `slotlimit`, `trackwithdraw`, `bouncemix` and `padstrip` were others, and all
+  but `voicelane` DID delete once their shells had gone — `slotshift` went at the start of this
+  work — so try again before assuming otherwise. `voicelane` was still busy at the close of
+  this work and was left alone. `git worktree list` shows only `main`, so it is not another
+  agent's work — delete it if you can and ignore it if you cannot.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
@@ -923,6 +979,30 @@ transient channel still stand. New this work:
   lane as a LEVEL and a pitch lane as a LENGTH, and measures the live half with the transport
   stopped at the moment of each write — so the only way a write can reach the pass that follows
   is a value the next voice is built against.
+
+**Ending a voice (spec §5.4, §5.9, §6):**
+
+- **`voiceEnvelope.ts` owns the §6 amp contour twice over, and the two descriptions are one.**
+  `scheduleAmpAttack` writes the four AHDSR boundaries to the param and `ampLevelAt` evaluates
+  the same four, so the model and the sound cannot drift — the discipline
+  `modEnvelopeBreakpoints` already keeps for the §5.4 declick's detune integrator. A new §6 amp
+  stage goes in both, or the declick departs from a level the voice never reaches.
+- **`ampLevelAt` tests its boundaries from the LAST segment backwards**, so a zero-length
+  attack, hold or decay resolves to the stage that follows it — which is what Web Audio does
+  with several events written at one time, and what a flat §6 envelope is made of.
+- **`declickFadeStart(endTime, earliest, declickMs)` is the ONE place the fade's start is
+  computed**, and it is exported because the caller needs the time as well as the schedule: the
+  level the fade departs from is the contour's value THERE. `scheduleAmpDeclick` calls it too.
+- **`scheduleAmpDeclick` takes the level and returns nothing.** A new caller computes
+  `declickFadeStart`, reads its own contour at that time, and passes the result. `VoicePool`
+  reads `ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, …)`; `PreviewChannel` passes 1.
+- **`Voice` carries `amp` and `ampPeak`, and `releaseMs` is gone.** The envelope IS the release
+  time, and the same two fields are what every re-lay evaluates the departure level from.
+- **`rescheduleDeclick` reads the contour at `Math.min(newFadeStart, voice.declickFadeStart)`.**
+  Erasing the stale fade freezes the timeline at the old start, so a retune that pushes the end
+  later must not read a contour that has stopped running.
+- **`scheduleAmpRelease` stays as it is and shares no helper with the declick**, for the reason
+  in the header. A new interruption fade goes through it; a new END-of-region fade does not.
 
 **A pad channel, and what a §4.2 id resolves to (spec §4.2, §5.2, §5.3):**
 
@@ -1706,18 +1786,59 @@ per §14 (ak) — clamp in range, refuse a non-finite one, throw on a bad struct
 **`check:stubs` reports ZERO open stubs.** Outstanding work lives in GitHub issues, not in code
 comments.
 
-**Removing an insert now EMPTIES its slot** (#142), so no §7.8 address behind it moves and the
-§1.3.1 rack keeps its length. **A §7.8 lane on a §6 sound-design parameter sounds and renders**
-(#138); the two amp-envelope leaves do not (#143), and the §5.4 declick has never been 3 ms long
-(#144).
+**The §5.4 declick is 3 ms long** (#144) and departs from the level the §6 contour holds where
+it begins. **Removing an insert EMPTIES its slot** (#142), so no §7.8 address behind it moves and
+the §1.3.1 rack keeps its length. **A §7.8 lane on a §6 sound-design parameter sounds and
+renders** (#138); the two amp-envelope leaves still do not (#143).
 
 **STILL OUTSTANDING FROM PHASE 8 — READ THIS FIRST:**
 
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#142 is CLOSED by this work.** No new issue was filed while closing it, and nothing was added
+**#144 is CLOSED by this work.** No new issue was filed while closing it, and nothing was added
 to the `check:orphans` allowlist.
+
+**Honest scope notes for the declick work:**
+
+- **It is an audible change to EVERY voice in the application.** Samples decayed across their
+  whole length and no longer do. It is what §5.4 asks for, and it is louder.
+- **What moved in the recorded §14 numbers, measured on both builds rather than derived.** The
+  same dev smoke was run against a build carrying the defect and against the fixed one, and the
+  defect build reproduces §14 (ar), (as), (av), (aw) and (ax)'s figures to every digit — so
+  nothing else has moved them since. An absolute RMS of a render carrying voices rises by about
+  √3: `insertRemoveProof` 0.10246 → 0.18246, `padStripProof` 0.10244 → 0.18242,
+  `sharedPadChannelProof` 0.06162 → 0.10540. A PEAK is unchanged to every digit
+  (`insertLimitProof` 0.49939 → 0.00320 on both). A ratio between renders differing only in a
+  §4.2 level survives exactly (×0.5000, ×0.2512, ×0.251, ×1.000, ×0.0001). A LENGTH is
+  unchanged (0.0846 → 0.0850 s, 0.2276 → 0.2287 s), which is why the defect survived. **No
+  recorded ASSERTION is invalidated** — every one is a ratio or a length.
+- **Three ratios did move**, because the defect weighted a voice's head and its tail
+  differently: `padLaneProof`'s pitched beat 4 reads ×1.00 of beat 1's head level where it read
+  ×0.66 (the ×0.66 was the defect's own artefact); `bounceMixProof`'s 100 Hz lowpass reads
+  ×0.013 where it read ×0.018; and its §7.8 lane sweeps climb further, 0.0485 → 0.1025 at the
+  master lane's end.
+- **A voice shorter than its own §6 attack is silent**, and was before this work too. It is the
+  stated consequence of §5.4 clamping the fade's START, it is pinned by a test, and nothing is
+  filed for it. Making such a voice sound means multiplying the fade OVER the AHDSR instead of
+  replacing it — a second gain node per voice, and a §6 question §5.4 does not ask.
+- **`scheduleAmpRelease` was not measured in the browser.** The claim that a steal, a choke and
+  a note-off are unaffected is a reading of the timeline plus a unit test; the fix adds an event
+  before the release's cancel time and removes none, so it cannot have made any of them worse.
+- **A browser without `cancelAndHoldAtTime` was never affected.** The issue #109 polyfill
+  computes the held value from its own shadow timeline and inserts it unconditionally, so the
+  declick was already correct there and is unchanged.
+- **Every regression test was proven against the code it was written to catch**, by six
+  mutations: the defect as filed fails 9, a re-lay reading a stopped contour fails 1, §5.4's
+  start clamp removed fails 4, the §6 `curve` ignored fails 2, the sustain stage ignored fails
+  4, and a preview departing from silence fails 1.
+- **Measured in a real browser**: 84/84 smoke steps at ports 5342/5343, dev and offline, no
+  console errors. Voice gain 1.00000 head → 1.00000 mid → 1.00000 three milliseconds before the
+  end, fading in 1.50 ms; the §5.9 preview the same three numbers. Against the unfixed build,
+  0.99600 → 0.50042 → 0.01292 and 124.27 ms on both paths.
+
+**#142 was CLOSED by the previous work.** No new issue was filed while closing it, and nothing
+was added to the `check:orphans` allowlist.
 
 **Honest scope notes for the insert-removal work:**
 
@@ -1987,17 +2108,11 @@ sound-design parameter still renders as nothing (#138), listed below. Nothing wa
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-**#142, #141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**, and #139, #140, #143
-and #144 remain open.
+**#144, #142, #141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**, and #139, #140
+and #143 remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **#144** the §5.4 end-of-buffer declick fades from the NOTE-ON rather than from 3 ms before
-  the region end, so every voice decays across its whole length. `scheduleAmpDeclick` uses
-  `cancelAndHoldAtTime` as an anchor and that method inserts nothing when no event stands at or
-  after the cancel time. Audible on every voice, live and in every §9.5 bounce, and a fix means
-  the caller supplying the level the fade departs from. Found profiling the amp gain of a
-  bounced hit while closing #138.
 - **#143** a §7.8 lane on `program:<id>.pad:<idx>.amp.attack` or `…amp.release` reaches
   nothing: `programParamChange` maps neither, so both are inert live and render as nothing.
   An AHDSR is applied at note-on, so there is no param to sum onto.
@@ -2287,6 +2402,6 @@ and #144 remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1999**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **82/82 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**2014**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **84/84 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
