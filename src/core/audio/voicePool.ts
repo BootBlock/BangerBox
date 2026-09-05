@@ -25,6 +25,8 @@ import {
   type PlaybackMode,
 } from '@/core/project/schemas';
 import {
+  ampLevelAt,
+  declickFadeStart,
   modEnvelopeBreakpoints,
   scheduleAmpAttack,
   scheduleAmpDeclick,
@@ -229,7 +231,13 @@ interface Voice {
   readonly programId: string;
   readonly chokeGroup: number;
   readonly oneShot: boolean;
-  readonly releaseMs: number;
+  /**
+   * The §6 amp envelope and the peak it was built at — the two the §5.4 declick's departure
+   * level is evaluated from, on the first lay and on every re-lay (issue #144). `release` is
+   * read from here too, rather than banked separately: they are one value.
+   */
+  readonly amp: AhdsrEnvelope;
+  readonly ampPeak: number;
   /** Base detune in cents (tune + static pitch mod) — the glide origin (spec §6). */
   readonly baseDetune: number;
   /** Buffer seconds this voice sounds — its trimmed region at unity rate (spec §6). */
@@ -303,7 +311,7 @@ export class VoicePool {
   release(padKey: string, when: number): void {
     for (const voice of this.voices.values()) {
       if (voice.padKey !== padKey || voice.oneShot || voice.stopScheduled) continue;
-      const end = scheduleAmpRelease(voice.ampGain.gain, when, voice.releaseMs);
+      const end = scheduleAmpRelease(voice.ampGain.gain, when, voice.amp.release);
       this.safeStop(voice, end);
       voice.released = true;
       voice.stopScheduled = true;
@@ -585,10 +593,21 @@ export class VoicePool {
     const remaining = voice.regionSeconds - voice.consumedSeconds;
     if (remaining <= 0) return;
     // Erase the stale fade first: holding at its own start leaves the amp on the level the
-    // AHDSR had reached there, which is exactly what the new fade wants to depart from.
+    // AHDSR had reached there, which is where the timeline stands from that moment onwards.
     voice.ampGain.gain.cancelAndHoldAtTime(voice.declickFadeStart);
     const endTime = regionEndTime(voice.detune, at, remaining);
-    voice.declickFadeStart = scheduleAmpDeclick(voice.ampGain.gain, endTime, at, DECLICK_FADE_MS);
+    const fadeStart = declickFadeStart(endTime, at, DECLICK_FADE_MS);
+    // The same rule as the first lay — the level the contour holds where the fade begins —
+    // but read no later than the OLD fade start, because the erase above froze the timeline
+    // there and a retune that pushes the end later does not restart the AHDSR (issue #144).
+    const level = ampLevelAt(
+      voice.ampPeak,
+      voice.amp,
+      voice.startTime,
+      Math.min(fadeStart, voice.declickFadeStart),
+    );
+    scheduleAmpDeclick(voice.ampGain.gain, endTime, at, DECLICK_FADE_MS, level);
+    voice.declickFadeStart = fadeStart;
   }
 
   /** The base detune of the sounding voice on a pad (mono glide origin, spec §6), or undefined. */
@@ -733,7 +752,17 @@ export class VoicePool {
     const endTime = source.pitchCoupled
       ? regionEndTime(detune, now, source.sourceSeconds)
       : now + source.sourceSeconds;
-    const declickFadeStart = scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS);
+    // The fade departs from the level the AHDSR holds where it begins. The param cannot be
+    // asked for it — the declick is the last thing on that timeline, so `cancelAndHoldAtTime`
+    // has nothing to rewrite and pins nothing (issue #144).
+    const fadeStart = declickFadeStart(endTime, now, DECLICK_FADE_MS);
+    scheduleAmpDeclick(
+      ampGain.gain,
+      endTime,
+      now,
+      DECLICK_FADE_MS,
+      ampLevelAt(peak, spec.amp, now, fadeStart),
+    );
 
     source.start(now);
     for (const osc of oscillators) osc.start(now);
@@ -753,13 +782,14 @@ export class VoicePool {
       programId: spec.programId,
       chokeGroup: spec.chokeGroup,
       oneShot: spec.playbackMode === 'oneShot',
-      releaseMs: spec.amp.release,
+      amp: spec.amp,
+      ampPeak: peak,
       baseDetune,
       regionSeconds: source.sourceSeconds,
       detune,
       consumedSeconds: 0,
       consumedUntil: now,
-      declickFadeStart,
+      declickFadeStart: fadeStart,
       startTime: now,
       released: false,
       stopScheduled: false,

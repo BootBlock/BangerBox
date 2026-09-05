@@ -45,8 +45,10 @@ export class PreviewChannel {
     source.buffer = buffer;
     source.connect(amp);
     const voice: PreviewVoice = { source, amp };
-    // Preview never repitches, so the buffer's own duration is the exact end time.
-    scheduleAmpDeclick(amp.gain, when + buffer.duration, when, DECLICK_FADE_MS);
+    // Preview never repitches, so the buffer's own duration is the exact end time. The
+    // audition's amp sits at unity for its whole life — nothing else writes it — so unity is
+    // the level the §5.4 fade departs from (issue #144).
+    scheduleAmpDeclick(amp.gain, when + buffer.duration, when, DECLICK_FADE_MS, 1);
     source.onended = () => this.dispose(voice);
     source.start(when);
     this.current = voice;
