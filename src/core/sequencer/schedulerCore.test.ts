@@ -321,6 +321,43 @@ describe('SchedulerCore — recording (spec §7.7)', () => {
   });
 });
 
+describe('SchedulerCore — sequence mode plays one sequence (spec §7.9, issue #132)', () => {
+  it('neither schedules nor erases a track on an inactive sequence', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['A', 'B'], 'A', 'sequence');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    core.applyEventsDiff('tA', 'A', [note('a1', 0, 36)], []);
+    core.applyEventsDiff('tB', 'B', [note('b1', 0, 38)], []);
+    core.setTransport(true, false, 0);
+    core.setLiveErase('tB', 38, true);
+
+    const result = run(core, steps(1.0));
+    expect(notes(result).map((e) => e.trackId)).toEqual(['tA']);
+    expect(result.erased).toEqual([]);
+  });
+
+  /**
+   * §7.1.4 does not say what a null `activeSequenceId` means in sequence mode.
+   * Playing every track is what made the two modes indistinguishable and let
+   * live erase delete notes the user cannot see. No sequence selected is no
+   * sequence playing.
+   */
+  it('schedules and erases nothing when no sequence is active', () => {
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['A'], null, 'sequence');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    core.applyEventsDiff('tA', 'A', [note('a1', 0)], []);
+    core.setTransport(true, false, 0);
+    core.setLiveErase('tA', 36, true);
+
+    const result = run(core, steps(1.0));
+    expect(notes(result)).toEqual([]);
+    expect(result.erased).toEqual([]);
+  });
+});
+
 describe('SchedulerCore — live erase (spec §7.7)', () => {
   it('removes a held pad’s events as the loop passes', () => {
     const core = new SchedulerCore();
