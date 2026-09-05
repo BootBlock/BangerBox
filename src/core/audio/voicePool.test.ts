@@ -273,6 +273,26 @@ describe('voice endings (spec §5.4 declick)', () => {
     pool.destroy();
   });
 
+  it('reads a SECOND re-lay from where the contour stopped, not from the previous fade start', () => {
+    // A §7.8 pitch lane re-lays every `SCHEDULER_INTERVAL_MS`, so the level has to be read at
+    // the EARLIEST fade start the voice has had rather than the last one — the AHDSR stopped
+    // running at the first, and nothing restarts it. A 60 ms region under a 500 ms decay is
+    // still decaying there, so reading the previous fade start walks the level down a frozen
+    // contour a step per window: 0.55978 instead of 0.65752 on only the second retune.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const slow = createDefaultEnvelope({ attack: 1, hold: 0, decay: 500, sustain: 0.2 });
+    pool.trigger(spec(context, { id: 'twice', when: 0, startFrame: 0, endFrame: 2_880, amp: slow }));
+    pool.applyProgramDetune('p1', -1200, 0.01); // fade moves 0.057 s → 0.107 s
+    pool.applyProgramDetune('p1', -2400, 0.02); // …and again, to 0.197 s
+    const departure = paramCalls(ampGain(fake))
+      .filter((c) => c.method === 'setValueAtTime')
+      .at(-1);
+    expect(departure?.args[1]).toBeCloseTo(0.197, 6);
+    expect(departure?.args[0]).toBeCloseTo(0.65752, 5);
+    pool.destroy();
+  });
+
   it('clamps a voice shorter than the fade to its own start, and departs from the contour there', () => {
     // §5.4 clamps the fade's START, so a 2 ms region gets a 2 ms fade rather than one
     // beginning 1 ms before the voice exists. With a flat §6 envelope the contour is already

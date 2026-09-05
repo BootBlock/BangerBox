@@ -250,6 +250,14 @@ interface Voice {
   consumedUntil: number;
   /** Context time the scheduled declick fade begins (spec §5.4). */
   declickFadeStart: number;
+  /**
+   * The EARLIEST fade start this voice has ever had — where its §6 amp contour stopped
+   * running (spec §5.4, issue #144). Each lay truncates the AHDSR at its own fade start and
+   * nothing restarts it, so the level the timeline holds from there on is the contour's value
+   * HERE, not at the fade start currently in force. Only a re-lay that moves the fade EARLIER
+   * moves it.
+   */
+  contourFrozenAt: number;
   startTime: number;
   released: boolean;
   stopScheduled: boolean;
@@ -597,15 +605,13 @@ export class VoicePool {
     voice.ampGain.gain.cancelAndHoldAtTime(voice.declickFadeStart);
     const endTime = regionEndTime(voice.detune, at, remaining);
     const fadeStart = declickFadeStart(endTime, at, DECLICK_FADE_MS);
-    // The same rule as the first lay — the level the contour holds where the fade begins —
-    // but read no later than the OLD fade start, because the erase above froze the timeline
-    // there and a retune that pushes the end later does not restart the AHDSR (issue #144).
-    const level = ampLevelAt(
-      voice.ampPeak,
-      voice.amp,
-      voice.startTime,
-      Math.min(fadeStart, voice.declickFadeStart),
-    );
+    // The same rule as the first lay — the level the contour holds where the fade begins — but
+    // read where the contour STOPPED, which is the earliest fade start this voice has had and
+    // not merely the previous one. A §7.8 pitch lane re-lays every `SCHEDULER_INTERVAL_MS`, so
+    // reading the last fade start would walk the level down the frozen contour a step per
+    // window (issue #144).
+    voice.contourFrozenAt = Math.min(voice.contourFrozenAt, fadeStart);
+    const level = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, voice.contourFrozenAt);
     scheduleAmpDeclick(voice.ampGain.gain, endTime, at, DECLICK_FADE_MS, level);
     voice.declickFadeStart = fadeStart;
   }
@@ -790,6 +796,7 @@ export class VoicePool {
       consumedSeconds: 0,
       consumedUntil: now,
       declickFadeStart: fadeStart,
+      contourFrozenAt: fadeStart,
       startTime: now,
       released: false,
       stopScheduled: false,
