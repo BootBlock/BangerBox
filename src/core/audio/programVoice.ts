@@ -39,7 +39,20 @@ interface VoiceMixer {
 export interface ResolvedVoice {
   /** FK → samples table; the engine resolves it to an OPFS path (spec §9.1). */
   readonly sampleId: string;
-  /** Coupled repitch in cents: drum layer tune, or keygroup key distance (spec §6). */
+  /**
+   * The §7.8 `pitch` leaf's own value in semitones — a drum pad's tune, which
+   * `writePadLeaf` moves on every layer together, so it is a PAD value rather than a layer
+   * one. It is kept apart from {@link detuneCents} because a §7.8 lane and a §6 edit both
+   * address exactly this quantity, and the voice pool gives it a summing input of its own
+   * that every voice of the pad shares (spec §6, §7.8, issue #138). Always 0 for a
+   * keygroup: no §7.8 address names a keygroup's voices (its pad key is
+   * `<id>:keygroup`, which `voiceParams.padKeyFor` cannot build).
+   */
+  readonly padTuneSemitones: number;
+  /**
+   * The rest of the coupled repitch in cents — a drum layer's fine tune, or a keygroup's
+   * key distance plus zone tune (spec §6). This is what the §7.8 `pitch` leaf does NOT own.
+   */
   readonly detuneCents: number;
   readonly gainDb: number;
   /** Non-destructive per-layer trim; 0/0 = whole sample (spec §6). */
@@ -131,7 +144,8 @@ function drumVoice(
 ): ResolvedVoice {
   return {
     sampleId: layer.sampleId,
-    detuneCents: layer.tuneSemitones * 100 + layer.tuneCents,
+    padTuneSemitones: layer.tuneSemitones,
+    detuneCents: layer.tuneCents,
     gainDb: layer.gainDb,
     startFrame: layer.startFrame,
     endFrame: layer.endFrame,
@@ -162,6 +176,7 @@ export function resolveKeygroupVoice(
   if (zone === null) return null;
   return {
     sampleId: zone.sampleId,
+    padTuneSemitones: 0,
     detuneCents: keygroupDetuneCents(note, zone),
     gainDb: zone.gainDb,
     startFrame: 0,
@@ -214,7 +229,9 @@ export interface VoiceTriggerParams {
 
 /**
  * Map a resolved §6 voice + runtime particulars to a voice-pool trigger spec (spec §5.4).
- * The whole coupled repitch is carried in `tuneCents`; the layer trim and the §6 sound-design
+ * The §7.8 `pitch` leaf's own share of the repitch travels in `tuneSemitones` and the rest in
+ * `tuneCents`, because the pool puts the first on a summing input the whole pad shares and
+ * the second inside the voice (issue #138); the layer trim and the §6 sound-design
  * surface (filter, envelopes, LFOs, mod matrix, polyphony, glide, warp) are forwarded so the
  * pool builds the voice.
  *
@@ -242,7 +259,7 @@ export function resolvedVoiceToTrigger(
     padKey: resolved.padKey,
     amp: resolved.envelopes.amp,
     gainDb: resolved.gainDb,
-    tuneSemitones: 0,
+    tuneSemitones: resolved.padTuneSemitones,
     tuneCents: resolved.detuneCents,
     startFrame: trim.startFrame,
     endFrame: trim.endFrame,

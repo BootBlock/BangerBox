@@ -78,12 +78,19 @@ class FakeAudioNode {
     return destination;
   }
 
-  disconnect(destination?: FakeAudioNode): void {
+  disconnect(destination?: FakeAudioNode | FakeAudioParam): void {
     this.disconnectCount++;
     if (destination === undefined) {
       this.outputs.length = 0;
       this.paramOutputs.length = 0;
       this.fullyDisconnected = true;
+      return;
+    }
+    // A node fed into a PARAM is released by naming that param, which is how a §7.8 pad lane
+    // and a §6 free-running LFO are cut loose from a voice that has ended (spec §3.2).
+    if (destination instanceof FakeAudioParam) {
+      const at = this.paramOutputs.indexOf(destination);
+      if (at >= 0) this.paramOutputs.splice(at, 1);
       return;
     }
     const index = this.outputs.indexOf(destination);

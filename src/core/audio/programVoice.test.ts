@@ -118,7 +118,10 @@ describe('resolveDrumVoice (spec §6)', () => {
 
     const soft = resolveDrumVoice(program, 4, 20);
     expect(soft?.sampleId).toBe('soft');
-    expect(soft?.detuneCents).toBe(210); // 2 semitones + 10 cents
+    // The §7.8 `pitch` leaf's own value is separated from the rest (issue #138): the pad's
+    // semitone tune rides the pad's shared lane node, the layer's fine tune stays on the voice.
+    expect(soft?.padTuneSemitones).toBe(2);
+    expect(soft?.detuneCents).toBe(10);
     expect(soft?.chokeGroup).toBe(3);
     expect(soft?.playbackMode).toBe('oneShot');
     expect(soft?.channelId).toBe(programChannelId(program.id, 4));
@@ -140,7 +143,10 @@ describe('resolveKeygroupVoice (spec §6)', () => {
     program.zones = [zone({ sampleId: 'keys', rootNote: 60 })];
     const voice = resolveKeygroupVoice(program, 72, 100);
     expect(voice?.sampleId).toBe('keys');
+    // A keygroup's whole repitch is the key distance, which no §7.8 address names: its pad
+    // key is `<id>:keygroup`, so the `pitch` leaf's own share is 0 (issue #138).
     expect(voice?.detuneCents).toBe(1200);
+    expect(voice?.padTuneSemitones).toBe(0);
     expect(voice?.channelId).toBe(programChannelId(program.id, 0));
     expect(voice?.polyphony).toBe(program.polyphony);
   });

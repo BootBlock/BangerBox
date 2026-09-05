@@ -45,21 +45,29 @@ function sourceState(node: unknown): {
   };
 }
 
-/** The voice's bend `ConstantSourceNode` (spec §10.2) — built lazily on first retune. */
-function bendState(fake: FakeAudioContext): {
+interface ConstantSourceState {
   started: boolean;
   stopped: boolean;
   offset: { value: number };
   paramOutputs: unknown[];
-} {
+}
+
+/**
+ * The voice's bend `ConstantSourceNode` (spec §10.2) — built lazily on first retune, and so
+ * the SECOND constant source the pool builds: the first is the pad's §7.8 `pitch` lane node,
+ * which every voice is built against (issue #138).
+ */
+function bendState(fake: FakeAudioContext): ConstantSourceState {
+  const nodes = fake.nodes.filter((n) => n.nodeType === 'constantSource');
+  if (nodes.length < 2) throw new Error('no bend node was built');
+  return nodes[1] as unknown as ConstantSourceState;
+}
+
+/** The pad's §7.8 `pitch` lane node — the first constant source, built with the voice. */
+function padPitchLane(fake: FakeAudioContext): ConstantSourceState {
   const node = fake.nodes.find((n) => n.nodeType === 'constantSource');
-  if (!node) throw new Error('no bend node was built');
-  return node as unknown as {
-    started: boolean;
-    stopped: boolean;
-    offset: { value: number };
-    paramOutputs: unknown[];
-  };
+  if (!node) throw new Error('no pad lane node was built');
+  return node as unknown as ConstantSourceState;
 }
 
 /** The `detune` param of the voice's buffer source — what a bend must be summed into. */
@@ -375,11 +383,15 @@ describe('voice endings (spec §5.4 declick)', () => {
     expect(bend.paramOutputs).toHaveLength(0);
   });
 
-  it('builds no bend node for a voice that is never retuned', () => {
+  it('builds no bend node for a voice that is never retuned, only the pad lane', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
     pool.trigger(spec(context, { id: 'unbent', when: 0 }));
-    expect(nodeCount(fake, 'constantSource')).toBe(0);
+    // One node, and it is the pad's §7.8 `pitch` lane (issue #138) — the bend node is still
+    // built only on the first retune, which is what "a voice that is never bent costs no
+    // extra node" meant.
+    expect(nodeCount(fake, 'constantSource')).toBe(1);
+    expect(padPitchLane(fake).paramOutputs).toContain(sourceDetune(fake));
     pool.destroy();
   });
 
@@ -466,10 +478,13 @@ describe('enriched voice — §6 sound design', () => {
   it('portamentos into a mono glide note from the previous pitch (spec §6)', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    const glideSpec = (id: string, tuneSemitones: number) =>
-      spec(context, { id, playbackMode: 'mono', padKey: 'keys:glide', glideMs: 100, tuneSemitones });
+    // A keygroup carries its whole repitch in `tuneCents` (`resolveKeygroupVoice`), never in
+    // the §7.8 `pitch` leaf's `tuneSemitones`, which rides the pad lane instead (issue #138).
+    // Glide is keygroup-only (spec §6), so this is the shape the pool actually sees.
+    const glideSpec = (id: string, tuneCents: number) =>
+      spec(context, { id, playbackMode: 'mono', padKey: 'keys:glide', glideMs: 100, tuneCents });
     pool.trigger(glideSpec('a', 0));
-    pool.trigger(glideSpec('b', 12)); // glide from 0 → 1200 cents
+    pool.trigger(glideSpec('b', 1200)); // glide from 0 → 1200 cents
     const sources = fake.nodes.filter((n) => n.nodeType === 'bufferSource');
     const newest = sources[sources.length - 1] as { detune: { calls: { method: string; args: number[] }[] } };
     const ramp = newest.detune.calls.find((c) => c.method === 'linearRampToValueAtTime');
