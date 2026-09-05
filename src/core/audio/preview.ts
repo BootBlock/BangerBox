@@ -12,11 +12,26 @@
 import { DECLICK_FADE_MS, VOICE_STEAL_FADE_MS } from '@/core/constants';
 import { clamp } from '@/core/math';
 import { cancelParams, rampParamLinear, setParamNow } from './params/ramps';
-import { scheduleAmpDeclick, scheduleAmpRelease } from './voiceEnvelope';
+import { declickFadeStart, scheduleAmpDeclick, scheduleAmpRelease } from './voiceEnvelope';
+
+/**
+ * The level an audition's amp holds at `when` (spec §5.9, §5.4) — unity for its whole life,
+ * then the §5.4 declick's own line down to silence at the buffer's end.
+ */
+function previewLevelAt(voice: PreviewVoice, when: number): number {
+  if (when <= voice.fadeStart) return 1;
+  const span = voice.endTime - voice.fadeStart;
+  if (span <= 0) return 0;
+  return Math.max(0, 1 - (when - voice.fadeStart) / span);
+}
 
 interface PreviewVoice {
   readonly source: AudioBufferSourceNode;
   readonly amp: GainNode;
+  /** Context time this audition's §5.4 declick begins — its amp sits at unity until then. */
+  readonly fadeStart: number;
+  /** Context time that fade lands on silence: the buffer's natural end. */
+  readonly endTime: number;
 }
 
 export class PreviewChannel {
@@ -44,11 +59,17 @@ export class PreviewChannel {
     const source = this.context.createBufferSource();
     source.buffer = buffer;
     source.connect(amp);
-    const voice: PreviewVoice = { source, amp };
     // Preview never repitches, so the buffer's own duration is the exact end time. The
     // audition's amp sits at unity for its whole life — nothing else writes it — so unity is
     // the level the §5.4 fade departs from (issue #144).
-    scheduleAmpDeclick(amp.gain, when + buffer.duration, when, DECLICK_FADE_MS, 1);
+    const endTime = when + buffer.duration;
+    const voice: PreviewVoice = {
+      source,
+      amp,
+      fadeStart: declickFadeStart(endTime, when, DECLICK_FADE_MS),
+      endTime,
+    };
+    scheduleAmpDeclick(amp.gain, endTime, when, DECLICK_FADE_MS, 1);
     source.onended = () => this.dispose(voice);
     source.start(when);
     this.current = voice;
@@ -61,10 +82,16 @@ export class PreviewChannel {
     this.current = null;
     this.fading.add(voice);
     // Same fade-then-stop shape a stolen pool voice gets, so a cut preview never steps to zero.
-    // The audition's amp sits at unity for its whole life until its own §5.4 declick, so unity
-    // is the level this fade departs from too — until that declick has begun, and a preview cut
-    // inside its last three milliseconds is a cut of something already inaudible.
-    const silentAt = scheduleAmpRelease(voice.amp.gain, when, VOICE_STEAL_FADE_MS, 1);
+    // The audition's amp sits at unity for its whole life until its own §5.4 declick begins, and
+    // rides that fade's line afterwards — the level `VoicePool.ampLevelNow` computes for a pool
+    // voice, on a contour flat enough to write here. Passing a bare 1 would step the gain back
+    // UP to unity for a preview cut inside its own last three milliseconds.
+    const silentAt = scheduleAmpRelease(
+      voice.amp.gain,
+      when,
+      VOICE_STEAL_FADE_MS,
+      previewLevelAt(voice, when),
+    );
     try {
       voice.source.stop(silentAt);
     } catch {

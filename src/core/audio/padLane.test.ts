@@ -21,6 +21,8 @@ import {
   type PadFilter,
 } from '@/core/project/schemas';
 import { createFakeAudioContext, liveNodeCount, type FakeAudioContext } from '@/test/mocks/audioContext';
+import { DECLICK_FADE_MS as DECLICK_MS, SCHEDULER_INTERVAL_MS } from '@/core/constants';
+import { ampLevelAt } from './voiceEnvelope';
 import { VoicePool, type VoiceTriggerSpec } from './voicePool';
 
 const LOWPASS: PadFilter = { type: 'lp', cutoff: 800, resonance: 1, envDepth: 0 };
@@ -382,6 +384,8 @@ describe('a §7.8 lane on a §6 sound-design parameter (spec §6, §7.8, issue #
  */
 describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)', () => {
   const FAST: AhdsrEnvelope = { attack: 1, hold: 0, decay: 0, sustain: 1, release: 120, curve: 'linear' };
+  /** One §7.1.4 automation window in seconds — the spacing a §7.8 lane really writes at. */
+  const WINDOW = SCHEDULER_INTERVAL_MS / 1_000;
 
   it('reaches a voice struck AFTER the ramp, and leaves the sounding one alone', () => {
     const { context, fake } = createFakeAudioContext();
@@ -404,9 +408,11 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
     // Offline the whole render is built before any ramp is applied, so "the voices sounding
-    // now" is empty and a value merely remembered for the next voice renders as nothing.
-    pool.trigger(spec(context, { id: 'future', when: 5, amp: FAST }));
-    pool.applyPadParam('p1:0', 'ampAttack', 200, 1);
+    // now" is empty and a value merely remembered for the next voice renders as nothing. The
+    // §7.8 windows then tile the span at `SCHEDULER_INTERVAL_MS`, exactly as
+    // `bounceAutomationRamps` emits them, and the voice takes the last one before its note-on.
+    pool.trigger(spec(context, { id: 'future', when: 1, amp: FAST }));
+    for (let when = 0; when < 1.5; when += WINDOW) pool.applyPadParam('p1:0', 'ampAttack', 200, when);
     expect(ampAttackSeconds(ampGainsOf(fake)[0]!)).toBeCloseTo(0.2, 9);
     pool.destroy();
   });
@@ -417,9 +423,11 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     pool.trigger(spec(context, { id: 'early', when: 1, amp: FAST }));
     pool.trigger(spec(context, { id: 'late', when: 3, amp: FAST }));
     // A §9.5 render applies its windows in time order, so each voice keeps the last value
-    // written at or before its own note-on.
-    pool.applyPadParam('p1:0', 'ampAttack', 100, 0);
-    pool.applyPadParam('p1:0', 'ampAttack', 300, 2);
+    // written at or before its own note-on — which is what a lane STEPPING between the two
+    // note-ons has to show, and what a single value applied to both would not.
+    for (let when = 0; when < 3.5; when += WINDOW) {
+      pool.applyPadParam('p1:0', 'ampAttack', when < 2 ? 100 : 300, when);
+    }
 
     const [early, late] = ampGainsOf(fake);
     expect(ampAttackSeconds(early!)).toBeCloseTo(0.1, 9);
@@ -458,12 +466,12 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
   it('moves nothing across a flat span of a lane', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    pool.trigger(spec(context, { id: 'future', when: 5, amp: FAST }));
-    pool.applyPadParam('p1:0', 'ampAttack', 200, 1);
+    pool.trigger(spec(context, { id: 'future', when: 1, amp: FAST }));
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 0.95);
     const settled = ampGainsOf(fake)[0]!.calls.length;
     // A lane writes every `SCHEDULER_INTERVAL_MS` for the whole span of a §9.5 render, so an
     // unchanged value has to cost nothing rather than re-lay every future voice.
-    pool.applyPadParam('p1:0', 'ampAttack', 200, 1.5);
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 0.975);
     expect(ampGainsOf(fake)[0]!.calls.length).toBe(settled);
     pool.destroy();
   });
@@ -471,8 +479,8 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
   it('reaches only the pad it addresses', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    pool.trigger(spec(context, { id: 'other', when: 5, padKey: 'p1:1', amp: FAST }));
-    pool.applyPadParam('p1:0', 'ampAttack', 200, 1);
+    pool.trigger(spec(context, { id: 'other', when: 1, padKey: 'p1:1', amp: FAST }));
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 0.95);
     expect(ampAttackSeconds(ampGainsOf(fake)[0]!)).toBeCloseTo(0.001, 9);
     pool.destroy();
   });
@@ -500,13 +508,102 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     pool.destroy();
   });
 
+  it('leaves a voice beyond the §7.1.4 lookahead to the window that reaches it', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // §7.1.4 builds a note at most `LOOKAHEAD_MS` before it sounds, so that horizon is what a
+    // voice "whose note-on has not yet arrived" means. A §9.5 render holds every voice of the
+    // span, and without the bound each window re-lays all of them — the (voice × window) cost
+    // §14 (aw) records as an apparent hang, every pass of it superseded by the next.
+    pool.trigger(spec(context, { id: 'far', when: 30, amp: FAST }));
+    const settled = ampGainsOf(fake)[0]!.calls.length;
+    pool.applyPadParam('p1:0', 'ampAttack', 200, 1);
+    expect(ampGainsOf(fake)[0]!.calls.length).toBe(settled);
+
+    // …and the window that DOES reach it re-lays it, so nothing is lost.
+    pool.applyPadParam('p1:0', 'ampAttack', 300, 29.99);
+    expect(ampAttackSeconds(ampGainsOf(fake)[0]!)).toBeCloseTo(0.3, 9);
+    pool.destroy();
+  });
+
+  it('schedules nothing for a release write, which is read at the note-OFF', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'future', when: 1, amp: FAST }));
+    const settled = ampGainsOf(fake)[0]!.calls.length;
+    // A release moves no boundary `scheduleAmpAttack` writes, so re-laying the contour for one
+    // would rewrite an identical timeline once per §7.1.4 window.
+    pool.applyPadParam('p1:0', 'ampRelease', 400, 0.95);
+    expect(ampGainsOf(fake)[0]!.calls.length).toBe(settled);
+    // It still reaches the voice, which is what the note-off reads.
+    pool.release('p1:0', 1.5);
+    expect(ampReleaseSeconds(ampGainsOf(fake)[0]!, 1.5)).toBeCloseTo(0.4, 9);
+    pool.destroy();
+  });
+
+  it('re-bases the frozen contour it erases, so the fade departs from where it now stops', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // A four-second decay under a one-second region, so the contour is still running at BOTH
+    // the old fade start and the new one and the two levels differ.
+    const decaying: AhdsrEnvelope = {
+      attack: 0,
+      hold: 0,
+      decay: 4_000,
+      sustain: 0,
+      release: 20,
+      curve: 'linear',
+    };
+    pool.trigger(spec(context, { id: 'future', when: 1, velocity: 127, gainDb: 0, amp: decaying }));
+    // A §10.2 bend an octave DOWN on a voice that has not started: it doubles the region, so
+    // the fade moves later while `contourFrozenAt` keeps the earlier point (issue #144).
+    pool.applyProgramDetune('p1', -1_200, 0.95);
+    // The re-lay writes the contour AFRESH from the note-on, so no earlier freeze survives it:
+    // the level the fade departs from is the contour's value at THIS fade's own start, and the
+    // stale frozen point would depart from a level the timeline no longer holds.
+    pool.applyPadParam('p1:0', 'ampAttack', 5, 0.95);
+    const gain = ampGainsOf(fake)[0]!;
+    const held = gain.calls.filter((call) => call.method === 'setValueAtTime');
+    const departure = held[held.length - 1]!;
+    const fadeStart = departure.args[1]!;
+    expect(fadeStart).toBeGreaterThan(2.5); // the bend really did push the region out
+    // The contour the re-lay wrote is the one it departs from, read where THAT contour stops.
+    expect(departure.args[0]).toBeCloseTo(ampLevelAt(1, { ...decaying, attack: 5 }, 1, fadeStart), 6);
+    pool.destroy();
+  });
+
+  it('departs an interruption from where the contour STOPPED, not from where it would be', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    const decaying: AhdsrEnvelope = {
+      attack: 0,
+      hold: 0,
+      decay: 4_000,
+      sustain: 0,
+      release: 20,
+      curve: 'linear',
+    };
+    // A one-second region under a four-second decay: the §5.4 declick freezes the contour a
+    // quarter of the way down, and a retune that pushes the region's end out does not restart it.
+    pool.trigger(spec(context, { id: 'frozen', velocity: 127, gainDb: 0, amp: decaying }));
+    const frozen = ampLevelAt(1, decaying, 0, 1 - DECLICK_MS / 1_000);
+    pool.applyPadParam('p1:0', 'detune', -1_200, 0.2);
+    // The note-off lands between the old fade start and the new one: `rescheduleDeclick` reads
+    // the frozen point and so must this, or the two disagree about one timeline (issue #146).
+    pool.release('p1:0', 1.5);
+    const gain = ampGainsOf(fake)[0]!;
+    const held = gain.calls.filter((call) => call.method === 'setValueAtTime');
+    expect(held[held.length - 1]!.args[0]).toBeCloseTo(frozen, 6);
+    pool.destroy();
+  });
+
   it('refuses a non-finite time rather than collapsing the contour', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    pool.trigger(spec(context, { id: 'future', when: 5, amp: FAST }));
+    pool.trigger(spec(context, { id: 'future', when: 1, amp: FAST }));
     // `clamp` maps NaN to its MINIMUM, which for an envelope time is 0 ms — an instant attack
     // rather than no change at all. A value nobody can interpret contributes nothing (§14 (ak)).
-    pool.applyPadParam('p1:0', 'ampAttack', Number.NaN, 1);
+    pool.applyPadParam('p1:0', 'ampAttack', Number.NaN, 0.95);
     expect(ampAttackSeconds(ampGainsOf(fake)[0]!)).toBeCloseTo(0.001, 9);
     pool.destroy();
   });

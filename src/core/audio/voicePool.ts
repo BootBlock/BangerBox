@@ -8,7 +8,13 @@
  * (spec §6). Allocation policy is the pure {@link selectStealVictim}/{@link
  * selectChokeVictims} (spec §11.1); this class wires and tears down nodes (spec §3.2).
  */
-import { CHOKE_FADE_MS, DECLICK_FADE_MS, MAX_VOICES, VOICE_STEAL_FADE_MS } from '@/core/constants';
+import {
+  CHOKE_FADE_MS,
+  DECLICK_FADE_MS,
+  LOOKAHEAD_MS,
+  MAX_VOICES,
+  VOICE_STEAL_FADE_MS,
+} from '@/core/constants';
 import { clamp } from '@/core/math';
 import {
   DEFAULT_BPM,
@@ -435,16 +441,32 @@ export class VoicePool {
         if (!Number.isFinite(value)) break;
         const ms = clamp(value, ENVELOPE_TIME_MS_RANGE[0], ENVELOPE_TIME_MS_RANGE[1]);
         const attack = target === 'ampAttack';
-        if ((attack ? lane.ampAttackMs : lane.ampReleaseMs) === ms) break; // a flat span moves nothing
         if (attack) lane.ampAttackMs = ms;
         else lane.ampReleaseMs = ms;
+        // Only the voices the LIVE engine could have built and not started: §7.1.4 builds a
+        // note at most `LOOKAHEAD_MS` before it sounds, so that horizon is what "a voice whose
+        // note-on has not yet arrived" MEANS, and applying it offline is what makes a render
+        // walk the same set the live pass does. Without it a §9.5 render re-lays every voice of
+        // the whole span once per window — the (voice × window) cost §14 (aw) records as an
+        // apparent hang — and every one of those re-lays is superseded by the window that
+        // finally reaches the voice's own note-on. Windows are `SCHEDULER_INTERVAL_MS` apart
+        // (§7.1.4), well inside the horizon, so no voice is missed by all of them.
+        const horizon = when + LOOKAHEAD_MS / 1000;
         for (const voice of this.voices.values()) {
           // The mirror of the `detune` case above: there a voice that has not STARTED is left
           // to the window that reaches it, because the window will re-lay it from its own
           // start. Here the window IS what reaches it, so it is the sounding voice that is
           // left alone and the future one that is re-laid.
-          if (voice.padKey !== padKey || voice.stopScheduled || voice.startTime < when) continue;
-          this.relayAmpContour(voice, attack ? { ...voice.amp, attack: ms } : { ...voice.amp, release: ms });
+          if (voice.padKey !== padKey || voice.stopScheduled) continue;
+          if (voice.startTime < when || voice.startTime > horizon) continue;
+          // A flat span of a lane moves nothing, and the test is per VOICE rather than on the
+          // pad's held value: a lane that never changes still has to reach a voice its first
+          // window could not see, so short-circuiting the whole walk would lose that voice.
+          if ((attack ? voice.amp.attack : voice.amp.release) === ms) continue;
+          // A release is read at the note-OFF, so moving it schedules nothing and re-laying the
+          // contour for it would rewrite an identical timeline.
+          if (attack) this.relayAmpContour(voice, { ...voice.amp, attack: ms });
+          else voice.amp = { ...voice.amp, release: ms };
         }
         break;
       }
@@ -610,23 +632,32 @@ export class VoicePool {
    * voice whose note-on has not yet arrived (spec §6, §5.4, issue #143).
    *
    * Everything from the note-on onwards is erased and rewritten, because an envelope time
-   * moves every one of the four boundaries {@link scheduleAmpAttack} writes. Neither the
-   * region's end nor `contourFrozenAt` moves: an envelope time is not the playback rate, so
-   * the fade lands exactly where it did and departs from the same instant of a different
-   * contour.
+   * moves every one of the four boundaries {@link scheduleAmpAttack} writes. The region's END
+   * does not move: an envelope time is not the playback rate, so the fade lands exactly where
+   * it did.
+   *
+   * **`contourFrozenAt` is RE-BASED rather than kept**, because this erases the very freeze it
+   * records. That field is where an earlier lay stopped the §6 AHDSR (issue #144), and a lay is
+   * exactly what `cancelScheduledValues` has just removed — so the point the contour now stops
+   * is this fade's own start, and reading the old one would depart from a level a contour that
+   * runs again never holds. A §10.2 bend on a voice that has not started moves the old value,
+   * which is what makes this reachable rather than theoretical.
    */
   private relayAmpContour(voice: Voice, amp: AhdsrEnvelope): void {
     voice.amp = amp;
     const param = voice.ampGain.gain;
     param.cancelScheduledValues(voice.startTime);
     scheduleAmpAttack(param, voice.ampPeak, amp, voice.startTime);
+    const fadeStart = declickFadeStart(voice.declickEndTime, voice.startTime, DECLICK_FADE_MS);
     scheduleAmpDeclick(
       param,
       voice.declickEndTime,
       voice.startTime,
       DECLICK_FADE_MS,
-      ampLevelAt(voice.ampPeak, amp, voice.startTime, voice.contourFrozenAt),
+      ampLevelAt(voice.ampPeak, amp, voice.startTime, fadeStart),
     );
+    voice.declickFadeStart = fadeStart;
+    voice.contourFrozenAt = fadeStart;
   }
 
   /**
@@ -737,15 +768,18 @@ export class VoicePool {
    * The level this voice's amp timeline holds at `when` — what a §5.4 note-off, steal or choke
    * fade must depart from (spec §5.4, §6).
    *
-   * Before the §6 contour's fade start it is the contour's own value there, which is the same
-   * sentence §5.4 uses for the end-of-region declick. Inside that fade it is the fade's own
-   * line, which departs from the level the contour was frozen at (`contourFrozenAt`, issue
-   * #144) and reaches zero at the region's end. An interruption in the last three milliseconds
+   * Before the fade start it is the contour's value where the contour STOPPED — at `when`, or
+   * at `contourFrozenAt` if an earlier lay froze it before then (issue #144). That is the one
+   * model of the timeline this file keeps, and `rescheduleDeclick` reads the same field for the
+   * same reason; whether the model is right at all is issue #146, and the two must not answer
+   * it differently. Inside the fade it is the fade's own line, which departs from that frozen
+   * level and reaches zero at the region's end — an interruption in the last three milliseconds
    * of a voice is a corner, and this is what stops it stepping UP.
    */
   private ampLevelNow(voice: Voice, when: number): number {
     if (when <= voice.declickFadeStart) {
-      return ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, when);
+      const at = Math.min(when, voice.contourFrozenAt);
+      return ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, at);
     }
     const span = voice.declickEndTime - voice.declickFadeStart;
     if (span <= 0) return 0;

@@ -79,6 +79,9 @@ describe('preview channel (spec §5.9)', () => {
     preview.stop(0.5); // cut mid-buffer
     const fadeEnd = 0.5 + VOICE_STEAL_FADE_MS / 1000;
     expect(amp.gain.calls).toContainEqual({ method: 'cancelAndHoldAtTime', args: [0.5] });
+    // …and this fade departs from unity too, for the same reason: `cancelAndHoldAtTime` pins
+    // nothing where the event it finds is the declick's own `setValueAtTime`.
+    expect(amp.gain.calls).toContainEqual({ method: 'setValueAtTime', args: [1, 0.5] });
     expect(amp.gain.calls).toContainEqual({ method: 'linearRampToValueAtTime', args: [0, fadeEnd] });
     // The source stops when the fade lands on silence, not at the cut itself.
     const source = fake.nodes.find((n) => n.nodeType === 'bufferSource') as unknown as {
@@ -89,5 +92,27 @@ describe('preview channel (spec §5.9)', () => {
     expect(liveNodeCount(fake)).toBe(0);
     // The declick and the cut fade were both still pending when the nodes went (spec §3.2).
     expect(pendingParamCount(fake)).toBe(0);
+  });
+
+  it('cuts a preview inside its own declick from the level that fade has reached', () => {
+    const { context, fake } = createFakeAudioContext();
+    const monitor = context.createGain();
+    const preview = new PreviewChannel(context, monitor);
+    const buffer = context.createBuffer(1, 48_000, 48_000); // exactly 1s
+    preview.play(buffer, 0);
+    const amp = fake.nodes.filter((n) => n.nodeType === 'gain').at(-1) as unknown as {
+      gain: { calls: { method: string; args: number[] }[] };
+    };
+    // A third of the way through the audition's own §5.4 fade. Passing a bare 1 here steps the
+    // gain back UP to unity before fading again, which is louder than what it interrupts.
+    const fadeStart = 1 - DECLICK_FADE_MS / 1000;
+    const cut = fadeStart + DECLICK_FADE_MS / 3000;
+    preview.stop(cut);
+    const departures = amp.gain.calls.filter(
+      (call) => call.method === 'setValueAtTime' && call.args[1] === cut,
+    );
+    expect(departures).toHaveLength(1);
+    expect(departures[0]!.args[0]).toBeCloseTo(2 / 3, 6);
+    preview.destroy();
   });
 });
