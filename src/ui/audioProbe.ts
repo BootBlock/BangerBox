@@ -288,7 +288,13 @@ export interface SharedPadChannelResult {
   readonly firstFaderClosedRms: number;
   /** The same bounce with both faders at unity and the PAD strip at 0.8 (−12 dB, §8.5.6). */
   readonly padFaderRms: number;
-  /** §5.8 master peak with the transport rolling and both track faders at unity. */
+  /**
+   * §5.8 master peak on the FIRST live pass, with an 80 Hz lowpass already in the pad strip's
+   * insert rack. Both realisations are built by that pass, so this reads what a freshly built
+   * one carries: near zero when it was seeded from the §4.2 strip, the open tone when not.
+   */
+  readonly livePeakPadFiltered: number;
+  /** §5.8 master peak with the transport rolling, that insert bypassed, and both faders at unity. */
   readonly livePeakBoth: number;
   /** The same peak with the second track's fader closed mid-transport. */
   readonly livePeakSecondClosed: number;
@@ -3251,7 +3257,7 @@ async function insertLimitProof(engine: AudioEngine): Promise<InsertLimitResult>
 async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChannelResult> {
   const { bounceActiveSequence } = await import('@/core/audio/bounceService');
   const { readFile } = await import('@/core/storage/opfs');
-  const { channelLevelPath } = await import('@/core/audio/params/registry');
+  const { channelLevelPath, insertParamPath } = await import('@/core/audio/params/registry');
 
   const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
   // Load it fresh before anything else: the app opens a project asynchronously at start-up,
@@ -3384,6 +3390,27 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
 
   // The live path. `bounceService` and `AudioEngine` build the same graph through the same
   // factories, but by their own routes, so the §5.8 master tap is read as well as the file.
+  //
+  // Nothing has played live yet — every bounce above built its own offline graph — so the
+  // engine holds no realisation of this pad. An 80 Hz lowpass goes into the strip's insert
+  // rack FIRST, two octaves below the tone, so the realisations the next pass builds are
+  // built after the edit. §6 carries a pad's inserts but `ResolvedVoice` does not, so the
+  // payload seed cannot supply them: only `AudioBridge.seedChannel` can, and this is what
+  // says it ran. The bounces above are taken before it, on a clean rack.
+  const mixer = () => useMixerStore.getState();
+  const addedFilter = mixer().addInsert(padChannel, 'filter');
+  // `addInsert` fills the §1.3.1 rack's first FREE slot, which is not `inserts.at(-1)`.
+  const filterIndex =
+    mixer().channels[padChannel]?.inserts.findIndex((slot) => slot.effectType !== null) ?? -1;
+  const filterSlotId = mixer().channels[padChannel]?.inserts[filterIndex]?.id;
+  if (!addedFilter.ok || filterIndex < 0 || filterSlotId === undefined) {
+    throw new Error(
+      'sharedPadChannelProof: the pad strip refused an insert, so the seeding half cannot run.',
+    );
+  }
+  // §7.8 numbers a slot 1-based over the §4.2 array (spec §7.8, §14 (ar)).
+  mixer().commit(insertParamPath(padChannel, filterIndex + 1, 'cutoff'), 80);
+
   const peakOver = async (ms: number): Promise<number> => {
     const slot = engine.meterRegistry.slotOf('master');
     let peak = 0;
@@ -3400,6 +3427,11 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
 
   transport().play();
   await delay(300); // past the first beat, so the meter is reading programme material
+  const livePeakPadFiltered = await peakOver(1_400);
+  // Bypassed rather than removed: `removeInsert` still shrinks the rack (issue #142), and
+  // this proof has no business depending on that. §5.7's bypass is true bypass via routing.
+  mixer().setInsertEnabled(padChannel, filterSlotId, false);
+  await delay(300);
   const livePeakBoth = await peakOver(1_400);
   setFader(`track:${secondTrackId}`, 0);
   await delay(300);
@@ -3428,6 +3460,7 @@ async function sharedPadChannelProof(engine: AudioEngine): Promise<SharedPadChan
     secondFaderClosedRms,
     firstFaderClosedRms,
     padFaderRms,
+    livePeakPadFiltered,
     livePeakBoth,
     livePeakSecondClosed,
   };

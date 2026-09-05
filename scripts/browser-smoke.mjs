@@ -913,13 +913,6 @@ async function assertShellAndSelfTest(page, label) {
         `the two-track bounce is silent (${r.bothTracksRms.toFixed(5)} RMS) — nothing sounded, so this proves nothing`,
       );
     }
-    // §5.2 stage 5: the program on a track merges into THAT track's input, so the graph holds
-    // one realisation of the pad strip per track that played it.
-    if (r.liveRealisations !== 2) {
-      throw new Error(
-        `the live graph holds ${r.liveRealisations} channel(s) under ${r.padChannel} — two tracks played that program, so it must hold two`,
-      );
-    }
     const secondRatio = r.secondFaderClosedRms / r.bothTracksRms;
     if (Math.abs(secondRatio - 0.5) > 0.05) {
       throw new Error(
@@ -930,6 +923,15 @@ async function assertShellAndSelfTest(page, label) {
     if (Math.abs(firstRatio - 0.5) > 0.05) {
       throw new Error(
         `closing the FIRST track's fader rendered ${r.firstFaderClosedRms.toFixed(5)} against ${r.bothTracksRms.toFixed(5)} RMS (×${firstRatio.toFixed(4)}) — one of two unison voices is 0.5, and ×0 means that strip carried both tracks`,
+      );
+    }
+    // §5.2 stage 5: the program on a track merges into THAT track's input, so the graph holds
+    // one realisation of the pad strip per track that played it. The structural half of the
+    // two readings above, and asserted AFTER them so a defect run reports the audio it
+    // rendered rather than stopping at the count.
+    if (r.liveRealisations !== 2) {
+      throw new Error(
+        `the live graph holds ${r.liveRealisations} channel(s) under ${r.padChannel} — two tracks played that program, so it must hold two`,
       );
     }
     // The other half of the decision: one §6 record, one §4.2 strip, one §7.8 address, N
@@ -948,6 +950,16 @@ async function assertShellAndSelfTest(page, label) {
         `the master bus was silent with both tracks playing (peak ${r.livePeakBoth.toFixed(5)})`,
       );
     }
+    // A realisation built mid-session is seeded from the §4.2 strip. §6 carries a pad's
+    // inserts but `ResolvedVoice` does not, so an 80 Hz lowpass sitting in the rack before
+    // the first note can only reach a fresh realisation through `AudioBridge.seedChannel` —
+    // two octaves below the tone, so an unseeded one is the open peak rather than a quiet one.
+    const seededRatio = r.livePeakPadFiltered / r.livePeakBoth;
+    if (!(seededRatio < 0.2)) {
+      throw new Error(
+        `the pad's own 80 Hz lowpass left the master peak at ${r.livePeakPadFiltered.toFixed(5)} against ${r.livePeakBoth.toFixed(5)} bypassed (×${seededRatio.toFixed(3)}) — a realisation built after the edit was not seeded from its §4.2 strip`,
+      );
+    }
     const liveRatio = r.livePeakSecondClosed / r.livePeakBoth;
     if (!(liveRatio > 0.25 && liveRatio < 0.75)) {
       throw new Error(
@@ -955,7 +967,7 @@ async function assertShellAndSelfTest(page, label) {
       );
     }
     console.log(
-      `       shared pad channel: ${r.liveRealisations} realisations of ${r.padChannel}; bounce ${r.bothTracksRms.toFixed(5)} RMS → ${r.secondFaderClosedRms.toFixed(5)} (×${secondRatio.toFixed(4)}) on the second fader and ${r.firstFaderClosedRms.toFixed(5)} (×${firstRatio.toFixed(4)}) on the first; pad fader ×${padRatio.toFixed(4)}; live peak ${r.livePeakBoth.toFixed(5)} → ${r.livePeakSecondClosed.toFixed(5)} (×${liveRatio.toFixed(3)})`,
+      `       shared pad channel: ${r.liveRealisations} realisations of ${r.padChannel}; bounce ${r.bothTracksRms.toFixed(5)} RMS → ${r.secondFaderClosedRms.toFixed(5)} (×${secondRatio.toFixed(4)}) on the second fader and ${r.firstFaderClosedRms.toFixed(5)} (×${firstRatio.toFixed(4)}) on the first; pad fader ×${padRatio.toFixed(4)}; live peak ${r.livePeakBoth.toFixed(5)} → ${r.livePeakSecondClosed.toFixed(5)} (×${liveRatio.toFixed(3)}), and ${r.livePeakPadFiltered.toFixed(5)} (×${seededRatio.toFixed(3)}) with the pad's own lowpass seeded into both`,
     );
   });
 
