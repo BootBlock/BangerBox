@@ -1231,9 +1231,17 @@ async function assertShellAndSelfTest(page, label) {
       );
     }
     // A voice already SOUNDING keeps the envelope it was built with: its attack has run.
-    if (!(sounding.riseSeconds < 0.02 && sounding.fallSeconds < 0.1)) {
+    // The fall has a FLOOR as well as a ceiling, and the floor is the §5.4 interruption fade:
+    // a release that departs from the note-on rather than from the level the contour holds is
+    // already at silence when the note-off arrives, and reads as a fall of zero.
+    if (!(sounding.riseSeconds < 0.02)) {
       throw new Error(
-        `the sounding voice rose in ${sounding.riseSeconds.toFixed(4)} s and fell in ${sounding.fallSeconds.toFixed(4)} s — a lane arriving mid-note must not re-shape it`,
+        `the sounding voice rose in ${sounding.riseSeconds.toFixed(4)} s — a lane arriving mid-note must not re-shape it`,
+      );
+    }
+    if (!(sounding.fallSeconds > 0.005 && sounding.fallSeconds < 0.1)) {
+      throw new Error(
+        `the sounding voice fell in ${sounding.fallSeconds.toFixed(4)} s against the ${r.voices.payloadReleaseMs} ms release it was built with — a §5.4 fade departs from the level the contour holds, not from the note-on`,
       );
     }
     if (!(struckAfter.riseSeconds > 0.2)) {

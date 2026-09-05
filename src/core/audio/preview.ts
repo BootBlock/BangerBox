@@ -61,7 +61,10 @@ export class PreviewChannel {
     this.current = null;
     this.fading.add(voice);
     // Same fade-then-stop shape a stolen pool voice gets, so a cut preview never steps to zero.
-    const silentAt = scheduleAmpRelease(voice.amp.gain, when, VOICE_STEAL_FADE_MS);
+    // The audition's amp sits at unity for its whole life until its own §5.4 declick, so unity
+    // is the level this fade departs from too — until that declick has begun, and a preview cut
+    // inside its last three milliseconds is a cut of something already inaudible.
+    const silentAt = scheduleAmpRelease(voice.amp.gain, when, VOICE_STEAL_FADE_MS, 1);
     try {
       voice.source.stop(silentAt);
     } catch {

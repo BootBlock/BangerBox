@@ -347,7 +347,12 @@ export class VoicePool {
   release(padKey: string, when: number): void {
     for (const voice of this.voices.values()) {
       if (voice.padKey !== padKey || voice.oneShot || voice.stopScheduled) continue;
-      const end = scheduleAmpRelease(voice.ampGain.gain, when, voice.amp.release);
+      const end = scheduleAmpRelease(
+        voice.ampGain.gain,
+        when,
+        voice.amp.release,
+        this.ampLevelNow(voice, when),
+      );
       this.safeStop(voice, end);
       voice.released = true;
       voice.stopScheduled = true;
@@ -728,6 +733,26 @@ export class VoicePool {
     voice.declickEndTime = endTime;
   }
 
+  /**
+   * The level this voice's amp timeline holds at `when` — what a §5.4 note-off, steal or choke
+   * fade must depart from (spec §5.4, §6).
+   *
+   * Before the §6 contour's fade start it is the contour's own value there, which is the same
+   * sentence §5.4 uses for the end-of-region declick. Inside that fade it is the fade's own
+   * line, which departs from the level the contour was frozen at (`contourFrozenAt`, issue
+   * #144) and reaches zero at the region's end. An interruption in the last three milliseconds
+   * of a voice is a corner, and this is what stops it stepping UP.
+   */
+  private ampLevelNow(voice: Voice, when: number): number {
+    if (when <= voice.declickFadeStart) {
+      return ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, when);
+    }
+    const span = voice.declickEndTime - voice.declickFadeStart;
+    if (span <= 0) return 0;
+    const departure = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, voice.contourFrozenAt);
+    return departure * Math.max(0, 1 - (when - voice.declickFadeStart) / span);
+  }
+
   /** The base detune of the sounding voice on a pad (mono glide origin, spec §6), or undefined. */
   private currentPadDetune(padKey: string): number | undefined {
     for (const voice of this.voices.values()) {
@@ -1099,7 +1124,7 @@ export class VoicePool {
   private fadeAndStop(voice: Voice, when: number, fadeMs: number): void {
     voice.released = true;
     voice.stopScheduled = true;
-    this.safeStop(voice, scheduleAmpRelease(voice.ampGain.gain, when, fadeMs));
+    this.safeStop(voice, scheduleAmpRelease(voice.ampGain.gain, when, fadeMs, this.ampLevelNow(voice, when)));
   }
 
   private safeStop(voice: Voice, when?: number): void {

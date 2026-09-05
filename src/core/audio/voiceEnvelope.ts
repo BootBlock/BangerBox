@@ -159,9 +159,9 @@ export function declickFadeStart(endTime: number, earliest: number, declickMs: n
  *
  * `cancelAndHoldAtTime` stays for the job it can do: erasing whatever is scheduled beyond
  * the fade's start, and truncating an AHDSR segment still running there — reaching zero by
- * `endTime` outranks completing the contour. A later note-off or steal cancels this ramp in
- * turn, since both hold the param at their own earlier time, and there they have this ramp
- * to rewrite, so the hold they ask for IS inserted.
+ * `endTime` outranks completing the contour. A later note-off, steal or choke cancels this
+ * ramp in turn through {@link scheduleAmpRelease}, which needs a departure level of its own
+ * for the reason recorded there.
  */
 export function scheduleAmpDeclick(
   param: AudioParam,
@@ -178,18 +178,44 @@ export function scheduleAmpDeclick(
 }
 
 /**
- * Schedule the release ramp from `when` to silence over `releaseMs`, holding whatever
- * level the envelope had reached. Returns the context time the voice is silent (when the
+ * Schedule the release ramp from `level` at `when` down to silence over `releaseMs` — a §5.4
+ * note-off, voice steal or choke. Returns the context time the voice is silent (when the
  * source should stop).
  *
- * This one really can anchor on `cancelAndHoldAtTime` and needs no level of its own
- * (issue #144): a release, a steal and a choke all interrupt a voice whose declick ramp is
- * still scheduled beyond them, so there is always an event at or after `when` for the method
- * to rewrite. The declick is the last thing on the timeline and never has one.
+ * **The caller supplies the departure level here too, and the reason issue #144 gave for why
+ * it need not is measured wrong.** That reasoning was: an interruption always finds the
+ * declick's ramp scheduled beyond it, so `cancelAndHoldAtTime` has an event to rewrite and
+ * pins the level itself. It was never measured in a browser, and the condition is weaker than
+ * the truth: **the method inserts the hold only when the event it finds at or after the cancel
+ * time is itself a RAMP.** Where that event is a `setValueAtTime`, it inserts nothing at all,
+ * on the reasoning that the preceding event already gives the value there — which is true of
+ * the param's held value and false of the next `linearRampToValueAtTime`, whose line is drawn
+ * from the PRECEDING event's time and value.
+ *
+ * Measured in Edge on a bare param: `setValueAtTime(1, 0)`, then a following event at 0.8,
+ * then `cancelAndHoldAtTime(0.4)` and `linearRampToValueAtTime(0, 0.42)`. With the following
+ * event a linear ramp the param reads **1.00000** at 0.2 s and 0.5 at 0.41 — a true 20 ms
+ * fade. With it a `setValueAtTime` the param reads **0.52381** at 0.2 s and **0.07143** at
+ * 0.39 — one straight line from the note-on.
+ *
+ * That second shape is what every steal and choke in the application has had since §14 `(ay)`,
+ * because `(ay)`'s own fix put a `setValueAtTime` at the declick's fade start where a
+ * `linearRampToValueAtTime` had been. The fade is only as loud as wherever that line has
+ * reached, so a voice interrupted late in its life drops to near silence before its fade
+ * begins.
+ *
+ * `cancelAndHoldAtTime` stays for the job it does do: erasing the declick scheduled beyond
+ * this interruption, which §5.4 says outranks it.
  */
-export function scheduleAmpRelease(param: AudioParam, when: number, releaseMs: number): number {
+export function scheduleAmpRelease(
+  param: AudioParam,
+  when: number,
+  releaseMs: number,
+  level: number,
+): number {
   const end = when + releaseMs / 1000;
   param.cancelAndHoldAtTime(when);
+  setParamNow(param, level, when);
   param.linearRampToValueAtTime(0, end);
   return end;
 }

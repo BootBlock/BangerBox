@@ -130,20 +130,35 @@ describe('scheduleAmpDeclick (spec §5.4)', () => {
 });
 
 describe('scheduleAmpRelease (spec §5.4)', () => {
-  it('anchors on the hold alone, because a declick ramp is always scheduled beyond it', () => {
-    // The counterpart to the test above, and the reason a release needs no departure level
-    // (issue #144): a steal, a choke and a note-off all interrupt a voice whose §5.4 fade is
-    // still queued past them, so `cancelAndHoldAtTime` has an event to rewrite and pins the
-    // level itself. The declick is the last thing on the timeline and never has one.
+  it('writes the departure level, because the hold beyond it is a setValue and pins nothing', () => {
+    // Issue #144 left this function anchoring on `cancelAndHoldAtTime` alone, reasoning that a
+    // steal, a choke and a note-off all interrupt a voice whose §5.4 fade is still queued past
+    // them, so the method has an event to rewrite. Measured in Edge, that condition is weaker
+    // than the truth: the hold is inserted only where the event found at or after the cancel
+    // time is itself a RAMP — and the declick's first event is the `setValueAtTime` #144 added.
     const { context } = createFakeAudioContext();
     const gain = context.createGain();
     scheduleAmpDeclick(gain.gain, 2, 0, 3, 0.5);
-    const silentAt = scheduleAmpRelease(gain.gain, 1, 5);
+    const silentAt = scheduleAmpRelease(gain.gain, 1, 5, 0.4);
     expect(silentAt).toBeCloseTo(1.005);
     const after = calls(gain.gain).slice(3);
-    expect(after.map((c) => c.method)).toEqual(['cancelAndHoldAtTime', 'linearRampToValueAtTime']);
+    expect(after.map((c) => c.method)).toEqual([
+      'cancelAndHoldAtTime',
+      'setValueAtTime',
+      'linearRampToValueAtTime',
+    ]);
     expect(after[0]!.args[0]).toBe(1); // cancels BEFORE the declick's own ramp at 2 s
-    expect(after[1]!.args).toEqual([0, 1.005]);
+    expect(after[1]!.args).toEqual([0.4, 1]);
+    expect(after[2]!.args).toEqual([0, 1.005]);
+  });
+
+  it('refuses a non-finite level through the §4.3 guard rather than poisoning the param', () => {
+    // The same policy `scheduleAmpDeclick` keeps (issue #97): a NaN written to a gain would
+    // silence the chain for the session, so the fade is left interpolating instead.
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    scheduleAmpRelease(gain.gain, 1, 5, Number.NaN);
+    expect(calls(gain.gain).map((c) => c.method)).toEqual(['cancelAndHoldAtTime', 'linearRampToValueAtTime']);
   });
 });
 

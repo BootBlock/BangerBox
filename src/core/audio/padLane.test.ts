@@ -477,6 +477,29 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     pool.destroy();
   });
 
+  it('departs a note-off from the level the §6 contour holds there', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // A 400 ms linear decay to a quarter of the peak: half way down it holds 0.625 of peak.
+    const decaying: AhdsrEnvelope = {
+      attack: 0,
+      hold: 0,
+      decay: 400,
+      sustain: 0.25,
+      release: 100,
+      curve: 'linear',
+    };
+    pool.trigger(spec(context, { id: 'decaying', velocity: 127, gainDb: 0, amp: decaying }));
+    pool.release('p1:0', 0.2);
+    const gain = ampGainsOf(fake)[0]!;
+    const held = gain.calls.filter((call) => call.method === 'setValueAtTime');
+    // The last `setValueAtTime` is the release's own departure level, at the note-off.
+    const departure = held[held.length - 1]!;
+    expect(departure.args[1]).toBeCloseTo(0.2, 9);
+    expect(departure.args[0]).toBeCloseTo(0.625, 6);
+    pool.destroy();
+  });
+
   it('refuses a non-finite time rather than collapsing the contour', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
