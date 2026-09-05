@@ -802,6 +802,14 @@ async function assertShellAndSelfTest(page, label) {
       );
     }
     if (r.stripRemains) throw new Error('the deleted track kept its §4.2 channel strip');
+    // §3.2 forbids an orphaned node. A residual note inside the §7.1.4 window resolves to no
+    // program once the track row is gone, and the demo fallback used to rebuild the channel
+    // `deleteTrack` had just destroyed and leave it wired to master for the session.
+    if (r.trackChannelRemains) {
+      throw new Error(
+        'the deleted track’s §5.2 channel was rebuilt after the delete — an orphan node on the master bus',
+      );
+    }
     // What the save left on disk. `midi_events` cascades from the `tracks` row; the other two
     // do not, and are the track's own to take (spec §7.5, §7.8, §9.3).
     const leftovers = [];
@@ -813,7 +821,7 @@ async function assertShellAndSelfTest(page, label) {
       throw new Error(`a project saved with the track deleted still carries ${leftovers.join(', ')}`);
     }
     console.log(
-      `       track withdrawal: master peak ${r.masterPeakBefore.toFixed(5)} → ${r.masterPeakAfter.toFixed(5)} (×${ratio.toFixed(3)}) with the transport rolling; the worker scheduled ${r.scheduledBefore.length} tracks then 1; no row, event, lane, groove key or strip left behind`,
+      `       track withdrawal: master peak ${r.masterPeakBefore.toFixed(5)} → ${r.masterPeakAfter.toFixed(5)} (×${ratio.toFixed(3)}) with the transport rolling; the worker scheduled ${r.scheduledBefore.length} tracks then 1; no row, event, lane, groove key, strip or channel left behind`,
     );
   });
 

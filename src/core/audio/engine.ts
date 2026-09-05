@@ -321,7 +321,8 @@ export class AudioEngine {
    * Trigger one scheduled note (spec §7.1.4) by resolving the track's program → pad/zone →
    * layer into a real voice (spec §6, {@link resolveVoice}). Tracks with no program (or a
    * note that resolves to nothing, e.g. the demo track) fall back to the bundled
-   * demo sample so the record-then-playback smoke stays audible (spec §12).
+   * demo sample so the record-then-playback smoke stays audible (spec §12) — but a track
+   * the store no longer holds falls back to nothing at all, see {@link triggerFallbackDemo}.
    */
   private triggerScheduledNote(event: ScheduledEvent): void {
     if (event.trackId === undefined || event.note === undefined) return;
@@ -413,6 +414,13 @@ export class AudioEngine {
   /** The demo instrument: one demo pad channel per (track, note) — the smoke path. */
   private triggerFallbackDemo(event: ScheduledEvent): void {
     if (!this.demoBuffer || event.trackId === undefined || event.note === undefined) return;
+    // A track the project no longer HAS is not a track with no program (spec §3.2, §5.3,
+    // issue #137). `ensureTrackChannel` below would rebuild the channel `deleteTrack` has
+    // just destroyed and leave it, and a fresh pad channel, wired to the master bus for the
+    // rest of the session — and it would sound the demo sample rather than the track. A note
+    // still inside the §7.1.4 lookahead window when the track was deleted therefore sounds
+    // nothing, which is what "the track stopped" has to mean.
+    if (useSequenceStore.getState().tracks[event.trackId] === undefined) return;
     this.scheduledNotes++;
     const track = this.graph.ensureTrackChannel(event.trackId);
     const pad = this.graph.ensurePadChannel(`pad:${event.trackId}:${event.note}`, track.input);

@@ -297,9 +297,13 @@ export class SchedulerCore {
    * takes (spec §7.8); a second rule here would be a second place that decides what a
    * lane's owner means.
    *
-   * Notes already posted into the §7.1.4 lookahead window still sound, exactly as a §7.7
-   * live erase leaves the notes under the playhead standing: they carry `when` values in
-   * the future and the batch has already left. That is at most `LOOKAHEAD_MS`.
+   * Notes already posted into the §7.1.4 lookahead window are still DISPATCHED — they carry
+   * `when` values in the future and the batch has already left, which is the same window a
+   * §7.7 live erase cannot reach back into. They are silent, though: the store no longer
+   * holds the track, so `AudioEngine.resolveNote` finds no program and the demo fallback
+   * refuses a track the project does not have. The two halves are deliberate — the worker
+   * does not re-time or recall a batch it has posted, and the graph builds nothing for a
+   * track that is gone.
    */
   removeTrack(trackId: string): void {
     this.tracks.delete(trackId);

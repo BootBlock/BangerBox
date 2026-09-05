@@ -6,7 +6,7 @@ MUST reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the track-withdrawal work merged to `main` (`--no-ff`). All eight §12 phases were
 already complete; this was a defect closure against §7.1.3/§7.5/§7.8, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1924 unit tests**, `test:e2e`
+`package.json` `config.phase` remains **"8"**. Suite: **1925 unit tests**, `test:e2e`
 real-browser smoke (dev + offline, **74/74 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
 
@@ -121,13 +121,24 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
     would shape a later track reusing the id; a held note would keep note repeat and the
     arpeggiator firing; a capture would flush a take through `commitRecordedTake`, writing the
     deleted track's events map key straight back into the store.
-  - **A track deleted while the transport ROLLS still sounds what is already in the §7.1.4
-    window**, up to `LOOKAHEAD_MS`. That is the §7.7 live-erase rule read across — the notes
-    under the playhead are already scheduled — and it is inherent to a lookahead scheduler.
+  - **A track deleted while the transport ROLLS still DISPATCHES what is already in the
+    §7.1.4 window, and hears nothing.** The batch has left the worker, which is the same
+    window a §7.7 live erase cannot reach back into; but the store no longer holds the track,
+    so `resolveNote` finds no program and `triggerFallbackDemo` refuses it.
+  - **A track with no PROGRAM and a track that does not EXIST are different things**, and the
+    §12 demo fallback only ever meant the first. Sounding the second played the demo sample
+    and, worse, `ensureTrackChannel` rebuilt the §5.2 channel `deleteTrack` had just
+    destroyed — an orphan node on the master bus for the session (§3.2).
   - **`useSequenceStore.removeTrack` takes the track's §7.8 lanes and §7.5 groove assignment**,
     in the store action rather than in `projectCrud.deleteTrack`, so `deleteSequence`'s loop and
     any later caller get the same rule. Both reach the worker on the paths they already have —
     the `automation` subscriber's cleared-key loop and the `trackGrooveIds` one.
+  - **A lane is the track's if the track OWNS it or if it ADDRESSES it.** Owning is track scope
+    with this id as `ownerId`; addressing is any lane, of either scope, whose target names the
+    track's §4.2 channel. Both halves are needed, because `recordParamGesture` writes
+    SEQUENCE-scope lanes — so a captured fader ride on a track is owned by the sequence and
+    would otherwise outlive its subject for ever. The registry answers which channel a target
+    names (§13.6), and each emptied lane's dirty key carries its OWN scope and owner.
   - **The revert restores exactly what the delete took**, captured at the delete rather than as
     whole maps, so an unrelated lane edited between the delete and the undo stands.
   - **The §4.2 `track:<id>` strip was already correct**, and was checked rather than assumed:
@@ -1294,28 +1305,32 @@ Nothing was added to the `check:orphans` allowlist.
   does not hold**, because that is also how a track's FIRST diff arrives. Nothing sends one for
   a withdrawn track — the store deletes the track and its events in one `set` — so this is a
   shape, not a path.
-- **A §7.8 lane whose scope is `sequence` but whose target names a deleted track** (say
-  `mixer.track:<gone>.level`) is NOT removed. It is owned by the sequence, not the track, and
-  it resolves to no channel, so it is inert; deciding it belongs to the track would be
-  inventing a rule §7.8 does not state.
-- **`useSequenceStore.removeTrack` still writes `events[trackId]` back if a `recorded` or
-  `erased` report arrives for a deleted track.** The withdrawal is what stops those arriving;
-  the store action itself has no guard, which is pre-existing and untouched here.
+- **A lane whose target names a deleted track goes with it whatever its scope**, and that was
+  the review's first finding: the first pass reclaimed only lanes the track OWNED, while
+  `recordParamGesture` writes sequence-scope ones.
+- **A §7.8 lane on a target that names no channel at all** — a `program:<id>.pad:<idx>.…`
+  address, or a `transport.…` one — is untouched by a track delete, correctly: it addresses
+  something the track does not own.
+- **`commitRecordedTake` and `removeEvents` still write `events[trackId]` back if a report
+  arrives for a deleted track.** The withdrawal is what stops those arriving; the store actions
+  themselves have no guard, which is pre-existing and untouched here.
 - **Every regression test was proven against the code it was written to catch**, by five
   mutations: no `tracks` subscriber at all — the defect as filed (3 failures); the withdrawal
   sent from the EVENTS subscriber instead (2); a core that forgets the track and nothing else
   (3); a core that ignores the withdrawal entirely (6); and a store that keeps the deleted
-  track's lanes and groove (4). Two of the eight core tests are GUARDS rather than regression
-  tests and no mutation moves them.
+  track's lanes and groove (4). Two more for the review's own findings: a store that reclaims
+  only the lanes the track OWNS (1), and a dirty key naming the track's scope rather than the
+  lane's (1). Two of the eight core tests are GUARDS rather than regression tests and no
+  mutation moves them.
 - **The defect was measured in the browser too**, by removing the sender's withdrawal and
   re-running the smoke: the step fails on the WIRE assertion — the worker scheduled both track
   ids a full lookahead after the delete — which is reached before the peak, so the master peak
   under the defect was not read.
 - **Measured in a real browser**: 74/74 smoke steps at ports 5342/5343, dev and offline, no
   console errors. Deleting the louder of two tracks mid-transport took the §5.8 master peak from
-  0.18887 to 0.05460 (×0.289) in the dev pass and 0.18322 to 0.05226 (×0.285) offline, left the
+  0.19070 to 0.05512 (×0.289) in the dev pass and 0.16801 to 0.04800 (×0.286) offline, left the
   survivor audible, and a `saveNow()` afterwards left no `tracks` row, no `midi_events` row, no
-  `automation_points` row, no `trackGrooveIds` key and no §4.2 strip.
+  `automation_points` row, no `trackGrooveIds` key, no §4.2 strip and no §5.2 channel.
 
 **#133 was CLOSED by the previous work.** Two new issues were filed while closing it — a keygroup's
 program-scope mixer sounds and nothing can edit it (#139), and a §7.8 `program:….amp` edit
@@ -1667,6 +1682,6 @@ and #141 remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1924**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**1925**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **74/74 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.

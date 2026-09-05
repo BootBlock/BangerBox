@@ -265,6 +265,12 @@ export interface TrackWithdrawalResult {
   readonly grooveAssignmentRemains: boolean;
   /** Whether the §4.2 `track:<id>` strip left `useMixerStore` with the track (§5.3). */
   readonly stripRemains: boolean;
+  /**
+   * Whether the §5.2 track channel is still in the graph a full lookahead after the delete
+   * (§3.2, §5.3). `graph.removeTrackChannel` destroys it, and a residual note that fell back
+   * to the demo sample used to rebuild it and leave it wired to master for the session.
+   */
+  readonly trackChannelRemains: boolean;
 }
 
 /** Outcome of the §7.7 loop-boundary erase proof (see {@link liveEraseWrapProof}). */
@@ -2781,6 +2787,12 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
   const repos = getActiveRepositories();
   const ctx = sampleEditContext();
   const sampleRate = ctx.projectSampleRate;
+  // The §9.3 payload exactly as the probe found it. It gains a §7.5 groove template below,
+  // and `flushProject` writes the whole column from the stores — so clearing the ASSIGNMENT
+  // would still leave the template in the real project's Grid picker. Putting the column
+  // back verbatim is the `insertDefaultsProof` pattern: `installAudioProbe` runs in
+  // production builds, so a proof that rewrites `projects.payload` restores it.
+  const payloadBefore = (await repos.projects.getById(projectId))?.payload ?? '{}';
 
   /**
    * A tenth-second 1 kHz tone at a given amplitude, through a pad with no envelope shaping,
@@ -2956,6 +2968,7 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
   await delay(200);
 
   const stripRemains = useMixerStore.getState().channels[`track:${deletedTrackId}`] !== undefined;
+  const trackChannelRemains = engine.graph.getChannel(`track:${deletedTrackId}`) !== undefined;
   await projectService.saveNow();
 
   const trackRowRemains = (await repos.tracks.getById(deletedTrackId)) !== undefined;
@@ -2972,8 +2985,9 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
   await repos.automation.replaceTarget('track', deletedTrackId, targetPath, []);
   await repos.sequences.remove(sequence.id);
   for (const program of programs) await repos.programs.remove(program.id);
-  useSequenceStore.getState().assignTrackGroove(deletedTrackId, null);
-  await projectService.saveNow();
+  // The payload column last, AFTER the save above, so nothing the probe put in the stores
+  // is written over the top of it; the reload then takes the stores back with it.
+  await repos.projects.update(projectId, { payload: payloadBefore });
   await projectService.loadProject(projectId);
 
   return {
@@ -2988,6 +3002,7 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
     automationRowsRemain,
     grooveAssignmentRemains,
     stripRemains,
+    trackChannelRemains,
   };
 }
 

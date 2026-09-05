@@ -24,7 +24,7 @@ import {
   type SongEntry,
   type Track,
 } from '@/core/project/schemas';
-import { isAutomatable } from '@/core/audio/params/registry';
+import { isAutomatable, parseParamTarget } from '@/core/audio/params/registry';
 import type { GrooveTemplate } from '@/core/sequencer/groove';
 import { commit } from './commit';
 import { useProjectStore } from './useProjectStore';
@@ -245,14 +245,21 @@ export const useSequenceStore = create<SequenceState>()(
      * Delete a track with everything the track OWNS (spec §4.2, §7.5, §7.8, issue #137).
      *
      * The §9.3 `midi_events` rows cascade from the `tracks` row, but a track owns two
-     * things that do not: its §7.8 track-scope automation lanes, whose `owner_id` is this
-     * id and whose table declares no foreign key at all, and its §7.5 groove assignment,
-     * which lives in the §9.3 `projects.payload`. Left behind, the lanes are worse than
-     * untidy — `laneForTarget` lets a track lane override a sequence lane on the same
-     * §7.8 address whatever track owns it, so a deleted track's lane keeps driving the
-     * parameter for the rest of the project's life. Both go here rather than in
-     * `projectCrud.deleteTrack`, so `deleteSequence`'s loop and any later caller get the
-     * same rule.
+     * things that do not: its §7.8 automation lanes, whose table declares no foreign key
+     * at all, and its §7.5 groove assignment, which lives in the §9.3 `projects.payload`.
+     * Both go here rather than in `projectCrud.deleteTrack`, so `deleteSequence`'s loop
+     * and any later caller get the same rule.
+     *
+     * **A lane is the track's if the track OWNS it or if it ADDRESSES it.** Owning is
+     * §7.8's track scope with this id as `ownerId`. Addressing is any lane, of either
+     * scope, whose target names this track's §4.2 channel — `mixer.track:<id>.level`,
+     * `.pan`, `.sendLevels.N` or `insert:track:<id>:slotN.<param>`. Both halves are
+     * needed: `recordParamGesture` writes SEQUENCE-scope lanes, so a fader ridden on a
+     * track and captured is owned by the sequence and would otherwise survive its subject
+     * for ever, addressing a channel id that is a `crypto.randomUUID()` and can never
+     * exist again. Left behind, a lane is worse than untidy — `laneForTarget` lets a
+     * track-scope lane override a sequence one on the same §7.8 address whatever track
+     * owns it, so it keeps driving the parameter for the rest of the project's life.
      *
      * They reach the worker on the paths they already have: the emptied lanes through the
      * `automation` subscriber's cleared-key loop and the assignment through the
@@ -265,9 +272,18 @@ export const useSequenceStore = create<SequenceState>()(
       const prevEvents = get().events[id];
       // Captured now so the revert restores exactly what the delete took, and touches
       // nothing else: an unrelated lane edited between the delete and the undo stands.
+      const channelId = `track:${id}`;
       const doomedLanes = Object.entries(get().automation)
         .map(([key, points]) => ({ key, points, lane: parseAutomationLaneKey(key) }))
-        .filter((entry) => entry.lane?.scope === 'track' && entry.lane.ownerId === id);
+        .filter(({ lane }) => {
+          if (lane === null) return false;
+          if (lane.scope === 'track' && lane.ownerId === id) return true;
+          // The registry owns the §7.8 address grammar, so the channel a target names is
+          // read from it rather than matched here (spec §13.6; `bouncePlan` asks the same
+          // question the same way).
+          const target = parseParamTarget(lane.targetPath);
+          return target !== null && 'channelId' in target && target.channelId === channelId;
+        });
       const prevGrooveId = get().trackGrooveIds[id];
       const setState = (track: Track | undefined, events: MidiEvent[] | undefined) =>
         set((state) => {
@@ -297,7 +313,7 @@ export const useSequenceStore = create<SequenceState>()(
           dirtyKey.events(id),
           // Each emptied lane is flushed as its own atomic per-lane replace, which is what
           // takes the orphan §9.3 `automation_points` rows with it.
-          ...doomedLanes.map((entry) => dirtyKey.automation('track', id, entry.lane!.targetPath)),
+          ...doomedLanes.map(({ lane }) => dirtyKey.automation(lane!.scope, lane!.ownerId, lane!.targetPath)),
           // The assignment persists in the §9.3 `projects.payload`, not on the track row.
           ...(prevGrooveId !== undefined ? [dirtyKey.project(useProjectStore.getState().projectId)] : []),
         ],
