@@ -129,6 +129,28 @@ describe('resolveDrumVoice (spec §6)', () => {
     expect(resolveDrumVoice(program, 4, 100)?.sampleId).toBe('hard');
   });
 
+  it('splits a layer tune into the pad tune and this layer distance from it', () => {
+    const program = createDefaultDrumProgram('Kit');
+    const pad = createDefaultPad(0);
+    // §6 stores `tuneSemitones` per layer and §8.5.5 sets them independently, while the §7.8
+    // `pitch` leaf names ONE value for the pad — the first layer's. Folding a layer's own tune
+    // into the pad's would put it on the shared lane node, and the octave between these two
+    // would become whichever of them sounded first (issue #138).
+    pad.layers = [
+      layer({ sampleId: 'soft', velocityStart: 1, velocityEnd: 63, tuneSemitones: 0 }),
+      layer({ sampleId: 'hard', velocityStart: 64, velocityEnd: 127, tuneSemitones: 12 }),
+    ];
+    program.pads = [pad];
+
+    const soft = resolveDrumVoice(program, 0, 20);
+    expect(soft?.padTuneSemitones).toBe(0);
+    expect(soft?.layerTuneCents).toBe(0);
+
+    const hard = resolveDrumVoice(program, 0, 100);
+    expect(hard?.padTuneSemitones).toBe(0); // the PAD's tune, which is the first layer's
+    expect(hard?.layerTuneCents).toBe(1_200); // and this layer's own octave, kept apart
+  });
+
   it('returns null for an unassigned pad or an unmatched velocity', () => {
     const program = createDefaultDrumProgram('Kit');
     program.pads = [{ ...createDefaultPad(0), layers: [layer({ velocityStart: 64, velocityEnd: 127 })] }];
