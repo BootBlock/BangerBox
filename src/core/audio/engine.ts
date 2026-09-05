@@ -63,8 +63,6 @@ export class AudioEngine {
   private readonly programBuffers = new Map<string, AudioBuffer>();
   /** Reversed copies for §6 reversed layers, one per decoded buffer (spec §6). */
   private readonly reversedBuffers: ReversedBufferCache;
-  /** Pad/program channels whose §6 mixer has been pushed to the graph (apply once). */
-  private readonly channelMixerApplied = new Set<string>();
   /** Preloaded demo sample the scheduler dispatch triggers per note (the demo instrument). */
   private demoBuffer: AudioBuffer | null = null;
   private playheadRaf: number | null = null;
@@ -131,8 +129,8 @@ export class AudioEngine {
     const projectId = useProjectStore.getState().projectId || DEMO_PROGRAM_ID;
     const path = await ensureDemoSampleInOpfs(projectId);
     const buffer = await this.sampleCache.get(path);
-    const track = this.graph.ensureTrackChannel(DEMO_TRACK_ID);
-    const pad = this.graph.ensurePadChannel(DEMO_PAD_CHANNEL, track.input);
+    const track = this.trackChannel(DEMO_TRACK_ID);
+    const pad = this.graph.ensurePadChannel(DEMO_PAD_CHANNEL, DEMO_TRACK_ID, track.input).channel;
     this.voicePool.trigger({
       id: crypto.randomUUID(),
       buffer,
@@ -272,7 +270,6 @@ export class AudioEngine {
     this.graph.destroy();
     this.sampleCache.clear();
     this.programBuffers.clear();
-    this.channelMixerApplied.clear();
     this.demoBuffer = null;
   }
 
@@ -394,19 +391,43 @@ export class AudioEngine {
   }
 
   /**
-   * The pad/program channel for a resolved voice, created under the track group and — on
-   * first use — seeded with the §6 pad mixer (level/pan/sends). Live pad-mixer editing goes
-   * through Mixer mode and the sync layer; here the stored §6 values are made audible.
+   * The §5.2 track group for `trackId`, seeded from its §4.2 strip on the call that BUILDS it.
+   *
+   * A track channel is built lazily, on the track's first note. `startAudioEngine` runs its
+   * one `resyncAll` before any of them exist and `mixerSync` only pushes what changed, so
+   * without this a project loaded with a track fader at 0.3, a pan, an open send, an insert
+   * rack or `mute: true` plays that track at unity, centred, dry and unmuted until the user
+   * touches the control.
+   */
+  private trackChannel(trackId: string): ChannelHandle {
+    const { channel, created } = this.graph.ensureTrackChannel(trackId);
+    if (created) this.bridge.seedChannel(channel);
+    return channel;
+  }
+
+  /**
+   * This track's realisation of the pad channel for a resolved voice, created under the
+   * track group (spec §5.2 stage 5) and seeded once, in the §14 (ar) order: the §6 payload
+   * first, then the §4.2 strip where the store has one.
+   *
+   * A pad channel exists once PER TRACK playing the program (issue #141), so a second track
+   * builds its instance long after `resyncAll` ran and after any edit the strip has had —
+   * which is why it is seeded here rather than left at the §4.2 defaults `createChannelStrip`
+   * gives it. The graph reports what it built; an engine-side "already seeded" set would
+   * outlive `removePadChannel` and leave a rebuilt channel unseeded.
    */
   private ensureProgramChannel(trackId: string, resolved: ResolvedVoice): ChannelHandle {
-    const track = this.graph.ensureTrackChannel(trackId);
-    const pad = this.graph.ensurePadChannel(resolved.channelId, track.input);
-    if (!this.channelMixerApplied.has(resolved.channelId)) {
-      this.channelMixerApplied.add(resolved.channelId);
+    const track = this.trackChannel(trackId);
+    const { channel: pad, created } = this.graph.ensurePadChannel(resolved.channelId, trackId, track.input);
+    if (created) {
       const now = this.context.currentTime;
       pad.setLevel(resolved.mixer.level, now, false);
       pad.setPan(resolved.mixer.pan, now, false);
       resolved.mixer.sendLevels.forEach((level, index) => pad.setSendGain(index, level, now, false));
+      // The store is the §1.3 #16 runtime truth, so it wins where it carries a strip for this
+      // pad; where it does not — a pad of a program that is not the active one — the §6
+      // payload above is the only value there is.
+      this.bridge.seedChannel(pad);
     }
     return pad;
   }
@@ -422,8 +443,12 @@ export class AudioEngine {
     // nothing, which is what "the track stopped" has to mean.
     if (useSequenceStore.getState().tracks[event.trackId] === undefined) return;
     this.scheduledNotes++;
-    const track = this.graph.ensureTrackChannel(event.trackId);
-    const pad = this.graph.ensurePadChannel(`pad:${event.trackId}:${event.note}`, track.input);
+    const track = this.trackChannel(event.trackId);
+    const pad = this.graph.ensurePadChannel(
+      `pad:${event.trackId}:${event.note}`,
+      event.trackId,
+      track.input,
+    ).channel;
     this.voicePool.trigger({
       id: crypto.randomUUID(),
       buffer: this.demoBuffer,

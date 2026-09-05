@@ -157,30 +157,149 @@ describe('mixer graph topology (spec §5.2)', () => {
     const { context } = createFakeAudioContext();
     const graph = new MixerGraph(context);
     const track = graph.ensureTrackChannel('t1');
-    const pad = graph.ensurePadChannel('pad:prog1:0', track.input);
-    expect(graph.getChannel('track:t1')).toBe(track);
-    expect(graph.getChannel('pad:prog1:0')).toBe(pad);
-    expect(graph.getChannel('master')).toBe(graph.master);
-    expect(graph.getChannel('return:2')).toBe(graph.returns[2]);
-    // ensure* is idempotent.
-    expect(graph.ensureTrackChannel('t1')).toBe(track);
+    const pad = graph.ensurePadChannel('pad:prog1:0', 't1', track.channel.input);
+    expect(track.created).toBe(true);
+    expect(pad.created).toBe(true);
+    expect(graph.channelsFor('track:t1')).toEqual([track.channel]);
+    expect(graph.channelsFor('pad:prog1:0')).toEqual([pad.channel]);
+    expect(graph.channelsFor('master')).toEqual([graph.master]);
+    expect(graph.channelsFor('return:2')).toEqual([graph.returns[2]]);
+    expect(graph.channelsFor('track:nothing')).toEqual([]);
+    // ensure* is idempotent, and only the first call reports having built anything — which
+    // is what tells a caller to seed the channel from its §4.2 strip exactly once.
+    const trackAgain = graph.ensureTrackChannel('t1');
+    expect(trackAgain.channel).toBe(track.channel);
+    expect(trackAgain.created).toBe(false);
+    const again = graph.ensurePadChannel('pad:prog1:0', 't1', track.channel.input);
+    expect(again.channel).toBe(pad.channel);
+    expect(again.created).toBe(false);
     graph.destroy();
   });
 
   it('tears the whole graph down leaving no connected nodes (spec §3.2)', () => {
     const { context, fake } = createFakeAudioContext();
     const graph = new MixerGraph(context);
-    const track = graph.ensureTrackChannel('t1');
-    graph.ensurePadChannel('pad:prog1:0', track.input);
+    const track = graph.ensureTrackChannel('t1').channel;
+    graph.ensurePadChannel('pad:prog1:0', 't1', track.input);
     graph.destroy();
     expect(liveNodeCount(fake)).toBe(0);
+  });
+
+  // Two tracks that play ONE program (issue #141). §5.2 stage 5 places "all pad outputs of
+  // the program on a track" at that track's input, and a `pad:<prog>:<idx>` id carries no
+  // track — so a graph that keys the channel by the id alone wires the pad to whichever
+  // track triggered it first, and the second track's whole strip is bypassed for that pad.
+  describe('two tracks on one program (issue #141)', () => {
+    /** Whether the fake graph carries an edge from `from` to `to`. */
+    const connects = (from: AudioNode, to: AudioNode): boolean =>
+      (from as unknown as { outputs: unknown[] }).outputs.includes(to);
+
+    it('gives each track its own realisation of the pad channel, into its own input', () => {
+      const { context } = createFakeAudioContext();
+      const graph = new MixerGraph(context);
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
+      const padA = graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input);
+      const padB = graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input);
+
+      expect(padA.created).toBe(true);
+      expect(padB.created).toBe(true);
+      expect(padB.channel).not.toBe(padA.channel);
+      // Each realisation reaches its OWN track's input and nothing else (spec §5.2 stage 5).
+      expect(connects(padA.channel.output, trackA.input)).toBe(true);
+      expect(connects(padA.channel.output, trackB.input)).toBe(false);
+      expect(connects(padB.channel.output, trackB.input)).toBe(true);
+      expect(connects(padB.channel.output, trackA.input)).toBe(false);
+      // Both carry the same §4.2 id: one strip, one §7.8 address, one §6 record.
+      expect(padA.channel.id).toBe('pad:prog1:0');
+      expect(padB.channel.id).toBe('pad:prog1:0');
+      graph.destroy();
+    });
+
+    it('resolves the §4.2 id to every realisation, so one strip write reaches them all', () => {
+      const { context } = createFakeAudioContext();
+      const graph = new MixerGraph(context);
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
+      const padA = graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input).channel;
+      const padB = graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input).channel;
+
+      const resolved = graph.channelsFor('pad:prog1:0');
+      expect(resolved).toHaveLength(2);
+      expect(new Set(resolved)).toEqual(new Set([padA, padB]));
+      // A track id still resolves to exactly one channel.
+      expect(graph.channelsFor('track:a')).toEqual([trackA]);
+      graph.destroy();
+    });
+
+    it('sends the tempo fan-out to every realisation (spec §7.2)', () => {
+      const { context } = createFakeAudioContext();
+      const graph = new MixerGraph(context);
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
+      graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input);
+      graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input);
+      // Master, four returns, two tracks and BOTH pad realisations.
+      expect(graph.allChannels()).toHaveLength(9);
+      graph.destroy();
+    });
+
+    it('takes a deleted track’s pad realisation with it and leaves the other sounding', () => {
+      const { context, fake } = createFakeAudioContext();
+      const graph = new MixerGraph(context);
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
+      graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input);
+      const padB = graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input).channel;
+      const before = liveNodeCount(fake);
+
+      graph.removeTrackChannel('a');
+
+      // Track A's realisation is gone; track B's is untouched and still reaches its input.
+      expect(graph.channelsFor('pad:prog1:0')).toEqual([padB]);
+      expect(graph.channelsFor('track:a')).toEqual([]);
+      expect(connects(padB.output, trackB.input)).toBe(true);
+      // §3.2: the deleted track's pad realisation is not left connected to a dead input.
+      expect(liveNodeCount(fake)).toBeLessThan(before);
+      graph.destroy();
+      expect(liveNodeCount(fake)).toBe(0);
+    });
+
+    it('destroys every realisation when the §4.2 strip itself leaves (spec §5.3)', () => {
+      const { context, fake } = createFakeAudioContext();
+      const graph = new MixerGraph(context);
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
+      graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input);
+      graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input);
+
+      graph.removePadChannel('pad:prog1:0');
+
+      expect(graph.channelsFor('pad:prog1:0')).toEqual([]);
+      // Rebuilding after a removal reports `created` again, so the caller re-seeds it.
+      expect(graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input).created).toBe(true);
+      graph.destroy();
+      expect(liveNodeCount(fake)).toBe(0);
+    });
+
+    it('tears down both realisations on a full teardown (spec §3.2)', () => {
+      const { context, fake } = createFakeAudioContext();
+      const graph = new MixerGraph(context);
+      const trackA = graph.ensureTrackChannel('a').channel;
+      const trackB = graph.ensureTrackChannel('b').channel;
+      graph.ensurePadChannel('pad:prog1:0', 'a', trackA.input).channel.setLevel(0.5, 0);
+      graph.ensurePadChannel('pad:prog1:0', 'b', trackB.input).channel.setPan(0.3, 0);
+      graph.destroy();
+      expect(liveNodeCount(fake)).toBe(0);
+      expect(pendingParamCount(fake)).toBe(0);
+    });
   });
 
   it('leaves no param holding automation after teardown (spec §3.2)', () => {
     const { context, fake } = createFakeAudioContext();
     const graph = new MixerGraph(context);
-    const track = graph.ensureTrackChannel('t1');
-    const pad = graph.ensurePadChannel('pad:prog1:0', track.input);
+    const track = graph.ensureTrackChannel('t1').channel;
+    const pad = graph.ensurePadChannel('pad:prog1:0', 't1', track.input).channel;
     pad.setLevel(0.5, 0);
     pad.setPan(0.3, 0);
     track.setSendGain(0, 0.6, 0);

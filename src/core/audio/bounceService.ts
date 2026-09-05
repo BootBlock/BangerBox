@@ -113,8 +113,6 @@ async function renderSegments(
   const programs = useProgramStore.getState().programs;
   const bufferCache = new Map<string, AudioBuffer>();
   const reversedBuffers = new ReversedBufferCache(offline);
-  /** Pad channels whose §6 mixer has been seeded — the live engine's rule (spec §6). */
-  const padMixerApplied = new Set<string>();
 
   const decodeSample = async (sampleId: string): Promise<AudioBuffer | null> => {
     const cached = bufferCache.get(sampleId);
@@ -142,15 +140,19 @@ async function renderSegments(
   };
 
   /**
-   * The pad channel a voice merges into (spec §5.2 stages 3–5), created under its track
-   * group and seeded once with the §6 pad mixer — the same rule, in the same order, as
-   * `AudioEngine.ensureProgramChannel`.
+   * This track's realisation of the pad channel a voice merges into (spec §5.2 stages 3–5),
+   * created under its track group and seeded once with the §6 pad mixer — the same rule, in
+   * the same order, as `AudioEngine.ensureProgramChannel`.
+   *
+   * Two tracks playing one program get one realisation EACH (issue #141), so a stem carries
+   * only the voices its own track played and the §4.2 strips below reach both. The §4.2 seed
+   * the live engine does per instance is `resyncAll`'s job here, because a render creates
+   * every channel it needs before that one pass.
    */
   const padChannelFor = (trackId: string, resolved: ResolvedVoice): ChannelHandle => {
-    const track = graph.ensureTrackChannel(trackId);
-    const pad = graph.ensurePadChannel(resolved.channelId, track.input);
-    if (!padMixerApplied.has(resolved.channelId)) {
-      padMixerApplied.add(resolved.channelId);
+    const track = graph.ensureTrackChannel(trackId).channel;
+    const { channel: pad, created } = graph.ensurePadChannel(resolved.channelId, trackId, track.input);
+    if (created) {
       pad.setLevel(resolved.mixer.level, 0, false);
       pad.setPan(resolved.mixer.pan, 0, false);
       resolved.mixer.sendLevels.forEach((level, index) => pad.setSendGain(index, level, 0, false));

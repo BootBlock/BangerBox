@@ -1,14 +1,43 @@
-# BangerBox — Phase Handover (after the insert-limit closure)
+# BangerBox — Phase Handover (after the shared-pad-channel closure)
 
-Generated at the close of the §1.3.1 insert-limit work per Protocol Alpha (spec §13.1). A new
+Generated at the close of the §5.2 shared-pad-channel work per Protocol Alpha (spec §13.1). A new
 session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the insert-limit work merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §1.3.1/§4.2/§8.5.6, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1949 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **76/76 steps**), plus `lint`, `type-check`, `format:check`
+**State:** the shared-pad-channel work merged to `main` (`--no-ff`). All eight §12 phases were
+already complete; this was a defect closure against §4.2/§5.2/§5.3/§8.5.6, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1965 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **78/78 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
+
+**A §4.2 channel id NAMES a strip; the §5.2 graph REALISES it, once per track.** A pad channel
+was keyed `pad:<programId>:<padIndex>` with no track in the id, and `ensurePadChannel` wired it
+to the input of whichever track triggered it first — so two tracks playing one program shared a
+node and the second track's fader, pan, mute, solo, sends and inserts were bypassed for every pad
+the two shared. §5.2 stage 5 forces one signal PATH per track; §6 forces one set of VALUES per
+program. Both are binding, so the two were never the same question: one §6 `Pad` record, one §4.2
+strip, one §7.8 address, N realisations. `MixerGraph.channelsFor` replaces `getChannel`, returns
+0..N, and every §4.2 and §7.8 writer iterates it. See §2 (av) and §4.
+
+**No §7.8 address, §6 payload shape or §8.5.6 control changed, and §8.5.6 needs no track
+selector.** A lane saved against `mixer.pad:<prog>:<idx>.level` means exactly what it always
+meant; what changed is that it now reaches every track playing the program rather than the first
+one to trigger it. The Pads tab still shows one strip per assigned pad of the active program,
+because there is still exactly one set of values per pad — a selector would assert per-track pad
+values that §6 has nowhere to store.
+
+**EVERY lazily built channel is SEEDED, through `AudioBridge.seedChannel`.** A track channel is
+built on the track's first note and a pad realisation on the first hit that needs it — both long
+after `startAudioEngine`'s single `resyncAll`, and `mixerSync` pushes only what CHANGED. Without
+it a project loaded with a track fader at 0.3 played that track at unity until the user moved it,
+and `ResolvedVoice` carries a pad's `mixer` but not its `inserts`, so it is also the only way an
+insert rack reaches a channel built after the edit that put it there.
+
+**The insert chain is wired on a MICROTASK, and that is a §11.5 requirement.** `seedChannel` runs
+on §7.6's audition path (`triggerLiveNote` → `soundResolvedVoice` → the pool, `when` = now), and
+`createInsert('reverb')` synthesises its impulse response on the main thread. Building it before
+`voicePool.trigger` would spend the whole 30 ms touch-to-sound budget on the first hit of a pad
+that carries one.
 
 **A channel holds `globalInsertLimit` insert slots (clamped to 1–8 as the settings enter the
 store), and no effect may occupy a position past them.** §1.3.1 gives every channel 4, "configurable 1–8", and `addInsert` appended without
@@ -27,6 +56,11 @@ user made. That is §14 (ap)'s "the stored value always wins", one level up.
 site outside a unit test, so the §9.3 `projects.insert_limit` column was inert on both sides.
 Enforcing it makes it BIND, so §8.5.1's Project panel gained an **Insert slots** select beside
 Sample rate and Bit depth.
+
+**A deleted track takes its own pad realisations with it** (§3.2). They are connected to the
+input node `removeTrackChannel` destroys, so leaving them would be an orphan on a dead branch
+whose sends still feed the returns — and the shared form of that was #141's second symptom:
+deleting one track silenced the other.
 
 **A track that leaves the project is WITHDRAWN from the §7.1.3 worker by name.** The worker holds
 every track on purpose (§14 (aq)), so nothing in its own state can tell it one has been deleted —
@@ -113,6 +147,33 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(av) — the shared-pad-channel closure (§4.2, §5.2, §5.3, §8.5.6, §9.5).** The ⚑ items
+  below are settled policy a new session should treat as binding, not as spec text:
+  - **A pad channel is realised PER TRACK; the §4.2 strip that supplies it stays per program.**
+    §5.2 stage 5 says "all pad outputs of the program ON A TRACK merge into the track input",
+    and a `GainNode` has one output — so no single node can serve two tracks. §6 puts a pad's
+    mixer values and inserts in the `Pad` record, which belongs to the program, and the §9.3
+    `tracks.mixer` column holds one `ChannelStrip` for the track itself. Neither constraint
+    bends, so the answer is that the two questions are different: `MixerGraph` keys a pad
+    channel by (channel id, track id), and `channelsFor` resolves the id to every realisation.
+  - ⚑ **A §7.8 lane saved against `mixer.pad:<prog>:<idx>.level` means what it always meant.**
+    The strip it names is still per program. Nothing on disk is in a shape to correct, no §9.2
+    migration was added, and there is no §14 (ap) reconciliation to make — the lane simply
+    becomes audible on every track it was already describing. Same for a §10.3 binding.
+  - ⚑ **§8.5.6 needs no track selector and the Pads tab is honest without one.** There is still
+    exactly one set of values per pad. A selector would assert per-track pad values that §6 has
+    nowhere to store and no §7.8 address could name. The control that WAS inert is the second
+    track's own strip on the Tracks tab.
+  - ⚑ **Choke groups and mono retrigger stay PROGRAM-scoped.** §5.4 scopes choke "within the
+    program" and `VoicePool` keys both on `padKey` = `${programId}:${padIndex}`. Two tracks on
+    one mono pad still cut each other off. That is the spec's own reading, deliberately left.
+  - ⚑ **The cost is stated rather than hidden.** N tracks on one program build N pad chains for
+    each pad they share, each with its own insert rack, and nothing is built until a track
+    actually plays the pad. §11.5 has no size budget and none is being reintroduced.
+  - ⚑ **A §9.5 render inherits the fix for free**, because §14 (ar) made the offline graph the
+    live one. A stem of one of two tracks on a shared program now carries only that track's
+    voices; `bounceService` changed only where it passes the track id through.
 
 - **(au) — the insert-limit closure (§1.3.1, §4.2, §5.7, §8.5.1, §8.5.6, §9.3).** The ⚑ items
   below are settled policy a new session should treat as binding, not as spec text:
@@ -679,11 +740,12 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   ROWS**, not as a `useSequenceStore.hydrate`, and must create them rather than borrow the
   project's: by the time the run reaches the late steps, earlier ones have opened imported and
   factory projects and what a track points at is no longer predictable.
-- **A §11.4 probe that measures two TRACKS must give each its own PROGRAM.** A §5.2 pad
-  channel is keyed `pad:<programId>:<padIndex>` with no track in the id, and
-  `ensurePadChannel` wires it to whichever track triggered it first — so two tracks on one
-  program share a pad channel and deleting the first silences the second (issue #141). The
-  track-withdrawal proof's first draft measured that instead of what it was written for.
+- **A §11.4 probe may now give two TRACKS one PROGRAM, and `sharedPadChannelProof` is the
+  one that must.** Issue #141 is closed: a pad channel is realised per track, so two tracks on
+  one program no longer share a node. The note this replaces told a probe to give each track
+  its own program to avoid the defect; `trackWithdrawalProof` still does, and there is no
+  reason to change it. What a new probe must not do is assume ONE pad channel per id —
+  `graph.channelsFor(padChannel)` returns one per track that has played it.
 - **`inserts.at(-1)` is NOT "the slot an add just created".** `addInsert` fills the §1.3.1
   rack's first free slot, so a fresh effect lands at the FRONT of a default four-slot strip
   and the empty slots sit behind it. Find it by effect, or by diffing the list. Eight tests
@@ -702,6 +764,41 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
+
+**A pad channel, and what a §4.2 id resolves to (spec §4.2, §5.2, §5.3):**
+
+- **`MixerGraph.channelsFor(channelId)` is the ONE resolution of a §4.2 id to graph channels**,
+  and it returns 0..N — one for the master, a return or a track, one PER TRACK playing the
+  program for a pad. `getChannel` is gone. Every §4.2 strip write, the §5.2 mute application and
+  both §7.8 dispatch paths iterate it; a new writer does too, or it moves one track and not the
+  other.
+- **`ensurePadChannel(channelId, trackId, trackInput)` takes the track id EXPLICITLY**, because
+  it is the other half of the key. Inferring it from `trackInput` would make the identity a
+  property of a node reference rather than a stated fact.
+- **It returns `{ channel, created }`, and `created` is the graph's answer rather than the
+  caller's.** A caller's own "already seeded" set outlives `removePadChannel`, so a rebuilt
+  channel would keep the §4.2 defaults `createChannelStrip` gives it. `AudioEngine` and
+  `bounceService` both dropped such a set when this landed.
+- **`AudioBridge.seedChannel(channel)` seeds ONE freshly built channel** — the §4.2 strip where
+  the store has one, then the §5.2 effective mute, which is derived from the whole mixer and so
+  is written even where the strip is absent. It is per-channel rather than a narrowed
+  `resyncAll` because `applyInserts` destroys and rebuilds a chain, and rebuilding one that is
+  already sounding would glitch it. **Every lazily built channel goes through it** — a track's
+  on its first note, a pad realisation's on the first hit that needs it — because
+  `startAudioEngine`'s one `resyncAll` runs before either exists and `mixerSync` pushes only
+  what changed.
+- **It wires the insert chain on a MICROTASK, and that is not an optimisation.** It runs on
+  §7.6's audition path with `when` = now, and `createInsert('reverb')` synthesises an impulse
+  response on the main thread — §11.5's 30 ms touch-to-sound budget is what forbids doing that
+  before `voicePool.trigger`. The microtask re-asks the graph whether it still holds the
+  channel, because a program change or a track delete may have destroyed it in between.
+- **`applyStripParams` is the one write of a §4.2 strip's continuous params onto a channel**,
+  shared by `resyncAll` and `seedChannel`; `applyInserts` is the separate half, because only
+  one of the two callers defers it. A new §4.2 continuous field goes in `applyStripParams` once.
+- **`AudioEngine.trackChannel(trackId)` is the one place a track group is fetched**, and it is
+  what seeds a new one. Reaching `graph.ensureTrackChannel` directly from the engine skips that.
+- **`removeTrackChannel(trackId)` destroys the track's own pad realisations first.** A new thing
+  the graph hangs off a track goes there too, or it outlives the input it is connected to.
 
 **Withdrawing a deleted track (spec §7.1.3, §7.5, §7.8):**
 
@@ -743,6 +840,10 @@ transient channel still stand. New this work:
 
 **Building a §9.5 render (spec §5.2, §9.5):**
 
+- **A render creates every channel it needs BEFORE its one `resyncAll` pass**, which is why it
+  needs no `seedChannel` call: the §6 payload seeds each realisation as it is built, and the one
+  pass then writes the §4.2 strips over the top. The live engine cannot do that, because a
+  second track's first hit arrives long after start-up.
 - **`bounceService.renderSegments` builds the LIVE graph on the offline context** — `MixerGraph`
   - `createAudioBridge` + `VoicePool`, all of which take a `BaseAudioContext`. A new §5.2 stage,
     a new strip parameter or a new §5.7 effect reaches every bounce for free. **Do not add a
@@ -1130,7 +1231,12 @@ the §9.8 global-library audio its programs reference. No repository method was 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1**. **No migration added.**
 
 **No DDL column, §9.3 payload field or §6 payload shape changed this work, and no §9.2
-migration was added.** The §9.3 `projects.insert_limit` column has existed with a default of 4
+migration was added.** The shared-pad-channel closure is a graph-topology change: a pad's
+values still live in the §6 `Pad` record that the §9.3 `programs.payload` column holds, still
+addressed by `mixer.pad:<prog>:<idx>.…`, so a project written before it loads unchanged and
+nothing on disk is in a shape to correct (§2 (av)).
+
+From the insert-limit work, and unchanged: the §9.3 `projects.insert_limit` column has existed with a default of 4
 since the v1 DDL and was already hydrated by `mappers.ts` and written by `persist.ts` — what
 changed is that something now READS it. A project carrying a chain longer than its own limit
 loads unchanged and every effect in it sounds, so there is nothing on disk in a shape to
@@ -1156,7 +1262,12 @@ own defaults and needs no migration.
 
 ## 7. Worker / worklet / message protocol versions
 
-**Nothing in the §7.1.3 protocol changed this work** (issue #135): no request kind, no response
+**Nothing in the §7.1.3 protocol changed this work** (issue #141): no request kind, no response
+kind, no `ScheduledEvent` field, and no change to an existing kind's shape.
+**`SCHEDULER_PROTOCOL_VERSION` stays at 2.** A pad channel is a §5.2 graph object and never
+crosses the worker boundary — the scheduler knows nothing about channels.
+
+From the insert-limit work, and unchanged: **nothing in the §7.1.3 protocol changed** (issue #135): no request kind, no response
 kind, no `ScheduledEvent` field, and no change to an existing kind's shape.
 **`SCHEDULER_PROTOCOL_VERSION` stays at 2.** The insert limit is a §4.2 store rule and never
 crosses the worker boundary — the scheduler knows nothing about insert slots.
@@ -1404,7 +1515,53 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#135 is CLOSED by this work.** One new issue was filed while closing it — `removeInsert`
+**#141 is CLOSED by this work.** No new issue was filed while closing it, and nothing was
+added to the `check:orphans` allowlist.
+
+**Honest scope notes for the shared-pad-channel work:**
+
+- **A pad's `mute` and `solo` are still session state**, because §6's `Pad.mixer` defines no
+  field for them (§14 (as) item 6). A realisation is muted by the derived §5.2 result like any
+  other channel, and that result is not persisted.
+- **A keygroup program's program-scope strip is still unreachable** (#139) and unaffected:
+  `padStripsForProgram` publishes no strip for it either way.
+- **The `pad:<trackId>:<note>` channel the demo fallback builds is unchanged.** It already
+  carried a track in its id, so it has exactly one realisation, and it is not a §6 pad.
+- **`removeInsert` still shrinks the rack** (#142), which is why the §11.4 step BYPASSES its
+  probe filter rather than removing it.
+- **Choke groups and mono retrigger stay program-scoped** per §5.4 — see §2 (av).
+- **`seedChannel`'s call from `AudioEngine` is proven by the browser step's lowpass reading.**
+  There is no call from a §9.5 render, because a render creates every channel before its one
+  `resyncAll` pass.
+- **A lazily built TRACK channel had never been seeded either.** The review's first finding,
+  pre-existing and no part of #141, closed with the same mechanism one line away: measured at
+  a live master peak of **0.13589** against **0.27213** at unity (×0.499) with a fader set
+  before the channel existed, where the unseeded build read **0.27618** against **0.27960**
+  (×0.988).
+- **The very first hit of a pad whose rack was edited before its realisation existed can pass a
+  few milliseconds of DRY signal**, because the microtask that wires the chain is itself what
+  costs. Deliberate: the alternative is a main-thread stall on §7.6's audition path.
+- **Every regression test was proven against the code it was written to catch**, by six
+  mutations: `ensurePadChannel` keying by the channel id alone — the defect as filed (4
+  failures); the bridge writing to `channelsFor(id)[0]` (2); `seedChannel` applying no strip
+  (1); `removeTrackChannel` leaving the track's pad realisations (1); `seedChannel` applying
+  its chain synchronously (2); and `trackChannel` seeding nothing, which has no unit test and
+  is browser-only.
+- **The defect was measured in the browser too**, by the first of those mutations: 1 realisation,
+  `secondFaderClosedRms` **0.061621618782488896** against a `bothTracksRms` of
+  **0.061621618782488896** — identical to every digit — `firstFaderClosedRms` **0**, and a live
+  peak of 0.27392 → 0.26976 (×0.985). The step's assertions are ordered so it fails on the
+  second track's fader, which is the audio claim, rather than on the realisation count.
+- **Measured in a real browser**: 78/78 smoke steps at ports 5342/5343, dev and offline, no
+  console errors. Both tracks hit one pad on the same four beats of a bar; the bounce read
+  **0.06162 RMS** with both faders at unity, **0.03081** (×0.5000) with the second closed and
+  **0.03081** (×0.5000) with the first; the pad strip at 0.8 rendered ×0.2512; the live §5.8
+  master peak read **0.13589** with the second track's fader at 0 against **0.27213** at unity
+  (×0.499), the pad's own 80 Hz lowpass held that peak at **0.00276** (×0.020), and the graph
+  held **2** channels under the one pad id. Both live edits were made BEFORE either channel
+  existed, so that pass measures the seeding as well as the routing.
+
+**#135 was CLOSED by the previous work.** One new issue was filed while closing it — `removeInsert`
 drops a slot from the array rather than emptying it, shifting every §7.8 address behind it
 (#142). Nothing was added to the `check:orphans` allowlist.
 
@@ -1843,6 +2000,6 @@ remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1949**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **76/76 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1965**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **78/78 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.

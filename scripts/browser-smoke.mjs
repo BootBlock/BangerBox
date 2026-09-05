@@ -893,6 +893,88 @@ async function assertShellAndSelfTest(page, label) {
     );
   });
 
+  // Two tracks that play ONE program shared a §5.2 pad channel, wired to whichever triggered
+  // it first (#141): the second track's voices arrived at the FIRST track's strip, so its own
+  // fader, pan, mute, solo, sends and inserts were bypassed for every pad the two shared.
+  //
+  // Both tracks hit the same pad on the same four beats, so each hit is two coherent voices
+  // and closing one track's fader must halve the render. Against the unfixed graph the two
+  // faders fail in opposite directions — the second changes nothing, the first renders
+  // silence — which is what says the audio is on the wrong strip rather than merely quiet.
+  //
+  // It sits HERE, beside the pad-strip and track-withdrawal steps, because all three end on a
+  // fresh `loadProject` while the two steps below do not — and the Grid step reads whatever
+  // arrangement the stores hold.
+  await step(`${label}: two tracks on one program each own their pad channel (#141)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.sharedPadChannelProof());
+    // A silent baseline would leave every ratio below meaningless, so it is asserted first.
+    if (!(r.bothTracksRms > 0.01)) {
+      throw new Error(
+        `the two-track bounce is silent (${r.bothTracksRms.toFixed(5)} RMS) — nothing sounded, so this proves nothing`,
+      );
+    }
+    const secondRatio = r.secondFaderClosedRms / r.bothTracksRms;
+    if (Math.abs(secondRatio - 0.5) > 0.05) {
+      throw new Error(
+        `closing the SECOND track's fader rendered ${r.secondFaderClosedRms.toFixed(5)} against ${r.bothTracksRms.toFixed(5)} RMS (×${secondRatio.toFixed(4)}) — one of two unison voices is 0.5, and ×1.0 means its audio is on the first track's strip`,
+      );
+    }
+    const firstRatio = r.firstFaderClosedRms / r.bothTracksRms;
+    if (Math.abs(firstRatio - 0.5) > 0.05) {
+      throw new Error(
+        `closing the FIRST track's fader rendered ${r.firstFaderClosedRms.toFixed(5)} against ${r.bothTracksRms.toFixed(5)} RMS (×${firstRatio.toFixed(4)}) — one of two unison voices is 0.5, and ×0 means that strip carried both tracks`,
+      );
+    }
+    // §5.2 stage 5: the program on a track merges into THAT track's input, so the graph holds
+    // one realisation of the pad strip per track that played it. The structural half of the
+    // two readings above, and asserted AFTER them so a defect run reports the audio it
+    // rendered rather than stopping at the count.
+    if (r.liveRealisations !== 2) {
+      throw new Error(
+        `the live graph holds ${r.liveRealisations} channel(s) under ${r.padChannel} — two tracks played that program, so it must hold two`,
+      );
+    }
+    // The other half of the decision: one §6 record, one §4.2 strip, one §7.8 address, N
+    // realisations. §8.5.6's law maps 0.8 to −12 dB, which is 0.2512 of the amplitude.
+    const padRatio = r.padFaderRms / r.bothTracksRms;
+    if (Math.abs(padRatio - 0.2512) > 0.02) {
+      throw new Error(
+        `the pad strip at 0.8 rendered ×${padRatio.toFixed(4)} of the unedited bounce — a −12 dB pad fader is 0.2512 on every realisation of it`,
+      );
+    }
+    // The live path, through `AudioEngine` rather than `bounceService`, and the one place a
+    // LAZILY built channel is measured: every track and pad channel is created on its first
+    // note, long after `startAudioEngine`'s single `resyncAll`. Both edits below were made
+    // before either channel existed.
+    if (!(r.livePeakBoth > 0.05)) {
+      throw new Error(
+        `the master bus was silent with both tracks playing (peak ${r.livePeakBoth.toFixed(5)})`,
+      );
+    }
+    // The second track's channel was built with the fader it was LOADED with, at 0. A meter
+    // reading is looser than an offline render, so the bound only has to separate "halved"
+    // from the ×1.0 an unseeded channel — or a shared pad channel — gives.
+    const liveRatio = r.livePeakSecondClosed / r.livePeakBoth;
+    if (!(liveRatio > 0.25 && liveRatio < 0.75)) {
+      throw new Error(
+        `the live master peak read ${r.livePeakSecondClosed.toFixed(5)} with the second track's fader at 0 against ${r.livePeakBoth.toFixed(5)} at unity (×${liveRatio.toFixed(3)}) — two unison voices becoming one is about half, and ×1.0 means the fader reached neither the channel it was built with nor its own track`,
+      );
+    }
+    // §6 carries a pad's inserts but `ResolvedVoice` does not, so an 80 Hz lowpass sitting in
+    // the rack before the first note can only reach a fresh realisation through
+    // `AudioBridge.seedChannel` — two octaves below the tone, so an unseeded one reads the
+    // open peak rather than a quiet one.
+    const seededRatio = r.livePeakSeeded / r.livePeakSecondClosed;
+    if (!(seededRatio < 0.2)) {
+      throw new Error(
+        `the pad's own 80 Hz lowpass left the master peak at ${r.livePeakSeeded.toFixed(5)} against ${r.livePeakSecondClosed.toFixed(5)} bypassed (×${seededRatio.toFixed(3)}) — a channel built after the edit was not seeded from its §4.2 strip`,
+      );
+    }
+    console.log(
+      `       shared pad channel: ${r.liveRealisations} realisations of ${r.padChannel}; bounce ${r.bothTracksRms.toFixed(5)} RMS → ${r.secondFaderClosedRms.toFixed(5)} (×${secondRatio.toFixed(4)}) on the second fader and ${r.firstFaderClosedRms.toFixed(5)} (×${firstRatio.toFixed(4)}) on the first; pad fader ×${padRatio.toFixed(4)}; live peak ${r.livePeakBoth.toFixed(5)} at unity → ${r.livePeakSecondClosed.toFixed(5)} (×${liveRatio.toFixed(3)}) with a fader the channel was BUILT with, and ${r.livePeakSeeded.toFixed(5)} (×${seededRatio.toFixed(3)}) with the pad's own lowpass seeded in too`,
+    );
+  });
+
   // §7.9 makes song mode the way to play several sequences in order, which only means
   // something if sequence mode plays ONE. The unit tests drive the core with an injected
   // clock; the wire is what they cannot reach, and the defect lived on both sides of it —
