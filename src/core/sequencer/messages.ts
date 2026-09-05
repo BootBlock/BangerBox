@@ -13,7 +13,9 @@
  * request + `erased` response (MPC live erase, §7.7), and `ScheduledEvent.accented`
  * (metronome beat-1 accent, §5.9), and the `arp` request (keygroup arpeggiator, §7.3;
  * spec §14 2026-07-17 (g)). The `songLoop` request and the `songEnded` response carry
- * §7.9's end of song. New kinds extend the union; existing ones never change.
+ * §7.9's end of song, and the `removeTrack` request carries a track's withdrawal from
+ * the project (§7.1.3, issue #137). New kinds extend the union; existing ones never
+ * change, which is why adding one does not move {@link SCHEDULER_PROTOCOL_VERSION}.
  *
  * The Zod unions below are NOT cast to their TypeScript counterparts: the annotation on
  * each `const` is the only thing that makes the compiler check the two for exhaustiveness,
@@ -183,7 +185,22 @@ export type SchedulerRequest =
       readonly division: NoteRepeatDivision;
     }
   | { readonly kind: 'metronome'; readonly enabled: boolean; readonly countInBars: 0 | 1 | 2 }
-  | { readonly kind: 'liveErase'; readonly trackId: string; readonly note: number; readonly active: boolean };
+  | { readonly kind: 'liveErase'; readonly trackId: string; readonly note: number; readonly active: boolean }
+  /**
+   * The track is GONE from the project (spec §7.1.3 extension, issue #137).
+   *
+   * Not an `eventsDiff` listing every id in `deletes`. That kind is a diff of a track's
+   * events and carries the `sequenceId` a track has; a track that no longer exists has
+   * neither, and `applyEventsDiff` would re-create the map entry it was sent to empty.
+   * It also cannot reach the worker's other track-keyed state — the §7.5 groove, the §7.6
+   * held notes, the §7.7 open capture and armed erase — none of which is an event.
+   *
+   * A withdrawal is not the §14 (aq) SELECTION question. There the sender must ship the
+   * whole project, because song mode picks a different sequence per segment and the worker
+   * decides which of the tracks it holds should sound now. Here no mode plays the track
+   * again in any segment, so there is nothing left for the worker to decide.
+   */
+  | { readonly kind: 'removeTrack'; readonly trackId: string };
 
 // --- Worker → main responses (spec §7.1.3) ----------------------------------------
 
@@ -345,6 +362,7 @@ const schedulerRequestSchema: z.ZodType<SchedulerRequest> = z.discriminatedUnion
     note: z.number().int(),
     active: z.boolean(),
   }),
+  z.object({ kind: z.literal('removeTrack'), trackId: schedulerIdSchema }),
 ]);
 
 const scheduledEventSchema = z.object({

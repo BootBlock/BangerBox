@@ -14,6 +14,7 @@ import { dirtyKey } from '@/core/project/dirty';
 import {
   automationLaneKey,
   automationPointSchema,
+  parseAutomationLaneKey,
   BPM_RANGE,
   LENGTH_BARS_RANGE,
   SWING_RANGE,
@@ -240,25 +241,66 @@ export const useSequenceStore = create<SequenceState>()(
         dirtyKeys: [dirtyKey.track(id)],
       });
     },
+    /**
+     * Delete a track with everything the track OWNS (spec §4.2, §7.5, §7.8, issue #137).
+     *
+     * The §9.3 `midi_events` rows cascade from the `tracks` row, but a track owns two
+     * things that do not: its §7.8 track-scope automation lanes, whose `owner_id` is this
+     * id and whose table declares no foreign key at all, and its §7.5 groove assignment,
+     * which lives in the §9.3 `projects.payload`. Left behind, the lanes are worse than
+     * untidy — `laneForTarget` lets a track lane override a sequence lane on the same
+     * §7.8 address whatever track owns it, so a deleted track's lane keeps driving the
+     * parameter for the rest of the project's life. Both go here rather than in
+     * `projectCrud.deleteTrack`, so `deleteSequence`'s loop and any later caller get the
+     * same rule.
+     *
+     * They reach the worker on the paths they already have: the emptied lanes through the
+     * `automation` subscriber's cleared-key loop and the assignment through the
+     * `trackGrooveIds` one (spec §7.1.3). What the worker cannot learn that way is that
+     * the TRACK is gone, which is the `removeTrack` message.
+     */
     removeTrack: (id) => {
       const prevTrack = get().tracks[id];
       if (prevTrack === undefined) return;
       const prevEvents = get().events[id];
+      // Captured now so the revert restores exactly what the delete took, and touches
+      // nothing else: an unrelated lane edited between the delete and the undo stands.
+      const doomedLanes = Object.entries(get().automation)
+        .map(([key, points]) => ({ key, points, lane: parseAutomationLaneKey(key) }))
+        .filter((entry) => entry.lane?.scope === 'track' && entry.lane.ownerId === id);
+      const prevGrooveId = get().trackGrooveIds[id];
       const setState = (track: Track | undefined, events: MidiEvent[] | undefined) =>
         set((state) => {
+          const present = track !== undefined;
           const tracks = { ...state.tracks };
           const eventMap = { ...state.events };
-          if (track === undefined) delete tracks[id];
-          else tracks[id] = track;
+          const automation = { ...state.automation };
+          const trackGrooveIds = { ...state.trackGrooveIds };
+          if (present) tracks[id] = track;
+          else delete tracks[id];
           if (events === undefined) delete eventMap[id];
           else eventMap[id] = events;
-          return { tracks, events: eventMap };
+          for (const { key, points } of doomedLanes) {
+            if (present) automation[key] = points;
+            else delete automation[key];
+          }
+          if (present && prevGrooveId !== undefined) trackGrooveIds[id] = prevGrooveId;
+          else delete trackGrooveIds[id];
+          return { tracks, events: eventMap, automation, trackGrooveIds };
         });
       commit({
         label: 'Delete track',
         apply: () => setState(undefined, undefined),
         revert: () => setState(prevTrack, prevEvents),
-        dirtyKeys: [dirtyKey.track(id), dirtyKey.events(id)],
+        dirtyKeys: [
+          dirtyKey.track(id),
+          dirtyKey.events(id),
+          // Each emptied lane is flushed as its own atomic per-lane replace, which is what
+          // takes the orphan §9.3 `automation_points` rows with it.
+          ...doomedLanes.map((entry) => dirtyKey.automation('track', id, entry.lane!.targetPath)),
+          // The assignment persists in the §9.3 `projects.payload`, not on the track row.
+          ...(prevGrooveId !== undefined ? [dirtyKey.project(useProjectStore.getState().projectId)] : []),
+        ],
       });
     },
 

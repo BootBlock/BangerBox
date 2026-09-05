@@ -163,6 +163,16 @@ export class SchedulerClient {
   setLiveErase(trackId: string, note: number, active: boolean): void {
     this.#send({ kind: 'liveErase', trackId, note, active });
   }
+  /**
+   * Withdraw a deleted track from the worker (spec §7.1.3, issue #137).
+   *
+   * The worker holds every track in the project on purpose (spec §14 (aq)), so nothing in
+   * its own state can tell it one has been deleted; without this it keeps scheduling the
+   * track's notes until the project is reloaded.
+   */
+  removeTrack(trackId: string): void {
+    this.#send({ kind: 'removeTrack', trackId });
+  }
 
   dispose(): void {
     if (this.#disposed) return;

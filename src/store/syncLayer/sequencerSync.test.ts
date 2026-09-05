@@ -205,3 +205,113 @@ describe('subscribeSequencerSync — incremental forwarding (spec §4.3)', () =>
     expect(scheduler.setTempo).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * spec §7.1.3, issue #137: a track that has LEFT the project is withdrawn from the worker.
+ *
+ * `removeTrack` deleted the store's track and its events, and the events subscriber only
+ * ever iterated the keys it was handed — so the worker kept the track and kept scheduling
+ * its notes until the project was reloaded, where the automation subscriber beside it had
+ * handled a removed key all along.
+ *
+ * This does not narrow what §14 (aq) says must be sent. The sender still forwards a diff
+ * for every track in the project; what it now also says is which tracks the project no
+ * longer has.
+ */
+describe('subscribeSequencerSync — withdrawing a deleted track (spec §7.1.3)', () => {
+  it('withdraws a track that leaves the store', () => {
+    seed();
+    useSequenceStore.getState().addEvents('t1', [event('n1', 0)]);
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+
+    useSequenceStore.getState().removeTrack('t1');
+    expect(scheduler.removeTrack).toHaveBeenCalledWith('t1');
+  });
+
+  it('withdraws a track that never carried a note', () => {
+    // The events map never held the id, so a removed-key loop over `events` would see
+    // nothing to withdraw — while the worker may still hold the track's §7.5 groove.
+    seed();
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+
+    expect(useSequenceStore.getState().events['t1']).toBeUndefined();
+    useSequenceStore.getState().removeTrack('t1');
+    expect(scheduler.removeTrack).toHaveBeenCalledWith('t1');
+  });
+
+  it('withdraws every track of the outgoing project on a load', () => {
+    // `subscribeSequencerSync` is registered once at the §5.1 start gate and survives a
+    // project switch, so the tracks of the project being left are the worker's to forget.
+    seed();
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+
+    const other = createDefaultSequence('proj-2', 0, 'Other', 'O');
+    useSequenceStore.getState().hydrate({
+      sequences: { O: other },
+      tracks: { t9: createDefaultTrack('O', 'prog', 0, 'New', 'drum', 't9') },
+      events: {},
+      automation: {},
+      songEntries: [],
+    });
+    expect(scheduler.removeTrack).toHaveBeenCalledWith('t1');
+    expect(scheduler.removeTrack).not.toHaveBeenCalledWith('t9');
+  });
+
+  it('withdraws nothing when a track merely loses its notes', () => {
+    seed();
+    useSequenceStore.getState().addEvents('t1', [event('n1', 0)]);
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+
+    useSequenceStore.getState().removeEvents('t1', ['n1']);
+    expect(scheduler.removeTrack).not.toHaveBeenCalled();
+    expect(scheduler.sendEventsDiff).toHaveBeenLastCalledWith('t1', 'S', [], ['n1']);
+  });
+
+  /**
+   * spec §7.8: a track-scope lane's owner is the track, and the §9.3 `automation_points`
+   * table declares no foreign key — so nothing else takes the lane with it. It reaches the
+   * worker on the `automationDiff` path an emptied lane already takes.
+   */
+  it('clears the deleted track’s automation lane on the automation path', () => {
+    seed();
+    useSequenceStore.getState().setAutomationLane('track', 't1', 'mixer.track:t1.level', [
+      {
+        id: 'p1',
+        scope: 'track',
+        ownerId: 't1',
+        targetPath: 'mixer.track:t1.level',
+        tick: 0,
+        value: 0.5,
+        curve: 'linear',
+      },
+    ]);
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+    scheduler.sendAutomationDiff.mockClear();
+
+    useSequenceStore.getState().removeTrack('t1');
+    expect(scheduler.sendAutomationDiff).toHaveBeenCalledWith('track', 't1', 'mixer.track:t1.level', []);
+  });
+
+  /** spec §7.5: the assignment leaves with the track, on the `groove` path it already has. */
+  it('clears the deleted track’s groove assignment on the groove path', () => {
+    seed();
+    useSequenceStore.getState().setGrooveTemplate('Shuffle', {
+      ppqn: 960,
+      lengthTicks: 1920,
+      division: 16,
+      points: [{ gridTick: 0, offsetTicks: 24, velocityScale: 1 }],
+    });
+    useSequenceStore.getState().assignTrackGroove('t1', 'Shuffle');
+    const scheduler = fakeScheduler();
+    dispose = subscribeSequencerSync(scheduler);
+    scheduler.setGroove.mockClear();
+
+    useSequenceStore.getState().removeTrack('t1');
+    expect(scheduler.setGroove).toHaveBeenCalledWith('t1', null);
+  });
+});

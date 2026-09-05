@@ -36,6 +36,7 @@ import {
   automationLaneKey,
   type KeygroupZone,
   type Pad,
+  type ProjectPayload,
   type Sequence,
   type Track,
   type VelocityLayer,
@@ -168,6 +169,8 @@ export interface AudioProbe {
   padStripProof: () => Promise<PadStripResult>;
   /** Sequence mode plays ONE sequence, and erases in only that one (§7.7, §7.9, #132). */
   sequenceFilterProof: () => Promise<SequenceFilterResult>;
+  /** A deleted track stops sounding and leaves nothing behind (§7.1.3, §7.5, §7.8, #137). */
+  trackWithdrawalProof: () => Promise<TrackWithdrawalResult>;
 }
 
 /**
@@ -236,6 +239,32 @@ export interface PadStripResult {
   readonly afterReload: PadStripReading;
   /** RMS of the same bounce with the TRACK strip soloed, and the pad strips present (§5.2). */
   readonly soloedTrackRms: number;
+}
+
+/** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
+export interface TrackWithdrawalResult {
+  /** The track the proof deletes mid-transport, so a failure names it. */
+  readonly deletedTrackId: string;
+  /** The track that must be left alone. */
+  readonly keptTrackId: string;
+  /** Distinct track ids the worker scheduled while both tracks were in the project. */
+  readonly scheduledBefore: string[];
+  /** The same, measured after the delete and past one §7.1.4 lookahead window. */
+  readonly scheduledAfter: string[];
+  /** Peak on the §5.8 master tap with both tracks sounding the same pad in unison. */
+  readonly masterPeakBefore: number;
+  /** The same peak after the delete — one voice where there were two summing coherently. */
+  readonly masterPeakAfter: number;
+  /** Whether the §9.3 `tracks` row survived `saveNow()`. */
+  readonly trackRowRemains: boolean;
+  /** `midi_events` rows still addressing the deleted track after the save (§9.3 cascade). */
+  readonly eventRowsRemain: number;
+  /** `automation_points` rows still owned by it — the table declares no foreign key (§7.8). */
+  readonly automationRowsRemain: number;
+  /** Whether `projects.payload.trackGrooveIds` still carries a key for it (§7.5, §9.3). */
+  readonly grooveAssignmentRemains: boolean;
+  /** Whether the §4.2 `track:<id>` strip left `useMixerStore` with the track (§5.3). */
+  readonly stripRemains: boolean;
 }
 
 /** Outcome of the §7.7 loop-boundary erase proof (see {@link liveEraseWrapProof}). */
@@ -2719,6 +2748,223 @@ async function padStripProof(engine: AudioEngine): Promise<PadStripResult> {
   };
 }
 
+/**
+ * A deleted track stops sounding, and leaves nothing behind (spec §7.1.3, §7.5, §7.8, #137).
+ *
+ * `subscribeSequencerSync`'s events subscriber only ever iterated the keys it was handed, so
+ * `removeTrack` told the worker nothing and the worker kept scheduling the track's notes for
+ * the rest of the session. The unit tests drive `SchedulerCore` with an injected clock; what
+ * they cannot reach is the wire, and this defect was on the far side of it.
+ *
+ * Two tracks play the SAME pad on the same four beats, so their voices sum coherently at the
+ * §5.2 master bus: deleting one halves the peak, which is an audio measurement of "the track
+ * stopped sounding" rather than an inspection of it (spec §11.2, §13.5). The delete happens
+ * WHILE THE TRANSPORT ROLLS, which is the case §7.9's lookahead makes interesting — the
+ * measurement is taken after one `LOOKAHEAD_MS` window has passed, because notes already
+ * posted into it sound, exactly as a §7.7 live erase leaves the notes under the playhead.
+ *
+ * The second half is what the save leaves on disk. The §9.3 `midi_events` rows cascade from
+ * the `tracks` row, but `automation_points` declares no foreign key at all and the §7.5
+ * groove assignment lives in `projects.payload` — so both are the track's own to take.
+ *
+ * The probe owns its arrangement as real §9.3 ROWS and creates them rather than borrowing the
+ * project's, then deletes them and reloads: `installAudioProbe` runs in production builds.
+ */
+async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawalResult> {
+  const { deleteTrack } = await import('@/features/main/projectCrud');
+  const { channelLevelPath } = await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const repos = getActiveRepositories();
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A tenth-second 1 kHz tone through a pad with no envelope shaping, so what the master tap
+  // measures is how many voices are sounding and nothing else.
+  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * 0.1), sampleRate);
+  const toneData = tone.getChannelData(0);
+  for (let i = 0; i < toneData.length; i += 1) {
+    toneData[i] = 0.4 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+  }
+  const sample = await importDecodedSample(tone, 'track withdrawal probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  const program = createDefaultDrumProgram('Track withdrawal probe');
+  const pad = createDefaultPad(0, 'Track withdrawal probe');
+  pad.playbackMode = 'oneShot';
+  pad.layers = [layer({ sampleId: sample.id })];
+  pad.envelopes = {
+    ...pad.envelopes,
+    amp: { ...pad.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+  };
+  program.pads = [pad];
+
+  const sequence = { ...createDefaultSequence(projectId, 98, 'Track withdrawal probe'), lengthBars: 1 };
+  const deletedTrackId = crypto.randomUUID();
+  const keptTrackId = crypto.randomUUID();
+  const targetPath = channelLevelPath(`track:${deletedTrackId}`);
+
+  await repos.programs.create({
+    id: program.id,
+    project_id: projectId,
+    name: program.name,
+    type: 'drum',
+    payload: JSON.stringify(program),
+  });
+  await repos.sequences.create({
+    id: sequence.id,
+    project_id: projectId,
+    position: sequence.position,
+    name: sequence.name,
+    length_bars: sequence.lengthBars,
+    time_sig_numerator: sequence.timeSig.numerator,
+    time_sig_denominator: sequence.timeSig.denominator,
+    tempo: 120,
+    swing_amount: sequence.swingAmount,
+    swing_division: sequence.swingDivision,
+  });
+  for (const [position, id] of [deletedTrackId, keptTrackId].entries()) {
+    await repos.tracks.create({
+      id,
+      sequence_id: sequence.id,
+      program_id: program.id,
+      position,
+      name: `Withdrawal probe ${position === 0 ? 'A' : 'B'}`,
+      type: 'drum',
+      mixer: JSON.stringify(createDefaultChannelStrip(`track:${id}`)),
+    });
+    // §1.3.1 maps a pad index straight to a note number, so pad 0 is note 0 on both tracks.
+    // One bar of 4/4 at 960 PPQN is 3840 ticks and, at 120 bpm, two seconds.
+    await repos.midiEvents.replaceTrack(
+      id,
+      [0, 960, 1_920, 2_880].map((tick) => ({
+        id: crypto.randomUUID(),
+        track_id: id,
+        tick_start: tick,
+        duration_ticks: 120,
+        note: 0,
+        velocity: 100,
+        extra: null,
+      })),
+    );
+  }
+  // The two things a `tracks` row does not cascade, written as real rows and a real payload
+  // key so the save can be read back rather than reasoned about.
+  await repos.automation.replaceTarget('track', deletedTrackId, targetPath, [
+    {
+      id: crypto.randomUUID(),
+      scope: 'track',
+      owner_id: deletedTrackId,
+      target_path: targetPath,
+      tick: 0,
+      value: 0.9,
+      curve: 'linear',
+    },
+  ]);
+
+  await projectService.loadProject(projectId);
+  const transport = () => useTransportStore.getState();
+  transport().setActiveSequenceId(sequence.id);
+  transport().setPlaybackMode('sequence');
+  transport().setMetronomeEnabled(false);
+  transport().setCountInBars(0);
+  transport().setRecording(false);
+  transport().setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  commitTempo(120);
+  // A §7.5 assignment for the doomed track, which persists in `projects.payload` rather than
+  // on the track row — the other thing nothing else takes with it.
+  useSequenceStore.getState().setGrooveTemplate('Withdrawal probe groove', {
+    ppqn: 960,
+    lengthTicks: 3_840,
+    division: 16,
+    points: [{ gridTick: 0, offsetTicks: 0, velocityScale: 1 }],
+  });
+  useSequenceStore.getState().assignTrackGroove(deletedTrackId, 'Withdrawal probe groove');
+  await projectService.saveNow();
+  await delay(150);
+
+  const distinctTracks = (events: ScheduledEvent[]): string[] =>
+    [...new Set(events.filter((e) => e.kind === 'noteOn').map((e) => e.trackId ?? ''))].sort();
+
+  /** Highest §5.8 master-tap peak over `ms`, sampled at roughly frame rate. */
+  const peakOver = async (ms: number): Promise<number> => {
+    const slot = engine.meterRegistry.slotOf('master');
+    let peak = 0;
+    const until = performance.now() + ms;
+    while (performance.now() < until) {
+      if (slot !== undefined) {
+        const reading = engine.meterRegistry.read(slot);
+        peak = Math.max(peak, reading.peakL, reading.peakR);
+      }
+      await delay(16);
+    }
+    return peak;
+  };
+
+  transport().play();
+  await delay(300); // past the first beat, so the meter is reading programme material
+  let masterPeakBefore = 0;
+  const scheduledBefore = distinctTracks(
+    await captureScheduled(engine, async () => {
+      masterPeakBefore = await peakOver(1_400);
+    }),
+  );
+
+  // The delete happens with the transport still rolling. Everything already posted into the
+  // §7.1.4 window still sounds, so the measurement waits one lookahead plus a wake before it
+  // begins — the same allowance §7.7's live erase makes for the notes under the playhead.
+  deleteTrack(deletedTrackId);
+  await delay(400);
+  let masterPeakAfter = 0;
+  const scheduledAfter = distinctTracks(
+    await captureScheduled(engine, async () => {
+      masterPeakAfter = await peakOver(1_400);
+    }),
+  );
+  transport().stop();
+  await delay(200);
+
+  const stripRemains = useMixerStore.getState().channels[`track:${deletedTrackId}`] !== undefined;
+  await projectService.saveNow();
+
+  const trackRowRemains = (await repos.tracks.getById(deletedTrackId)) !== undefined;
+  const eventRowsRemain = (await repos.midiEvents.listByTrack(deletedTrackId)).rows.length;
+  const automationRowsRemain = (await repos.automation.listByOwner('track', deletedTrackId)).rows.length;
+  const projectRow = await repos.projects.getById(projectId);
+  const savedPayload = projectRow ? (JSON.parse(projectRow.payload) as ProjectPayload) : {};
+  const grooveAssignmentRemains = (savedPayload.trackGrooveIds ?? {})[deletedTrackId] !== undefined;
+
+  // Put the project back: the probe's own rows go and the load takes its stores with them.
+  // The sequence cascades to the surviving track and that track to its events (spec §9.3).
+  // `automation_points` does not cascade, which is the whole point of the reading above — so
+  // the lane the probe wrote is cleared by name whether or not the fix took it.
+  await repos.automation.replaceTarget('track', deletedTrackId, targetPath, []);
+  await repos.sequences.remove(sequence.id);
+  await repos.programs.remove(program.id);
+  useSequenceStore.getState().assignTrackGroove(deletedTrackId, null);
+  await projectService.saveNow();
+  await projectService.loadProject(projectId);
+
+  return {
+    deletedTrackId,
+    keptTrackId,
+    scheduledBefore,
+    scheduledAfter,
+    masterPeakBefore,
+    masterPeakAfter,
+    trackRowRemains,
+    eventRowsRemain,
+    automationRowsRemain,
+    grooveAssignmentRemains,
+    stripRemains,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -2760,6 +3006,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     insertDefaultsProof: () => insertDefaultsProof(),
     padStripProof: () => padStripProof(engine),
     sequenceFilterProof: () => sequenceFilterProof(engine),
+    trackWithdrawalProof: () => trackWithdrawalProof(engine),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,

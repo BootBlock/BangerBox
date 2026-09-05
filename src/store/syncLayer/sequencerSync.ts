@@ -209,6 +209,31 @@ export function subscribeSequencerSync(scheduler: SchedulerClient): Unsubscribe 
         prevTemplates = templates;
       },
     ),
+    /**
+     * A track that has LEFT the project is withdrawn from the worker (spec §7.1.3, §7.8,
+     * issue #137).
+     *
+     * The subject is the track, not its notes. Watching `events` for a vanished key would
+     * miss a track deleted before it was ever played — its id never entered the map, so
+     * there is no key to lose — while still having to withdraw the §7.5 groove and §7.6
+     * held notes the worker keys by that id, none of which is an event. `tracks` is where
+     * "the project no longer has this" is observable, so that is where the rule lives.
+     *
+     * This does not re-open §14 (aq). There the sender ships every track because song mode
+     * selects a different sequence per SEGMENT and the worker decides which of them sounds
+     * now; narrowing that would empty song mode and would make each switch of active
+     * sequence the full re-send §7.1.3 forbids. A withdrawal leaves nothing to select: no
+     * mode plays the track again, in any segment, so it is the one thing about a track the
+     * worker cannot work out for itself.
+     */
+    useSequenceStore.subscribe(
+      (s) => s.tracks,
+      (tracks, previous) => {
+        for (const trackId of Object.keys(previous)) {
+          if (!(trackId in tracks)) scheduler.removeTrack(trackId);
+        }
+      },
+    ),
     useSequenceStore.subscribe(
       (s) => s.events,
       (events) => {

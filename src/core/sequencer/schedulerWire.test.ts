@@ -144,6 +144,7 @@ const CASES: Record<string, (wire: Wire) => void> = {
     ]),
   setMetronome: (wire) => expect(wire.calls('setMetronome')).toEqual([[true, 2]]),
   setLiveErase: (wire) => expect(wire.calls('setLiveErase')).toEqual([['t1', 36, true]]),
+  removeTrack: (wire) => expect(wire.calls('removeTrack')).toEqual([['t1']]),
 };
 
 /** How each sender is driven. Same key set as {@link CASES}. */
@@ -177,6 +178,8 @@ const SENDS: Record<string, (client: SchedulerClient) => void> = {
     c.setArpeggiator(true, { mode: 'up', octaves: 2, gate: 0.5, division: { value: 8, triplet: true } }),
   setMetronome: (c) => c.setMetronome(true, 2),
   setLiveErase: (c) => c.setLiveErase('t1', 36, true),
+  // spec §7.1.3, issue #137: a track that has left the project is withdrawn by name.
+  removeTrack: (c) => c.removeTrack('t1'),
 };
 
 describe('SchedulerClient → worker guard → dispatch round-trip (spec §7.1.3)', () => {

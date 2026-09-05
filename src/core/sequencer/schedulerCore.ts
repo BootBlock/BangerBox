@@ -277,6 +277,42 @@ export class SchedulerCore {
     this.tracks.set(trackId, { sequenceId, events });
   }
 
+  /**
+   * Forget a track the project no longer has (spec §7.1.3 `removeTrack`, issue #137).
+   *
+   * The worker holds every track because song mode selects a different sequence per
+   * segment (spec §14 (aq)), so nothing in its own state can tell it one has been deleted
+   * — and until it is told, `scheduleSequence` and `emitSongPass` keep finding the track's
+   * events and keep scheduling them.
+   *
+   * Every map keyed by the id goes, because the message means the track does not exist
+   * rather than that one of its values changed. Leaving any of them behind is not merely
+   * untidy: a §7.5 groove would shape a later track that reused the id, a §7.6 held note
+   * would keep note repeat and the arpeggiator firing on it, and a §7.7 capture would
+   * flush a take through `commitRecordedTake`, writing the deleted track's events map key
+   * straight back into the store.
+   *
+   * §7.8 lanes are NOT dropped here. A track-scope lane leaves the store when its owner
+   * does, and the `automationDiff` that carries an emptied lane is the route it already
+   * takes (spec §7.8); a second rule here would be a second place that decides what a
+   * lane's owner means.
+   *
+   * Notes already posted into the §7.1.4 lookahead window still sound, exactly as a §7.7
+   * live erase leaves the notes under the playhead standing: they carry `when` values in
+   * the future and the batch has already left. That is at most `LOOKAHEAD_MS`.
+   */
+  removeTrack(trackId: string): void {
+    this.tracks.delete(trackId);
+    this.grooves.delete(trackId);
+    this.captured.delete(trackId);
+    // The three note-keyed maps are `${trackId}:${note}`; §1.3.1 ids carry no colon
+    // (`schedulerIdSchema`), so the prefix identifies the track unambiguously.
+    const prefix = `${trackId}:`;
+    for (const key of this.heldNotes.keys()) if (key.startsWith(prefix)) this.heldNotes.delete(key);
+    for (const key of this.openNotes.keys()) if (key.startsWith(prefix)) this.openNotes.delete(key);
+    for (const key of this.eraseNotes.keys()) if (key.startsWith(prefix)) this.eraseNotes.delete(key);
+  }
+
   applyAutomationDiff(
     scope: AutomationPoint['scope'],
     ownerId: string,

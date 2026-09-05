@@ -14,6 +14,7 @@ import {
   createDefaultDrumProgram,
   createDefaultPad,
   createDefaultSequence,
+  createDefaultTrack,
 } from '@/core/project/schemas';
 import { clearUndoHistory, useUndoStore } from './undo';
 import { useTransportStore } from './useTransportStore';
@@ -271,6 +272,78 @@ describe('useSequenceStore (spec §4.2, §4.5)', () => {
     // One undo returns to where the note sat before the drag began, not mid-drag.
     useUndoStore.getState().undo();
     expect(useSequenceStore.getState().events['track:1']![0]!.tickStart).toBe(0);
+  });
+
+  /**
+   * spec §7.5, §7.8, issue #137: a track owns two things the §9.3 `tracks` row does not
+   * cascade — its track-scope automation lanes (the `automation_points` table declares no
+   * foreign key at all) and its groove assignment (which lives in `projects.payload`).
+   * A lane left behind is not merely orphan data: `laneForTarget` lets a track lane
+   * override a sequence lane on the same §7.8 address whatever track owns it.
+   */
+  it('takes the track’s automation lane and groove assignment with it', () => {
+    const track = createDefaultTrack('seq-1', 'prog-1', 0, 'Track', 'drum', 'tw1');
+    useSequenceStore.getState().addTrack(track);
+    useSequenceStore.getState().setGrooveTemplate('Shuffle', {
+      ppqn: 960,
+      lengthTicks: 1920,
+      division: 16,
+      points: [{ gridTick: 0, offsetTicks: 24, velocityScale: 1 }],
+    });
+    useSequenceStore.getState().assignTrackGroove('tw1', 'Shuffle');
+    const point = {
+      id: 'ap1',
+      scope: 'track' as const,
+      ownerId: 'tw1',
+      targetPath: 'mixer.track:tw1.level',
+      tick: 0,
+      value: 0.5,
+      curve: 'linear' as const,
+    };
+    expect(
+      useSequenceStore.getState().setAutomationLane('track', 'tw1', 'mixer.track:tw1.level', [point]).ok,
+    ).toBe(true);
+
+    useSequenceStore.getState().removeTrack('tw1');
+    expect(useSequenceStore.getState().automation['track:tw1:mixer.track:tw1.level']).toBeUndefined();
+    expect(useSequenceStore.getState().trackGrooveIds['tw1']).toBeUndefined();
+    // The emptied lane is flushed as its own per-lane replace, which is what takes the
+    // orphan §9.3 `automation_points` rows with it (spec §4.4).
+    expect(dirty).toHaveBeenCalledWith('automation:track:tw1:mixer.track:tw1.level');
+
+    useUndoStore.getState().undo();
+    expect(useSequenceStore.getState().automation['track:tw1:mixer.track:tw1.level']).toEqual([point]);
+    expect(useSequenceStore.getState().trackGrooveIds['tw1']).toBe('Shuffle');
+    expect(useSequenceStore.getState().tracks['tw1']).toEqual(track);
+  });
+
+  it('leaves another track’s lane, and a sequence lane on the same target, standing', () => {
+    useSequenceStore.getState().addTrack(createDefaultTrack('seq-1', 'prog-1', 0, 'A', 'drum', 'tw1'));
+    useSequenceStore.getState().addTrack(createDefaultTrack('seq-1', 'prog-1', 1, 'B', 'drum', 'tw2'));
+    const point = (ownerId: string, scope: 'track' | 'sequence') => ({
+      id: `ap-${ownerId}`,
+      scope,
+      ownerId,
+      targetPath: 'mixer.master.level',
+      tick: 0,
+      value: 0.5,
+      curve: 'linear' as const,
+    });
+    useSequenceStore
+      .getState()
+      .setAutomationLane('track', 'tw1', 'mixer.master.level', [point('tw1', 'track')]);
+    useSequenceStore
+      .getState()
+      .setAutomationLane('track', 'tw2', 'mixer.master.level', [point('tw2', 'track')]);
+    useSequenceStore
+      .getState()
+      .setAutomationLane('sequence', 'seq-1', 'mixer.master.level', [point('seq-1', 'sequence')]);
+
+    useSequenceStore.getState().removeTrack('tw1');
+    const lanes = useSequenceStore.getState().automation;
+    expect(lanes['track:tw1:mixer.master.level']).toBeUndefined();
+    expect(lanes['track:tw2:mixer.master.level']).toBeDefined();
+    expect(lanes['sequence:seq-1:mixer.master.level']).toBeDefined();
   });
 
   it('starts a fresh undo entry once a gesture is sealed (spec §3.3)', () => {
