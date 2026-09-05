@@ -1020,7 +1020,7 @@ async function assertShellAndSelfTest(page, label) {
     const seededRatio = r.livePeakSeeded / r.livePeakSecondClosed;
     if (!(seededRatio < 0.2)) {
       throw new Error(
-        `the pad's own 80 Hz lowpass left the master peak at ${r.livePeakSeeded.toFixed(5)} against ${r.livePeakSecondClosed.toFixed(5)} bypassed (×${seededRatio.toFixed(3)}) — a channel built after the edit was not seeded from its §4.2 strip`,
+        `the pad's own 80 Hz lowpass left the master peak at ${r.livePeakSeeded.toFixed(5)} against ${r.livePeakSecondClosed.toFixed(5)} with it removed (×${seededRatio.toFixed(3)}) — a channel built after the edit was not seeded from its §4.2 strip`,
       );
     }
     console.log(

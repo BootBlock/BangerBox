@@ -323,7 +323,7 @@ export interface SharedPadChannelResult {
    * existed. Near zero when a freshly built channel is seeded from its §4.2 strip.
    */
   readonly livePeakSeeded: number;
-  /** The same pass with that insert bypassed; the second track's fader is still at 0. */
+  /** The same pass with that insert REMOVED; the second track's fader is still at 0. */
   readonly livePeakSecondClosed: number;
   /** The same pass with the second track's fader opened to unity — two voices, not one. */
   readonly livePeakBoth: number;
