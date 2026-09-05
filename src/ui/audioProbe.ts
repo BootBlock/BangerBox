@@ -165,6 +165,11 @@ export interface AudioProbe {
   songEntryIndexProof: () => Promise<SongEntryIndexResult>;
   /** A slot's stored params are the ones the graph runs, fresh or reloaded (issue #131). */
   insertDefaultsProof: () => Promise<InsertDefaultsResult>;
+  /**
+   * A channel's insert chain is bounded by §1.3.1 and every slot in it is addressable
+   * (issue #135) — measured on the real graph through the §5.8 master tap.
+   */
+  insertLimitProof: () => Promise<InsertLimitResult>;
   /** A pad's §4.2 strip is reachable and survives a save + reload (§4.2, §6, §9.3, #133). */
   padStripProof: () => Promise<PadStripResult>;
   /** Sequence mode plays ONE sequence, and erases in only that one (§7.7, §7.9, #132). */
@@ -202,6 +207,32 @@ export interface InsertDefaultsResult {
   readonly touchedToMs: number;
   /** What an undo of the first touch of a fresh insert returns the parameter to, in ms. */
   readonly undoneToMs: number;
+}
+
+/** Outcome of the §1.3.1 insert-limit proof (see {@link AudioProbe.insertLimitProof}). */
+export interface InsertLimitResult {
+  /** The §4.2 channel the proof drives, so a failure names the strip it drove. */
+  readonly channelId: string;
+  /** The §9.3 `projects.insert_limit` in force while the proof ran. */
+  readonly limit: number;
+  /** How many slots the chain holds after being asked for twelve. */
+  readonly slotCount: number;
+  /** How many of those hold an effect. */
+  readonly occupiedCount: number;
+  /** The sentence the store refused the thirteenth add with — empty if it never refused. */
+  readonly refusalReason: string;
+  /** The 1-based §7.8 slot numbers holding an effect that the grammar REFUSES to address. */
+  readonly deadSlots: number[];
+  /** The 1-based slot number the audio half drives — the last occupied one. */
+  readonly drivenSlot: number;
+  /** Master-tap peak with every occupied filter opened to 20 kHz by its §7.8 address. */
+  readonly openPeak: number;
+  /** The same peak after the driven slot is closed to 80 Hz through the same address. */
+  readonly closedPeak: number;
+  /** Slots an over-long chain from a §9.6 import still holds after admission — never truncated. */
+  readonly admittedOverLongSlots: number;
+  /** Whether `replaceInsert` refused to occupy a slot past the limit in that chain. */
+  readonly replaceBeyondLimitRefused: boolean;
 }
 
 /**
@@ -2515,9 +2546,13 @@ async function insertDefaultsProof(): Promise<InsertDefaultsResult> {
   // so the id is the one handle that survives every step below.
   useMixerStore.getState().addInsert(channelId, 'delay');
   const inserts = useMixerStore.getState().channels[channelId]!.inserts;
-  const slotId = inserts.at(-1)!.id;
+  // An add FILLS the first free slot of the §1.3.1 rack rather than appending past it
+  // (issue #135), so the slot it created is found by looking for the effect — never at the
+  // end of the chain, and never at `inserts.length`.
+  const slotIndex = inserts.findIndex((slot) => slot.effectType === 'delay');
+  const slotId = inserts[slotIndex]!.id;
   // Slots are addressed 1-based in the §7.8 grammar (`slot2`).
-  const path = insertParamPath(channelId, inserts.length, 'time');
+  const path = insertParamPath(channelId, slotIndex + 1, 'time');
   const added = await agreementNow();
 
   // 2 — saved and loaded back through the real §4.4 path, not re-derived in memory.
@@ -2556,7 +2591,9 @@ function padStripReading(
   mixer: { level: number; pan: number; sendLevels: readonly number[] } | undefined,
   inserts: readonly InsertSlotState[] | undefined,
 ): PadStripReading {
-  const slot = inserts?.at(-1);
+  // The first OCCUPIED slot, not the last one: an add fills the §1.3.1 rack's first free slot
+  // rather than appending past it, so the empty slots sit after the effect (issue #135).
+  const slot = inserts?.find((candidate) => candidate.effectType !== null);
   return {
     level: mixer?.level ?? -1,
     pan: mixer?.pan ?? -1,
@@ -3006,6 +3043,161 @@ async function trackWithdrawalProof(engine: AudioEngine): Promise<TrackWithdrawa
   };
 }
 
+/**
+ * A channel's insert chain is bounded, and every slot in it is REACHABLE (issue #135).
+ *
+ * §1.3.1 gives every channel 4 insert slots, "configurable 1–8 via `globalInsertLimit`", and
+ * `addInsert` appended without consulting it — so a chain grew without end. Past slot 8 the
+ * §7.8 grammar stops parsing (`GLOBAL_INSERT_LIMIT_RANGE` bounds `slotN`), and the effect
+ * goes on SOUNDING while the §8.5.6 panel's own knobs, every automation lane and every
+ * §10.3 Q-Link binding on it address nothing.
+ *
+ * "It still sounds" and "the knob does nothing" are both audio claims, so both are measured
+ * rather than inspected (spec §11.2, §13.5). A 1 kHz tone is fed into the §5.2 master input
+ * — the real graph, the real §4.3 sync layer, the real insert chain — and the §5.8 master tap
+ * is read. Every occupied slot is opened to 20 kHz through its own §7.8 address, then the
+ * LAST occupied one is closed to 80 Hz through the same address. Two octaves above an 80 Hz
+ * lowpass is inaudible, so the peak collapses — unless the address reaches nothing, which is
+ * the defect: on the unfixed build five adds put the fifth filter on slot 9, the write lands
+ * nowhere, and the two readings are the same number.
+ *
+ * The master strip is used because every project has exactly one, no mode can hide it, and it
+ * persists in the §9.3 `projects.payload` column the restore below puts back verbatim —
+ * `installAudioProbe` runs in production builds, so a proof that adds inserts to a real
+ * project may not leave them there.
+ */
+async function insertLimitProof(engine: AudioEngine): Promise<InsertLimitResult> {
+  const { insertParamPath, isAutomatable } = await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const repos = getActiveRepositories();
+  // BOTH §9.3 columns this proof writes, captured before it writes either. `flushProject`
+  // writes `insert_limit` from the store as well as `payload`, so a restore that put only the
+  // payload back would leave a user who had chosen 8 slots on the 4 this proof sets — and
+  // `installAudioProbe` runs in production builds.
+  const rowBefore = await repos.projects.getById(projectId);
+  if (rowBefore === undefined) throw new Error('insertLimitProof: the active project has no row.');
+  const payloadBefore = rowBefore.payload;
+  const insertLimitBefore = rowBefore.insert_limit;
+
+  const channelId = 'master';
+  const mixer = () => useMixerStore.getState();
+  // The §1.3.1 default, set explicitly so the numbers below do not depend on the row the
+  // probe happened to find. Both columns are put back at the end.
+  const limit = 4;
+  useProjectStore.getState().setGlobalInsertLimit(limit);
+
+  /** The §1.3.1 rack, empty — the strip a project starts every channel with. */
+  const resetChain = (): void => {
+    const strip = mixer().channels[channelId];
+    if (strip === undefined) return;
+    mixer().upsertChannel({ ...strip, inserts: createDefaultChannelStrip(channelId, limit).inserts });
+  };
+
+  /** 1-based §7.8 slot numbers holding an effect, in chain order (spec §7.8 `slot2`). */
+  const occupiedSlotNumbers = (): number[] =>
+    mixer()
+      .channels[channelId]!.inserts.map((slot, index) => (slot.effectType === null ? 0 : index + 1))
+      .filter((n) => n > 0);
+
+  // 1 — ask for twelve inserts on a four-slot rack and see what the store allows.
+  resetChain();
+  let refusalReason = '';
+  for (let i = 0; i < 12; i += 1) {
+    const result = mixer().addInsert(channelId, 'filter');
+    if (!result.ok && refusalReason === '') refusalReason = result.reason;
+  }
+  const slotCount = mixer().channels[channelId]!.inserts.length;
+  const occupied = occupiedSlotNumbers();
+  const deadSlots = occupied.filter((n) => !isAutomatable(insertParamPath(channelId, n, 'cutoff')));
+  const drivenSlot = occupied.at(-1) ?? 0;
+
+  // 2 — the audio half, on the real graph. A looping 1 kHz tone straight into the §5.2
+  // master input (stage 8), so what the §5.8 tap reads is the master insert chain and
+  // nothing else — no transport, no voices, no arrangement to leave behind.
+  const sampleRate = engine.context.sampleRate;
+  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * 0.25), sampleRate);
+  const toneData = tone.getChannelData(0);
+  for (let i = 0; i < toneData.length; i += 1) {
+    toneData[i] = 0.5 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+  }
+  const source = engine.context.createBufferSource();
+  source.buffer = tone;
+  source.loop = true;
+  source.connect(engine.graph.master.input);
+
+  /** Highest §5.8 master-tap peak over `ms`, sampled at roughly frame rate. */
+  const peakOver = async (ms: number): Promise<number> => {
+    const slot = engine.meterRegistry.slotOf(channelId);
+    let peak = 0;
+    const until = performance.now() + ms;
+    while (performance.now() < until) {
+      if (slot !== undefined) {
+        const reading = engine.meterRegistry.read(slot);
+        peak = Math.max(peak, reading.peakL, reading.peakR);
+      }
+      await delay(16);
+    }
+    return peak;
+  };
+
+  // Every occupied slot wide open, each through its OWN §7.8 address — so the chain is
+  // transparent and each address has been exercised before the one that matters.
+  for (const n of occupied) mixer().commit(insertParamPath(channelId, n, 'cutoff'), 20_000);
+  source.start();
+  await delay(200);
+  const openPeak = await peakOver(400);
+
+  // The last occupied slot alone, closed two octaves below the tone.
+  if (drivenSlot > 0) mixer().commit(insertParamPath(channelId, drivenSlot, 'cutoff'), 80);
+  await delay(200);
+  const closedPeak = await peakOver(400);
+
+  source.stop();
+  source.disconnect();
+
+  // 3 — a chain a §9.6 import or a project saved before the fix can carry: nine slots, every
+  // one of them occupied. It is admitted WHOLE (§14 (ap): the stored value always wins), and
+  // `replaceInsert` still refuses to occupy a position the limit forbids.
+  const overLong = {
+    ...mixer().channels[channelId]!,
+    inserts: Array.from({ length: 9 }, () => ({
+      id: crypto.randomUUID(),
+      effectType: 'filter' as const,
+      enabled: true,
+      params: {},
+    })),
+  };
+  mixer().upsertChannel(overLong);
+  const admittedOverLongSlots = mixer().channels[channelId]!.inserts.length;
+  const beyond = mixer().channels[channelId]!.inserts[8]!;
+  const replaceBeyondLimitRefused = !mixer().replaceInsert(channelId, beyond.id, 'delay').ok;
+
+  // Put the project back. The save flushes the probe's own strips into the row, both columns
+  // are then rewritten verbatim, and the reload takes the STORES back with them — including
+  // the §1.3.1 limit this proof set (issue #135).
+  await projectService.saveNow();
+  await repos.projects.update(projectId, { payload: payloadBefore, insert_limit: insertLimitBefore });
+  await projectService.loadProject(projectId);
+
+  return {
+    channelId,
+    limit,
+    slotCount,
+    occupiedCount: occupied.length,
+    refusalReason,
+    deadSlots,
+    drivenSlot,
+    openPeak,
+    closedPeak,
+    admittedOverLongSlots,
+    replaceBeyondLimitRefused,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -3045,6 +3237,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     liveEraseWrapProof: () => liveEraseWrapProof(engine),
     songEntryIndexProof: () => songEntryIndexProof(),
     insertDefaultsProof: () => insertDefaultsProof(),
+    insertLimitProof: () => insertLimitProof(engine),
     padStripProof: () => padStripProof(engine),
     sequenceFilterProof: () => sequenceFilterProof(engine),
     trackWithdrawalProof: () => trackWithdrawalProof(engine),

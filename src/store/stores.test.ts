@@ -94,8 +94,15 @@ describe('useTransportStore clamps and toggles (spec §4.1)', () => {
   });
 });
 
-/** 1-based §7.8 slot number of the channel's last insert — strips start with empty slots. */
-const lastSlotNumber = (id: string) => useMixerStore.getState().channels[id]!.inserts.length;
+/**
+ * 1-based §7.8 slot number of one slot on a channel (spec §7.8 `slot2`).
+ *
+ * A strip opens with the §1.3.1 rack of four EMPTY slots and `addInsert` FILLS the first free
+ * one rather than appending past it, so the slot an add created is the first occupied one and
+ * never the last (issue #135).
+ */
+const slotNumberOf = (id: string, slotId: string) =>
+  useMixerStore.getState().channels[id]!.inserts.findIndex((slot) => slot.id === slotId) + 1;
 
 describe('useMixerStore transient/commit channel (spec §4.1, §3.3)', () => {
   beforeEach(() => {
@@ -154,9 +161,10 @@ describe('useMixerStore transient/commit channel (spec §4.1, §3.3)', () => {
   it('replaces an insert in place, keeping the slot position and id (spec §8.5.6)', () => {
     useMixerStore.getState().addInsert('track:1', 'delay');
     useMixerStore.getState().addInsert('track:1', 'limiter');
-    const before = useMixerStore.getState().channels['track:1']!.inserts.slice(-2);
+    // The two adds filled slots 1 and 2 of the §1.3.1 rack, in that order (issue #135).
+    const before = useMixerStore.getState().channels['track:1']!.inserts.slice(0, 2);
     useMixerStore.getState().replaceInsert('track:1', before[0]!.id, 'reverb');
-    const after = useMixerStore.getState().channels['track:1']!.inserts.slice(-2);
+    const after = useMixerStore.getState().channels['track:1']!.inserts.slice(0, 2);
     expect(after[0]!.effectType).toBe('reverb');
     expect(after[0]!.id).toBe(before[0]!.id);
     expect(after[1]!.effectType).toBe('limiter'); // the rest of the chain did not move
@@ -165,37 +173,41 @@ describe('useMixerStore transient/commit channel (spec §4.1, §3.3)', () => {
 
   it('drops the outgoing effect params on replace, as a fresh slot would have them', () => {
     useMixerStore.getState().addInsert('track:1', 'delay');
-    const slot = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
-    useMixerStore.getState().commit(insertParamPath('track:1', lastSlotNumber('track:1'), 'feedback'), 0.6);
+    const slot = useMixerStore.getState().channels['track:1']!.inserts[0]!;
+    useMixerStore
+      .getState()
+      .commit(insertParamPath('track:1', slotNumberOf('track:1', slot.id), 'feedback'), 0.6);
     useMixerStore.getState().replaceInsert('track:1', slot.id, 'reverb');
     // "As a fresh slot would have them" is the §5.7 defaults of the INCOMING effect, not an
     // empty record: an empty one left the store reading the range floor of an effect the
     // graph was already running at its defaults (issue #131). The outgoing effect's own
     // values are still discarded — `feedback` is not a reverb parameter at all.
-    const params = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!.params;
+    const params = useMixerStore.getState().channels['track:1']!.inserts[0]!.params;
     expect(params).toEqual(defaultEffectParams('reverb'));
     expect(params.feedback).toBeUndefined();
   });
 
   it('keeps a bypassed slot bypassed but enables one that was empty', () => {
     useMixerStore.getState().addInsert('track:1', 'delay');
-    const added = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
+    const added = useMixerStore.getState().channels['track:1']!.inserts[0]!;
     useMixerStore.getState().setInsertEnabled('track:1', added.id, false);
     useMixerStore.getState().replaceInsert('track:1', added.id, 'reverb');
-    expect(useMixerStore.getState().channels['track:1']!.inserts.at(-1)!.enabled).toBe(false);
+    expect(useMixerStore.getState().channels['track:1']!.inserts[0]!.enabled).toBe(false);
 
-    const empty = useMixerStore.getState().channels['track:1']!.inserts[0]!;
+    const empty = useMixerStore.getState().channels['track:1']!.inserts[1]!;
     useMixerStore.getState().replaceInsert('track:1', empty.id, 'filter');
-    expect(useMixerStore.getState().channels['track:1']!.inserts[0]!.enabled).toBe(true);
+    expect(useMixerStore.getState().channels['track:1']!.inserts[1]!.enabled).toBe(true);
   });
 
   it('undoes a replace back to the previous effect and its params', () => {
     useMixerStore.getState().addInsert('track:1', 'delay');
-    const slot = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
-    useMixerStore.getState().commit(insertParamPath('track:1', lastSlotNumber('track:1'), 'feedback'), 0.6);
+    const slot = useMixerStore.getState().channels['track:1']!.inserts[0]!;
+    useMixerStore
+      .getState()
+      .commit(insertParamPath('track:1', slotNumberOf('track:1', slot.id), 'feedback'), 0.6);
     useMixerStore.getState().replaceInsert('track:1', slot.id, 'reverb');
     useUndoStore.getState().undo();
-    const restored = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
+    const restored = useMixerStore.getState().channels['track:1']!.inserts[0]!;
     expect(restored.effectType).toBe('delay');
     expect(restored.params.feedback).toBe(0.6);
   });
@@ -203,14 +215,14 @@ describe('useMixerStore transient/commit channel (spec §4.1, §3.3)', () => {
   it('hands the sync layer a new inserts array so the graph rebuilds the chain (spec §4.3)', () => {
     useMixerStore.getState().addInsert('track:1', 'delay');
     const before = useMixerStore.getState().channels['track:1']!.inserts;
-    useMixerStore.getState().replaceInsert('track:1', before.at(-1)!.id, 'reverb');
+    useMixerStore.getState().replaceInsert('track:1', before[0]!.id, 'reverb');
     expect(useMixerStore.getState().channels['track:1']!.inserts).not.toBe(before);
   });
 
   it('ignores a replace that would not change the effect', () => {
     useMixerStore.getState().addInsert('track:1', 'delay');
     const depth = useUndoStore.getState().undoDepth;
-    const slot = useMixerStore.getState().channels['track:1']!.inserts.at(-1)!;
+    const slot = useMixerStore.getState().channels['track:1']!.inserts[0]!;
     useMixerStore.getState().replaceInsert('track:1', slot.id, 'delay');
     expect(useUndoStore.getState().undoDepth).toBe(depth);
   });

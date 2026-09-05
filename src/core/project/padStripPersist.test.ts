@@ -112,9 +112,11 @@ describe('a pad strip survives saveNow() + loadProject() (issue #133)', () => {
 
     const pad = await padOnDisk();
     expect(pad.mixer).toEqual({ level: 0.4, pan: -0.5, sendLevels: [0, 0.6, 0, 0] });
-    expect(pad.inserts.at(-1)).toMatchObject({ effectType: 'delay', enabled: true });
+    // An add FILLS the first free slot of the §1.3.1 rack rather than appending past it
+    // (issue #135), so the slot it created is the first one.
+    expect(pad.inserts[0]).toMatchObject({ effectType: 'delay', enabled: true });
     // §5.7's own default, stated explicitly rather than left to the build (issue #131).
-    expect(pad.inserts.at(-1)!.params.time).toBe(350);
+    expect(pad.inserts[0]!.params.time).toBe(350);
   });
 
   it('reads all four back onto the strip after a reload', async () => {
@@ -129,7 +131,7 @@ describe('a pad strip survives saveNow() + loadProject() (issue #133)', () => {
 
     const strip = useMixerStore.getState().channels[padChannel()];
     expect(strip).toMatchObject({ level: 0.4, pan: -0.5, sendLevels: [0, 0.6, 0, 0] });
-    expect(strip?.inserts.at(-1)).toMatchObject({ effectType: 'delay', params: { time: 350 } });
+    expect(strip?.inserts[0]).toMatchObject({ effectType: 'delay', params: { time: 350 } });
   });
 
   it('marks the owning PROGRAM dirty, not the project or a track (spec §4.4)', () => {
@@ -155,17 +157,19 @@ describe('a pad strip survives saveNow() + loadProject() (issue #133)', () => {
     mixer.addInsert(padChannel(), 'delay');
     mixer.addInsert(padChannel(), 'filter');
     await saveNow();
+    // The two adds filled slots 1 and 2 of the §1.3.1 rack (issue #135); the reorder swaps
+    // them, exactly as §8.5.6's Move-earlier button does on the second slot.
     const strip = useMixerStore.getState().channels[padChannel()]!;
     const inserts = [...strip.inserts];
-    const [moved] = inserts.splice(inserts.length - 1, 1);
-    inserts.splice(inserts.length - 1, 0, moved!);
+    const [moved] = inserts.splice(1, 1);
+    inserts.splice(0, 0, moved!);
     useMixerStore.getState().upsertChannel({ ...strip, inserts });
     expect(queue.pendingKeys).toEqual([`program:${programId}`]);
 
     await saveNow();
     await loadProject();
     const reloaded = useMixerStore.getState().channels[padChannel()];
-    expect(reloaded?.inserts.map((slot) => slot.effectType).slice(-2)).toEqual(['filter', 'delay']);
+    expect(reloaded?.inserts.map((slot) => slot.effectType).slice(0, 2)).toEqual(['filter', 'delay']);
   });
 
   it('does not disturb a pad the strip never touched', async () => {

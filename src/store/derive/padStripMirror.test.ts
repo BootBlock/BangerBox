@@ -123,11 +123,13 @@ describe('writing a strip edit back into the pad (spec §4.2 → §6, issue #133
 
   it('writes an added insert into the §6 payload', () => {
     useMixerStore.getState().addInsert(PAD_CHANNEL, 'delay');
+    // An add FILLS the first free slot of the §1.3.1 rack rather than appending past it, so
+    // the slot it created is the first occupied one (issue #135).
     const slots = storedPad().inserts;
-    expect(slots.at(-1)).toMatchObject({ effectType: 'delay', enabled: true });
+    expect(slots[0]).toMatchObject({ effectType: 'delay', enabled: true });
     // The §5.7 defaults the store completes on the way in reach the payload with the slot
     // (issue #131), so what the project sounds like no longer depends on the build.
-    expect(slots.at(-1)!.params.time).toBe(350);
+    expect(slots[0]!.params.time).toBe(350);
   });
 
   it('leaves ONE undo entry, and one press restores both stores', () => {

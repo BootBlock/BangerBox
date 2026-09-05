@@ -6,7 +6,7 @@ export { useTransportStore } from './useTransportStore';
 export { useProjectStore } from './useProjectStore';
 export { useSequenceStore } from './useSequenceStore';
 export { useProgramStore, type AssignResult } from './useProgramStore';
-export { useMixerStore } from './useMixerStore';
+export { useMixerStore, freeInsertSlot, type InsertSlotResult } from './useMixerStore';
 export { useUIStore, MODES } from './useUIStore';
 export {
   useHardwareStore,

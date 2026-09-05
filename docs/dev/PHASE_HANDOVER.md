@@ -1,14 +1,32 @@
-# BangerBox — Phase Handover (after the track-withdrawal closure)
+# BangerBox — Phase Handover (after the insert-limit closure)
 
-Generated at the close of the §7.1.3 track-withdrawal work per Protocol Alpha (spec §13.1). A new
+Generated at the close of the §1.3.1 insert-limit work per Protocol Alpha (spec §13.1). A new
 session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code, and
 MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the track-withdrawal work merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §7.1.3/§7.5/§7.8, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **1925 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **74/74 steps**), plus `lint`, `type-check`, `format:check`
+**State:** the insert-limit work merged to `main` (`--no-ff`). All eight §12 phases were
+already complete; this was a defect closure against §1.3.1/§4.2/§8.5.6, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **1949 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **76/76 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
+
+**A channel holds `globalInsertLimit` insert slots (clamped to 1–8 as the settings enter the
+store), and no effect may occupy a position past them.** §1.3.1 gives every channel 4, "configurable 1–8", and `addInsert` appended without
+consulting it — so the FIRST effect a user added landed on slot 5 of a four-slot rack and the
+fifth on slot 9, where the §7.8 grammar stops parsing and the panel's own knobs, every
+automation lane and every §10.3 binding go dead while the effect sounds. `addInsert` now FILLS
+the rack's first free slot; `replaceInsert` refuses a position at or past the limit; both
+return an `InsertSlotResult` carrying a finished sentence. See §2 (au) and §4.
+
+**A chain already OVER the limit is admitted whole and nothing is repaired.** A §9.6 import, a
+§9.8 pack or a project saved before this keeps every slot and every effect sounds. Refusing
+would make a project unopenable over an insert slot; truncating would delete an effect the
+user made. That is §14 (ap)'s "the stored value always wins", one level up.
+
+**`globalInsertLimit` is CONFIGURABLE for the first time.** `setGlobalInsertLimit` had no call
+site outside a unit test, so the §9.3 `projects.insert_limit` column was inert on both sides.
+Enforcing it makes it BIND, so §8.5.1's Project panel gained an **Insert slots** select beside
+Sample rate and Bit depth.
 
 **A track that leaves the project is WITHDRAWN from the §7.1.3 worker by name.** The worker holds
 every track on purpose (§14 (aq)), so nothing in its own state can tell it one has been deleted —
@@ -95,6 +113,38 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(au) — the insert-limit closure (§1.3.1, §4.2, §5.7, §8.5.1, §8.5.6, §9.3).** The ⚑ items
+  below are settled policy a new session should treat as binding, not as spec text:
+  - **The §1.3.1 limit bounds a CHANNEL, not the project.** §1.3.1's own wording is "4 insert
+    slots per pad, per track, and on the master". The §5.2 RETURNS are bounded by the same
+    rule though §1.3.1 does not name them: they have §4.2 strips, §8.5.6 edits their inserts
+    on its own tab, and `insert:return:0:slot9.mix` goes dead exactly as a track's does. One
+    rule for every strip — a second would be a second thing to forget.
+  - **The limit applies where a slot is CREATED, which is §14 (ap)'s own two places.**
+    `addInsert` FILLS the rack's first free slot and appends only while the rack is shorter
+    than the limit; `replaceInsert` refuses to OCCUPY a position at or past it. A reorder
+    needs no rule: it neither creates a slot nor lengthens the array.
+  - **Filling, not refusing, is what keeps Add alive.** `createDefaultChannelStrip` opens the
+    rack with four EMPTY slots, so a bare refusal would have made the §8.5.6 picker dead on
+    every default channel — the §3.4 failure the fix exists to prevent. A filled slot keeps
+    its own id, exactly as `replaceInsert` does.
+  - **The refusal is SPOKEN.** Both actions return `InsertSlotResult`
+    (`{ ok: true } | { ok: false, reason }`), the `AssignResult` shape, because the store is
+    the only layer that knows which rule refused. §8.5.6 toasts it AND disables the Add
+    picker on a full channel and the Replace select past the limit — from the exported
+    `freeInsertSlot` the store refuses by, never a restatement of it.
+  - **A chain already OVER the limit is admitted WHOLE and nothing is repaired.** Refusing
+    makes a project unopenable over an insert slot; truncating deletes an effect the user
+    made and changes what a §9.5 bounce renders. §14 (ap)'s rule, one level up. Lowering the
+    limit repairs nothing either — it bounds where the NEXT effect may go.
+  - **The §7.8 grammar keeps its own bound of 1–8, deliberately.** `parseParamTarget` bounds
+    `slotN` by `GLOBAL_INSERT_LIMIT_RANGE`, the configurable RANGE, not the open project's
+    value: the registry is pure and dependency-free (§2.5) and may not read a store, and a
+    project whose limit is later raised must read back a slot-8 address it saved.
+  - **`globalInsertLimit` had no way to change and now has one.** Enforcing an inert setting
+    is what made the missing control matter; §8.5.1's Project panel owns it beside the two
+    other §9.3 project columns it already carried.
 
 - **(at) — the track-withdrawal closure (§7.1.3, §7.5, §7.8, §9.3).** The ⚑ items below are
   settled policy a new session should treat as binding, not as spec text:
@@ -634,6 +684,10 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   `ensurePadChannel` wires it to whichever track triggered it first — so two tracks on one
   program share a pad channel and deleting the first silences the second (issue #141). The
   track-withdrawal proof's first draft measured that instead of what it was written for.
+- **`inserts.at(-1)` is NOT "the slot an add just created".** `addInsert` fills the §1.3.1
+  rack's first free slot, so a fresh effect lands at the FRONT of a default four-slot strip
+  and the empty slots sit behind it. Find it by effect, or by diffing the list. Eight tests
+  and two §11.4 probes carried the old assumption.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
@@ -705,6 +759,26 @@ transient channel still stand. New this work:
 - **The §11.4 `bounceMixProof` reads the WAV back from `/bounces/` over real OPFS**, so every
   number it reports is what is in the file the user gets. It restores the project it found —
   `installAudioProbe` runs in production builds.
+
+**The §1.3.1 insert-slot limit (spec §1.3.1, §4.2, §8.5.6):**
+
+- **`freeInsertSlot(inserts, limit)` in `useMixerStore.ts` is the ONE rule**, and it answers
+  both questions: where an effect may go, and (as `=== null`) whether the chain is full.
+  `addInsert` and `replaceInsert` apply it; §8.5.6 imports it to disable its own controls. A
+  new surface that offers to add an effect asks it rather than counting slots itself.
+- **`insertSlotLimit()` reads `useProjectStore.globalInsertLimit` at the moment of the edit**,
+  not at strip creation, so lowering the limit takes effect on the next add with nothing to
+  re-derive.
+- **`InsertSlotResult` is the third store result type**, beside `AssignResult` and
+  `AutomationEditResult`, and carries a finished sentence for the same reason.
+- **Admission (`setChannels`, `upsertChannel`) is deliberately NOT bounded.** See §2 (au) —
+  the stored value always wins. A new admission path inherits that, not the limit. The one
+  consequence is that §8.5.6's REORDER, which writes through `upsertChannel`, has to decline
+  to walk an effect past the limit itself; it is the only surface that can.
+- **`useProjectStore.applyProject` clamps `globalInsertLimit` to `GLOBAL_INSERT_LIMIT_RANGE`.**
+  The §9.3 column has no CHECK and §9.6 types it as a bare number, so the clamp is where the
+  settings ENTER the store — covering hydration, an import and a pack at once. A new §4.2
+  setting that BOUNDS something is clamped there too, not only in its own setter.
 
 **Insert slots and their §7.8 addresses (spec §5.7, §7.8):**
 
@@ -1030,7 +1104,11 @@ transient channel still stand. New this work:
 
 ## 5. Repository catalogue — unchanged. No repository or DDL change.
 
-**No repository method was added or changed this work.** The §11.4 bounce-mix proof reaches storage
+**No repository method was added or changed this work.** The §11.4 insert-limit proof reaches
+storage only through paths that already existed: `ProjectRepository.getById`/`update` for the
+§9.3 `projects.payload` column it restores, and `projectService.loadProject`/`saveNow`.
+
+From the previous work, and unchanged: the §11.4 bounce-mix proof reaches storage
 only through paths that already existed: `importDecodedSample` for its test sample, the §9.1 OPFS
 wrapper for the WAV it reads back, and `projectService.loadProject` to restore what it found.
 
@@ -1046,7 +1124,14 @@ the §9.8 global-library audio its programs reference. No repository method was 
 
 ## 6. DDL snapshot — unchanged. `PRAGMA user_version` = **1**. **No migration added.**
 
-**No DDL column, §9.3 payload field or §6 payload shape changed this work.** A §9.5 render reads
+**No DDL column, §9.3 payload field or §6 payload shape changed this work, and no §9.2
+migration was added.** The §9.3 `projects.insert_limit` column has existed with a default of 4
+since the v1 DDL and was already hydrated by `mappers.ts` and written by `persist.ts` — what
+changed is that something now READS it. A project carrying a chain longer than its own limit
+loads unchanged and every effect in it sounds, so there is nothing on disk in a shape to
+correct (§2 (au)).
+
+From the previous work, and unchanged: a §9.5 render reads
 the STORES, so nothing about the bounce-mixer closure is persisted at all.
 
 **A slot's `params` record now arrives at the store complete, and that needed no migration.** The
@@ -1066,7 +1151,12 @@ own defaults and needs no migration.
 
 ## 7. Worker / worklet / message protocol versions
 
-**One §7.1.3 request KIND was added this work** (issue #137): `removeTrack { trackId }`, whose
+**Nothing in the §7.1.3 protocol changed this work** (issue #135): no request kind, no response
+kind, no `ScheduledEvent` field, and no change to an existing kind's shape.
+**`SCHEDULER_PROTOCOL_VERSION` stays at 2.** The insert limit is a §4.2 store rule and never
+crosses the worker boundary — the scheduler knows nothing about insert slots.
+
+From the previous work, and unchanged: **one §7.1.3 request KIND was added** (issue #137): `removeTrack { trackId }`, whose
 `trackId` takes `schedulerIdSchema` like every other id crossing the boundary. No response kind,
 no `ScheduledEvent` field, and no change to an existing kind's shape — so
 **`SCHEDULER_PROTOCOL_VERSION` is unchanged at 2**, by the extend-by-adding-kinds rule. An older
@@ -1119,7 +1209,18 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store slice or field changed this work, but `useSequenceStore.removeTrack` changed what it
+**No store slice or field changed this work, but two `useMixerStore` actions changed their
+RETURN TYPE and what they may do.** `addInsert` and `replaceInsert` return `InsertSlotResult`
+(`{ ok: true } | { ok: false, reason }`) where they returned `void`, and both refuse a slot
+position the §1.3.1 limit forbids. `addInsert` also FILLS the rack's first free slot rather
+than appending past it, so `inserts.at(-1)` is no longer the slot an add created.
+`freeInsertSlot` is exported from the slice and re-exported by the barrel, because §8.5.6
+disables its own controls from the same rule the store refuses by.
+
+`useProjectStore.setGlobalInsertLimit` is unchanged and now has its first call site outside a
+test: §8.5.1's Project panel.
+
+From the previous work, and unchanged: **`useSequenceStore.removeTrack` changed what it
 writes.** It now also deletes the track's §7.8 track-scope automation lanes from `automation` and
 its §7.5 assignment from `trackGrooveIds`, in the same undoable commit and with a revert that
 restores exactly what the delete took. Each emptied lane carries its own §4.4 dirty key, which is
@@ -1206,7 +1307,13 @@ Changes from the previous work, recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-**Mode changes this work:** none. No component, primitive or mode markup changed for the
+**Mode changes this work:** two, both §1.3.1. `InsertPanel` reports a store refusal as a
+`warning` toast, disables its Add picker on a full channel and disables the Replace select on
+a slot past the limit — the `LayersEditor` shape for a §6 cap. `ProjectsPanel` gained an
+**Insert slots** select (1–8) beside Sample rate and Bit depth, the first thing that can move
+the §9.3 `projects.insert_limit` column. No primitive or shell component changed.
+
+From the previous work, and unchanged: no component, primitive or mode markup changed for the
 bounce-mixer closure — the defect and its fix are both below the §4.3 sync layer, and the §8.5.6
 insert panel's addresses were already right. (The same was true of the sequence-filter closure
 before it.)
@@ -1292,9 +1399,61 @@ comments.
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#137 is CLOSED by this work.** One new issue was filed while closing it — two tracks that
-play the same program share one §5.2 pad channel, wired to whichever triggered it first (#141).
-Nothing was added to the `check:orphans` allowlist.
+**#135 is CLOSED by this work.** One new issue was filed while closing it — `removeInsert`
+drops a slot from the array rather than emptying it, shifting every §7.8 address behind it
+(#142). Nothing was added to the `check:orphans` allowlist.
+
+**Honest scope notes for the insert-limit work:**
+
+- **A §11.4 probe restores every §9.3 COLUMN it writes.** `flushProject` writes
+  `insert_limit` as well as `payload`, and the first pass put only the payload back — so a
+  user who had chosen 8 slots lost them on every probe run, in a production build. The §14
+  (ap) probe rule, one level up, and the second time in three entries the restore has been
+  narrower than the save.
+- **An out-of-range `insert_limit` is clamped in `applyProject`.** §9.3 declares no CHECK,
+  `rowToProjectSettings` copies the column through and §9.6 types it as a bare number, so a
+  hand-edited row or an import can carry anything. Inert before; enforcing the limit made
+  `20` mean unreachable chains and `0` mean a channel locked out of inserts.
+- **`removeInsert` still SHRINKS the rack**, so removing slot 2 of four moves the filter that
+  was in slot 3 onto the `slot2` address and every §7.8 lane and §10.3 binding behind it with
+  it. Pre-existing, the editing-side half of what §14 (ar) fixed for the wiring side, and out
+  of scope here — issue #142. It is why the §11.4 insert-panel step now counts EFFECTS after
+  a removal rather than slots.
+- **A project already carrying a chain over the limit is left exactly as it is**, and nothing
+  warns the user that the slots past the limit cannot be addressed. §8.5.6 disables the
+  Replace select on them and says why in its `title`; there is no project-level notice, and
+  none was added.
+- **A §7.8 lane or a §10.3 binding on a slot past the limit is not cleaned up.** It addresses
+  nothing and is inert, exactly as it was before; discarding a value a project carries is not
+  this rule's business (§14 (ap)).
+- **`replaceBeyondLimitRefused` was not exercised by the defect run.** The browser measurement
+  mutated `addInsert` alone, so `replaceInsert`'s own guard read `true` on both builds; its
+  regression is the unit test, which does fail against the unfixed store.
+- **Every regression test was proven against the code it was written to catch**: 15 of
+  `insertLimit.test.ts`'s 19 assertions fail against the unfixed store, and the 4 that pass
+  are guards — the two admission cases that must keep working, the §7.8 grammar's own refusal
+  of `slot9`, and the id a fill preserves. Eight EXISTING tests pinned the defect (all of them
+  `inserts.at(-1)` for "the slot an add created") and were corrected rather than added to.
+- **The defect was measured in the browser too**, by making `addInsert` append unconditionally
+  and re-running: twelve adds left **16 slots, 12 occupied, and no refusal at all**; slots 9
+  to 16 held an effect no §7.8 address could reach; and closing slot 16 through its address
+  left the master peak at **1.47944235801696777**, the same number to every digit it had read
+  before the write. The step fails on the COUNT assertion, which is reached first, so those
+  numbers came from printing the probe's own result.
+- **Measured in a real browser**: 76/76 smoke steps at ports 5342/5343, dev and offline, no
+  console errors. Twelve adds left 4 slots on the master strip; no occupied slot was
+  unaddressable; a looping 1 kHz tone into the §5.2 master input read **0.49939** with every
+  slot opened to 20 kHz through its own §7.8 address and **0.00320** with slot 4 alone closed
+  to 80 Hz; a nine-slot chain was admitted whole and `replaceInsert` still refused its slot 9.
+  Re-run after the review's four fixes: the same 76/76 and the same numbers.
+- **The review's own three code fixes were each proven by mutation**: `applyProject` without
+  the clamp (2 failures), `replaceInsert` reusing the full-chain sentence (1), and the
+  Move-later button unbounded (1). The fourth — the probe's `insert_limit` restore — has no
+  unit test; it is browser-only, and the smoke re-run is its proof.
+
+**#137 was CLOSED by the previous work.** One new issue was filed while closing it — two tracks
+that play the same program share one §5.2 pad channel, wired to whichever triggered it first
+(#141). Nothing was added to the `check:orphans` allowlist.
 
 **Honest scope notes for the track-withdrawal work:**
 
@@ -1371,8 +1530,8 @@ sound-design parameter still renders as nothing (#138), listed below. Nothing wa
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-From the previous work: **#134, #133, #132 and #131 are CLOSED**, and #135, #138, #139, #140
-and #141 remain open.
+**#137, #135, #134, #133, #132 and #131 are CLOSED**, and #138, #139, #140, #141 and #142
+remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
@@ -1382,10 +1541,6 @@ and #141 remain open.
   keys the channel `pad:<programId>:<padIndex>`, with no track in the id, and ignores
   `trackInput` once one is built. Found writing the #137 browser proof, whose first draft
   measured this instead of the withdrawal.
-- **#135** `addInsert` ignores the §1.3.1 slot limit. Past slot 8 the §7.8 address grammar stops
-  parsing, so the panel's own knobs, every automation lane and every Q-Link binding on that slot
-  go dead while the effect still sounds. §14 (ar) has made slots 1 to 8 mean what they say and
-  §14 (as) made a pad's slots persist, so the limit now bounds something durable.
 - **#140** a §7.8 `program:<id>.pad:<idx>.amp` or `.pan` edit changes the pad and the graph and
   leaves the Mixer's own fader showing the old position until a reload. Two registered §7.8
   addresses reach one value and only the mixer side writes through; the publish deliberately
@@ -1393,10 +1548,10 @@ and #141 remain open.
 - **#139** a keygroup program's §6 program-scope `mixer` and `inserts` sound — `ensureProgramChannel`
   seeds the channel from the payload — and no surface can edit them: §8.5.6 renders no strip for a
   keygroup, `padStripsForProgram` publishes none, and the §7.8 address resolves to nothing.
-- **#135** `addInsert` ignores the §1.3.1 slot limit. Past slot 8 the §7.8 address grammar stops
-  parsing, so the panel's own knobs, every automation lane and every Q-Link binding on that slot
-  go dead while the effect still sounds. Hit while writing the #131 browser proof, whose gesture
-  step silently addressed nothing until the proof stopped growing the chain.
+- **#142** `removeInsert` drops the slot from the array rather than emptying it, so every §7.8
+  address behind the removed one shifts onto a different effect — a lane on `slot3` starts
+  driving what used to be in `slot4`, and the §1.3.1 rack gets shorter every time. The
+  editing-side half of what §14 (ar) fixed for the wiring side.
 - **#138** a §7.8 lane on a §6 sound-design parameter (`program:<id>.pad:<idx>.filter.cutoff` and
   its siblings) renders as nothing in a §9.5 bounce. It is not an oversight: offline every voice
   of the render exists from the moment it is built, so `applyPadParam`'s "the voices sounding now"
@@ -1429,8 +1584,9 @@ and #141 remain open.
 - **A stem still renders THROUGH the master bus**, at unity with no inserts, rather than tapping
   the track strip directly. That is what keeps the topology identical across variants; it costs
   three pass-through gains and a centred panner, none of which changes the signal.
-- **A §7.8 lane can still address a slot the §1.3.1 limit forbids** (#135). What changed is that
-  slots 1 to 8 now mean what they say.
+- **A §7.8 lane could still address a slot the §1.3.1 limit forbids** (#135), which §14 (au)
+  has since closed by bounding where a slot may be CREATED. What this work changed is that
+  slots 1 to 8 mean what they say.
 - **Every regression test was proven against the code it was written to catch**, by six
   mutations: a `bounceIncludesChannel` that admits everything (2 failures), a valueTick that
   ignores the song track scope (1), a `laneForTarget` that ignores lane ownership (2), the old
@@ -1682,6 +1838,6 @@ and #141 remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**1925**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **74/74 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**1949**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **76/76 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.

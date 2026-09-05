@@ -76,7 +76,26 @@ export const useProjectStore = create<ProjectState>()(
     ...UNLOADED,
     modifiedSinceLastSave: false,
 
-    applyProject: (settings) => set({ ...settings, modifiedSinceLastSave: false }),
+    /**
+     * spec §4.1 — an action validates its input before committing, and the §1.3.1 limit is
+     * the one field here that BOUNDS something (issue #135). §9.3 declares no CHECK on
+     * `projects.insert_limit`, `rowToProjectSettings` copies it through, and §9.6's manifest
+     * types it as a bare number — so a hand-edited row or an imported project could otherwise
+     * put `20` here and `addInsert` would build chains no §7.8 address can reach, or `0` and
+     * lock every channel out of inserts. Clamped where the settings ENTER, which is the same
+     * shape as `withCompleteInserts` and covers hydration, a §9.6 import and a §9.8 pack at
+     * once.
+     */
+    applyProject: (settings) =>
+      set({
+        ...settings,
+        globalInsertLimit: clampInt(
+          settings.globalInsertLimit,
+          GLOBAL_INSERT_LIMIT_RANGE[0],
+          GLOBAL_INSERT_LIMIT_RANGE[1],
+        ),
+        modifiedSinceLastSave: false,
+      }),
     setModified: (modifiedSinceLastSave) => set({ modifiedSinceLastSave }),
 
     setProjectName: (projectName) => {

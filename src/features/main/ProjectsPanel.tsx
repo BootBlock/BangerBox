@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import { useProjectStore, useUIStore } from '@/store';
 import { SAMPLE_RATES, type SampleRate } from '@/store/useProjectStore';
-import type { BitDepth } from '@/core/project/schemas';
+import { GLOBAL_INSERT_LIMIT_RANGE, type BitDepth } from '@/core/project/schemas';
 import { Button, EmptyState, FieldLabel, Modal, TextField } from '@/ui/primitives';
 import { Panel } from '@/ui/shell/Panel';
 import { IconAdd } from '@/ui/icons';
@@ -30,6 +30,20 @@ const BIT_DEPTHS: readonly { value: BitDepth; label: string }[] = [
   { value: '32f', label: '32-bit float' },
 ];
 
+/**
+ * The §1.3.1 insert-slot counts, 1 to 8 — the §9.3 `projects.insert_limit` column.
+ *
+ * §1.3.1 says "configurable 1–8 via `globalInsertLimit`", and nothing could configure it:
+ * `setGlobalInsertLimit` had no call site outside a unit test, so the value was inert on
+ * both sides. Once `addInsert` enforces it (issue #135) it BINDS the user, and a binding
+ * limit with no control implements half of §1.3.1 — so it joins the two other §9.3 project
+ * columns this panel already owns.
+ */
+const INSERT_LIMITS: readonly number[] = Array.from(
+  { length: GLOBAL_INSERT_LIMIT_RANGE[1] - GLOBAL_INSERT_LIMIT_RANGE[0] + 1 },
+  (_, index) => GLOBAL_INSERT_LIMIT_RANGE[0] + index,
+);
+
 /** Row timestamps are stored as epoch milliseconds (spec §9.3); en-GB, no date library. */
 const WHEN = new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 
@@ -38,6 +52,7 @@ export function ProjectsPanel() {
   const projectName = useProjectStore((s) => s.projectName);
   const sampleRate = useProjectStore((s) => s.sampleRate);
   const bitDepth = useProjectStore((s) => s.bitDepth);
+  const insertLimit = useProjectStore((s) => s.globalInsertLimit);
   const { rows, loading, refresh } = useRecentProjects();
 
   const [busy, setBusy] = useState(false);
@@ -133,7 +148,34 @@ export function ProjectsPanel() {
                 ))}
               </select>
             </FieldLabel>
+            <FieldLabel>
+              Insert slots
+              <select
+                aria-label="Insert slots per channel"
+                value={insertLimit}
+                onChange={(event) =>
+                  useProjectStore.getState().setGlobalInsertLimit(Number(event.target.value))
+                }
+                className={SELECT}
+                data-testid="main-insert-limit"
+              >
+                {INSERT_LIMITS.map((limit) => (
+                  <option key={limit} value={limit}>
+                    {limit}
+                  </option>
+                ))}
+              </select>
+            </FieldLabel>
           </div>
+          {/*
+           * Lowering the limit repairs nothing — the §14 (ap) rule that the stored value
+           * always wins. Effects already past the new limit go on sounding; what changes is
+           * where the next one may be created (issue #135).
+           */}
+          <p className="text-xs text-bb-muted">
+            Insert slots per channel (spec §1.3.1). Lowering this leaves effects already in place; it bounds
+            where the next one can go.
+          </p>
         </div>
       </Panel>
 
