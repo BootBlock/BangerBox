@@ -55,6 +55,7 @@ interface FakeConstant {
   offset: FakeParam;
   started: boolean;
   stopped: boolean;
+  startedAt: number | null;
   paramOutputs: unknown[];
 }
 
@@ -177,6 +178,16 @@ describe('a §7.8 lane on a §6 sound-design parameter (spec §6, §7.8, issue #
     // The node the ramp built is the one the voice is wired to, so the first hit of a pad
     // whose lane has already run is at the lane's value and not the patch's.
     expect(effectiveCutoff(fake, filtersOf(fake)[0]!)).toBe(5_000);
+    pool.destroy();
+  });
+
+  it('starts on the context clock, not on the note that built it', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // A §9.5 render builds its voices track by track rather than in time order, so a lane
+    // started at the first voice's `when` would contribute nothing to an earlier one.
+    pool.trigger(spec(context, { id: 'late', when: 5 }));
+    expect(constantsOf(fake)[0]!.startedAt).toBe(0);
     pool.destroy();
   });
 

@@ -208,11 +208,13 @@ class FakeConstantSourceNode extends FakeAudioNode {
   onended: (() => void) | null = null;
   started = false;
   stopped = false;
+  startedAt: number | null = null;
   constructor(context: FakeAudioContext) {
     super(context, 'constantSource');
   }
-  start(_when?: number): void {
+  start(when?: number): void {
     this.started = true;
+    this.startedAt = when ?? 0;
   }
   stop(_when?: number): void {
     this.stopped = true;
