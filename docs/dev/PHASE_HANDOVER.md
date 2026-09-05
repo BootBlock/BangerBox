@@ -1014,12 +1014,13 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   those files on its FIRST pass, before any mutation has been applied.
 - **A removed worktree can leave an EMPTY directory behind under `.claude/worktrees/`.** A
   lingering shell holds its CWD, so `git worktree remove` and `rm -rf` both fail with
-  "Permission denied" / "Device or resource busy". `voicelane` is the one still standing;
-  `slotshift`, `padchannel`, `slotlimit`, `trackwithdraw`, `bouncemix`, `padstrip` and
-  `declick` were others, and every one of those DID delete once its shell had gone —
-  `declick` went at the start of this work — so try again before assuming otherwise.
-  `git worktree list` shows only `main`, so `voicelane` is not another agent's work: delete
-  it if you can and ignore it if you cannot.
+  "Permission denied" / "Device or resource busy". `envlane` is the one still standing, and it
+  is THIS work's own: `git worktree remove` deregistered it and the branch is deleted, but the
+  directory would not go. `slotshift`, `padchannel`, `slotlimit`, `trackwithdraw`, `bouncemix`,
+  `padstrip`, `declick` and `voicelane` were others, and every one of those DID delete once its
+  shell had gone — `declick` went at the start of this work and `voicelane` at the end of it —
+  so try again before assuming otherwise. `git worktree list` shows only `main`, so `envlane`
+  is not another agent's work: delete it if you can and ignore it if you cannot.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
