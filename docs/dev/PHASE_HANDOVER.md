@@ -875,11 +875,12 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   those files on its FIRST pass, before any mutation has been applied.
 - **A removed worktree can leave an EMPTY directory behind under `.claude/worktrees/`.** A
   lingering shell holds its CWD, so `git worktree remove` and `rm -rf` both fail with
-  "Permission denied" / "Device or resource busy". `voicelane` is one; `padchannel`,
-  `slotlimit`, `trackwithdraw`, `bouncemix` and `padstrip` were others, and both `padchannel`
-  and `slotlimit` DID delete once their shells had gone, so try again before assuming
-  otherwise. `voicelane` was still busy at the close of this work, so it was left alone. `git worktree list` shows only `main`, so they are not another agent's work —
-  delete them if you can and ignore them if you cannot.
+  "Permission denied" / "Device or resource busy". `voicelane` and `slotshift` are two;
+  `padchannel`, `slotlimit`, `trackwithdraw`, `bouncemix` and `padstrip` were others, and both
+  `padchannel` and `slotlimit` DID delete once their shells had gone, so try again before
+  assuming otherwise. Both `voicelane` and `slotshift` were still busy at the close of this
+  work, so both were left alone. `git worktree list` shows only `main`, so they are not
+  another agent's work — delete them if you can and ignore them if you cannot.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
