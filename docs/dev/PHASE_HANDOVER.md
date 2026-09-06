@@ -1138,7 +1138,9 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   `trackwithdraw`, `bouncemix`, `padstrip`, `declick`, `voicelane`, `envlane` and `keygroupmix`
   were all like this, and every one of them DID delete once its shell had gone — `envlane` at
   the start of the keygroup-mixer work, `keygroupmix` at the start of the voice-release work —
-  so try again before assuming otherwise. `git worktree list` is what says whether a directory
+  so try again before assuming otherwise. **`voicerelease` is the one still standing**, and it
+  is the voice-release work's own: `git worktree remove` deregistered it and the branch is
+  deleted, but the directory would not go. `git worktree list` is what says whether a directory
   is a registered worktree: one it does not list is not another agent's work, so delete it if
   you can and ignore it if you cannot.
 - **A §11.4 probe's own precondition guard must not fire where the DEFECT is what breaks
