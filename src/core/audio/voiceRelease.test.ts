@@ -162,8 +162,10 @@ describe('a voice is released (spec §5.4, issue #145)', () => {
     const slow: AhdsrEnvelope = { ...FLAT, release: 2_000 };
     pool.trigger(spec(context, { id: 'ringing', amp: slow, durationSec: 3 }));
     const gain = ampGains(fake)[0]!;
-    // Both fades are on the timeline, the declick last so it truncates the release into it.
-    expect(fadesToZero(gain)).toEqual([REGION_SECONDS, 5, REGION_SECONDS]);
+    // ONE fade reaches zero, at the region's end. The release ramp is written truncated into
+    // the declick rather than aimed at its own end and cut back afterwards — the timeline is
+    // written forward, in one pass, so nothing is scheduled only to be erased (issue #146).
+    expect(fadesToZero(gain)).toEqual([REGION_SECONDS]);
     const anchor = departure(gain);
     expect(anchor.at).toBeCloseTo(REGION_SECONDS - 0.003, 9);
     // 0.997 s into a 2 s release from unity: 1 − 0.997/2.

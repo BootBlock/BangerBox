@@ -4,7 +4,7 @@ import { createFakeAudioContext } from '@/test/mocks/audioContext';
 import {
   ampLevelAt,
   declickFadeStart,
-  scheduleAmpAttack,
+  scheduleAmpContour,
   scheduleAmpDeclick,
   scheduleAmpRelease,
   scheduleModEnvelope,
@@ -29,7 +29,7 @@ describe('ampLevelAt (spec §6, issue #144)', () => {
     createDefaultEnvelope({ attack: 10, hold: 20, decay: 40, sustain: 0.5, curve: 'linear', ...over });
 
   it('holds the peak for a flat envelope, which is every §6 stage at once', () => {
-    // Attack, hold and decay all zero: `scheduleAmpAttack` writes four events at one time and
+    // Attack, hold and decay all zero: `scheduleAmpContour` writes four events at one time and
     // Web Audio takes the last, so the contour is the sustain level from the note-on onwards.
     const flat = env({ attack: 0, hold: 0, decay: 0, sustain: 1 });
     expect(ampLevelAt(0.8, flat, 5, 5)).toBeCloseTo(0.8);
@@ -57,7 +57,7 @@ describe('ampLevelAt (spec §6, issue #144)', () => {
     const exp = env({ curve: 'exponential' });
     // Halfway through a peak-1 → sustain-0.5 exponential decay is √0.5, not 0.75.
     expect(ampLevelAt(1, exp, 0, 0.05)).toBeCloseTo(Math.SQRT1_2);
-    // …and a sustain of zero falls back to the linear decay, exactly as `scheduleAmpAttack` does.
+    // …and a sustain of zero falls back to the linear decay, exactly as `scheduleAmpContour` does.
     expect(ampLevelAt(1, env({ curve: 'exponential', sustain: 0 }), 0, 0.05)).toBeCloseTo(0.5);
   });
 
@@ -87,27 +87,25 @@ describe('scheduleAmpDeclick (spec §5.4)', () => {
     expect(calls(gain.gain)).toContainEqual({ method: 'setValueAtTime', args: [0.5, 2 - 0.003] });
   });
 
-  it('writes the departure level after the hold, so the hold cannot overwrite it', () => {
+  it('writes the departure level and the ramp, and CANCELS nothing (issue #146)', () => {
+    // The cancel used to lead: `cancelAndHoldAtTime(fadeStart)` cut the §6 contour off here.
+    // That works once and destroys the contour the second time, because the method truncates a
+    // ramp by REPLACING it with a held value — which a later, earlier cancel then finds, does
+    // not recognise as a ramp, and removes along with the segment it stood for. The caller now
+    // writes the contour only as far as this fade ({@link scheduleAmpContour}), so there is
+    // nothing beyond it to erase.
     const { context } = createFakeAudioContext();
     const gain = context.createGain();
     scheduleAmpDeclick(gain.gain, 2, 0, 3, 0.5);
     const methods = calls(gain.gain).map((c) => c.method);
-    expect(methods).toEqual(['cancelAndHoldAtTime', 'setValueAtTime', 'linearRampToValueAtTime']);
+    expect(methods).toEqual(['setValueAtTime', 'linearRampToValueAtTime']);
   });
 
   it('refuses a non-finite level rather than poisoning the param (issue #97)', () => {
     const { context } = createFakeAudioContext();
     const gain = context.createGain();
     scheduleAmpDeclick(gain.gain, 2, 0, 3, Number.NaN);
-    expect(calls(gain.gain).map((c) => c.method)).toEqual(['cancelAndHoldAtTime', 'linearRampToValueAtTime']);
-  });
-
-  it('holds the running envelope at the fade start so the contour is truncated', () => {
-    const { context } = createFakeAudioContext();
-    const gain = context.createGain();
-    scheduleAmpDeclick(gain.gain, 2, 0, 3, 0.5);
-    const hold = calls(gain.gain).find((c) => c.method === 'cancelAndHoldAtTime');
-    expect(hold?.args[0]).toBeCloseTo(2 - 0.003);
+    expect(calls(gain.gain).map((c) => c.method)).toEqual(['linearRampToValueAtTime']);
   });
 
   it('never reaches back before note-on for a voice shorter than the fade', () => {
@@ -141,7 +139,7 @@ describe('scheduleAmpRelease (spec §5.4)', () => {
     scheduleAmpDeclick(gain.gain, 2, 0, 3, 0.5);
     const silentAt = scheduleAmpRelease(gain.gain, 1, 5, 0.4);
     expect(silentAt).toBeCloseTo(1.005);
-    const after = calls(gain.gain).slice(3);
+    const after = calls(gain.gain).slice(2); // the declick writes two calls, not three
     expect(after.map((c) => c.method)).toEqual([
       'cancelAndHoldAtTime',
       'setValueAtTime',
@@ -162,12 +160,12 @@ describe('scheduleAmpRelease (spec §5.4)', () => {
   });
 });
 
-describe('scheduleAmpAttack (spec §6 curve)', () => {
+describe('scheduleAmpContour (spec §6 curve, issue #146)', () => {
   it('ramps 0→peak→sustain linearly for a linear envelope', () => {
     const { context } = createFakeAudioContext();
     const gain = context.createGain();
     const env = createDefaultEnvelope({ attack: 10, hold: 0, decay: 20, sustain: 0.5, curve: 'linear' });
-    scheduleAmpAttack(gain.gain, 1, env, 0);
+    scheduleAmpContour(gain.gain, 1, env, 0, 0, 1);
     const methods = calls(gain.gain).map((c) => c.method);
     expect(methods).toContain('linearRampToValueAtTime');
     expect(methods).not.toContain('exponentialRampToValueAtTime');
@@ -177,7 +175,7 @@ describe('scheduleAmpAttack (spec §6 curve)', () => {
     const { context } = createFakeAudioContext();
     const gain = context.createGain();
     const env = createDefaultEnvelope({ attack: 5, hold: 0, decay: 40, sustain: 0.6, curve: 'exponential' });
-    scheduleAmpAttack(gain.gain, 1, env, 0);
+    scheduleAmpContour(gain.gain, 1, env, 0, 0, 1);
     expect(calls(gain.gain).map((c) => c.method)).toContain('exponentialRampToValueAtTime');
   });
 
@@ -185,8 +183,35 @@ describe('scheduleAmpAttack (spec §6 curve)', () => {
     const { context } = createFakeAudioContext();
     const gain = context.createGain();
     const env = createDefaultEnvelope({ attack: 5, hold: 0, decay: 40, sustain: 0, curve: 'exponential' });
-    scheduleAmpAttack(gain.gain, 1, env, 0);
+    scheduleAmpContour(gain.gain, 1, env, 0, 0, 1);
     expect(calls(gain.gain).map((c) => c.method)).not.toContain('exponentialRampToValueAtTime');
+  });
+
+  it('writes the span it is given and ends on a RAMP landing on the contour there', () => {
+    // The closing ramp is what lets a later re-lay cancel inside this span and still keep it:
+    // `cancelAndHoldAtTime` truncates a ramp and preserves everything before it, and loses the
+    // segment where it finds a held value instead (issue #146). Two points of one segment
+    // reproduce that segment, so a span is the contour rather than an approximation of it.
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    const env = createDefaultEnvelope({ attack: 10, hold: 0, decay: 100, sustain: 0.5, curve: 'linear' });
+    scheduleAmpContour(gain.gain, 1, env, 0, 0.03, 0.08);
+    const written = calls(gain.gain);
+    // Anchored on the contour's own value at 30 ms, one fifth of the way down a 100 ms decay.
+    expect(written[0]).toEqual({ method: 'setValueAtTime', args: [expect.closeTo(0.9, 6), 0.03] });
+    // …and closing on its value at 80 ms, seven tenths of the way down. Nothing beyond it.
+    expect(written).toHaveLength(2);
+    expect(written[1]).toEqual({
+      method: 'linearRampToValueAtTime',
+      args: [expect.closeTo(0.65, 6), 0.08],
+    });
+  });
+
+  it('writes only the anchor for a zero-length span', () => {
+    const { context } = createFakeAudioContext();
+    const gain = context.createGain();
+    scheduleAmpContour(gain.gain, 1, createDefaultEnvelope(), 0, 0.5, 0.5);
+    expect(calls(gain.gain).map((c) => c.method)).toEqual(['setValueAtTime']);
   });
 });
 

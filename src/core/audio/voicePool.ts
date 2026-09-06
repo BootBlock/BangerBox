@@ -35,7 +35,7 @@ import {
   ampLevelAt,
   declickFadeStart,
   modEnvelopeBreakpoints,
-  scheduleAmpAttack,
+  scheduleAmpContour,
   scheduleAmpDeclick,
   scheduleAmpRelease,
   scheduleModEnvelope,
@@ -211,7 +211,7 @@ interface SharedLfo {
  *
  * **The two §7.8 amp-ENVELOPE leaves are held here as plain NUMBERS, not as nodes**
  * (issue #143). An envelope TIME is consumed by JavaScript when a voice starts (spec §6) —
- * `scheduleAmpAttack` reads it once and writes four boundaries from it — so there is no
+ * `scheduleAmpContour` reads it once and writes four boundaries from it — so there is no
  * `AudioParam` for a node to sum onto, and nothing on the public `AudioParam` surface would
  * report what such a node held at a note-on that has not happened yet (§14 `(ay)`). The pad
  * holds the value and the rule is the same one the nodes express: **a voice's §6 amp envelope
@@ -318,10 +318,10 @@ interface Voice {
   /**
    * Whether the end-of-region fade those three fields describe is still ON the timeline.
    *
-   * A §5.4 note-off landing inside the region erases it, as part of the cancel that lays the
-   * release, and the voice is then silent from the release's end rather than from the region's
-   * (issue #145). Reading the fade's line after that would step the gain UP out of that
-   * silence, and `voiceRefs` makes exactly these voices the preferred steal victims.
+   * Where a §5.4 note-off lands inside the region the release IS the voice's end, so no fade
+   * is written at all and the voice is silent from the release's end rather than from the
+   * region's (issue #145). Reading the fade's line after that would step the gain UP out of
+   * that silence, and `voiceRefs` makes exactly these voices the preferred steal victims.
    */
   declickLaid: boolean;
   /**
@@ -337,14 +337,6 @@ interface Voice {
    * own length (§2.6), not the §6 release stage.
    */
   noteOffAt: number | null;
-  /**
-   * The EARLIEST fade start this voice has ever had — where its §6 amp contour stopped
-   * running (spec §5.4, issue #144). Each lay truncates the AHDSR at its own fade start and
-   * nothing restarts it, so the level the timeline holds from there on is the contour's value
-   * HERE, not at the fade start currently in force. Only a re-lay that moves the fade EARLIER
-   * moves it.
-   */
-  contourFrozenAt: number;
   startTime: number;
   released: boolean;
   stopScheduled: boolean;
@@ -397,25 +389,10 @@ export class VoicePool {
       if (victim) this.fadeAndStop(victim, now, VOICE_STEAL_FADE_MS);
     }
 
-    // 5. Build and start the enriched voice chain (spec §5.2 stages 1–2, §6).
+    // 5. Build and start the enriched voice chain (spec §5.2 stages 1–2, §6), amp timeline
+    // and §5.4 note-off included — `buildVoice` lays the whole of it in one pass.
     const voice = this.buildVoice(spec, now, glideFrom);
     this.voices.set(spec.id, voice);
-
-    // 6. The note's own §5.4 note-off, laid here because this is where it BINDS: a sequenced
-    // note states its length (spec §7.1.3 `durationSec`), and laying the off against the voice
-    // that length belongs to is the only unambiguous reading — `poly` lets two hits of one pad
-    // overlap, and an off addressed by pad and note alone would cut whichever it reached
-    // first. It is also what makes live and offline the same: a §9.5 render builds every voice
-    // before it applies any ramp, so a render that had to issue offs afterwards would be
-    // choosing between voices with no way to tell them apart (issue #145).
-    //
-    // A `oneShot` pad ignores it and plays to the sample's end (spec §5.4). A note that states
-    // no length has none to bind — see {@link VoiceTriggerSpec.durationSec}.
-    const duration = spec.durationSec ?? 0;
-    if (duration > 0 && !voice.oneShot) {
-      voice.noteOffAt = now + duration;
-      this.layNoteOff(voice);
-    }
   }
 
   /**
@@ -430,8 +407,14 @@ export class VoicePool {
     for (const voice of this.voices.values()) {
       if (voice.padKey !== padKey || voice.note !== note) continue;
       if (voice.oneShot || voice.stopScheduled || voice.noteOffAt !== null) continue;
-      voice.noteOffAt = Math.max(when, voice.startTime);
-      this.layNoteOff(voice);
+      const off = Math.max(when, voice.startTime);
+      voice.noteOffAt = off;
+      // A note-off at or after the §5.4 fade start has nothing left to fade: that fade already
+      // reaches true zero at the region's end, sooner than any §6 release could. The voice
+      // still RECORDS the off — §5.4's steal prefers a released voice — but the timeline it
+      // already carries is the right one, so nothing is re-laid over it.
+      if (off >= voice.declickFadeStart) continue;
+      this.layAmpTimeline(voice, voice.declickEndTime, off);
     }
   }
 
@@ -703,33 +686,17 @@ export class VoicePool {
    * voice whose note-on has not yet arrived (spec §6, §5.4, issue #143).
    *
    * Everything from the note-on onwards is erased and rewritten, because an envelope time
-   * moves every one of the four boundaries {@link scheduleAmpAttack} writes. The region's END
+   * moves every one of the four boundaries {@link scheduleAmpContour} writes. The region's END
    * does not move: an envelope time is not the playback rate, so the fade lands exactly where
    * it did.
    *
-   * **`contourFrozenAt` is RE-BASED rather than kept**, because this erases the very freeze it
-   * records. That field is where an earlier lay stopped the §6 AHDSR (issue #144), and a lay is
-   * exactly what `cancelScheduledValues` has just removed — so the point the contour now stops
-   * is this fade's own start, and reading the old one would depart from a level a contour that
-   * runs again never holds. A §10.2 bend on a voice that has not started moves the old value,
-   * which is what makes this reachable rather than theoretical.
-   *
    * **The voice's §5.4 note-off is re-laid with it**, because the release ramp was written from
-   * the envelope this is replacing (issue #145). It is written last, so it erases the part of
-   * the fresh contour it supersedes rather than the other way round.
+   * the envelope this is replacing (issue #145). {@link layAmpTimeline} writes the whole
+   * timeline in time order, so it is laid in its own place rather than over the top.
    */
   private relayAmpContour(voice: Voice, amp: AhdsrEnvelope): void {
     voice.amp = amp;
-    const param = voice.ampGain.gain;
-    param.cancelScheduledValues(voice.startTime);
-    scheduleAmpAttack(param, voice.ampPeak, amp, voice.startTime);
-    const fadeStart = declickFadeStart(voice.declickEndTime, voice.startTime, DECLICK_FADE_MS);
-    voice.declickFadeStart = fadeStart;
-    voice.contourFrozenAt = fadeStart;
-    voice.declickLevel = ampLevelAt(voice.ampPeak, amp, voice.startTime, fadeStart);
-    voice.declickLaid = true;
-    scheduleAmpDeclick(param, voice.declickEndTime, voice.startTime, DECLICK_FADE_MS, voice.declickLevel);
-    this.layNoteOff(voice);
+    this.layAmpTimeline(voice, voice.declickEndTime, voice.startTime);
   }
 
   /**
@@ -819,95 +786,106 @@ export class VoicePool {
     applyRetune(voice.detune, at, voice.bendCents + this.padLane(voice.padKey).pitchCents);
     const remaining = voice.regionSeconds - voice.consumedSeconds;
     if (remaining <= 0) return;
-    // Erase the stale fade first: holding at its own start leaves the amp on the level the
-    // contour reached before it stopped, which is what the timeline holds from there onwards.
-    voice.ampGain.gain.cancelAndHoldAtTime(voice.declickFadeStart);
-    const endTime = regionEndTime(voice.detune, at, remaining);
-    const fadeStart = declickFadeStart(endTime, at, DECLICK_FADE_MS);
-    // The same rule as the first lay — the level the contour holds where the fade begins — but
-    // read where the contour STOPPED, which is the earliest fade start this voice has had and
-    // not merely the previous one. A §7.8 pitch lane re-lays every `SCHEDULER_INTERVAL_MS`, so
-    // reading the last fade start would walk the level down the frozen contour a step per
-    // window (issue #144).
-    voice.contourFrozenAt = Math.min(voice.contourFrozenAt, fadeStart);
-    // {@link preDeclickLevel} rather than `ampLevelAt` directly, because a voice whose §5.4
-    // note-off has already been laid is on its release line by the time the new fade begins,
-    // not on the §6 contour. With no note-off the two are the same number: `contourFrozenAt`
-    // has just been clamped to at most `fadeStart`.
-    const level = this.preDeclickLevel(voice, fadeStart);
-    scheduleAmpDeclick(voice.ampGain.gain, endTime, at, DECLICK_FADE_MS, level);
-    voice.declickFadeStart = fadeStart;
-    voice.declickEndTime = endTime;
-    voice.declickLevel = level;
-    voice.declickLaid = true;
-    // The retune has MOVED the fade start `layNoteOff` decides against, so the decision is
-    // taken again: a note-off that fell at or after the old fade start — and so laid nothing —
-    // is now inside a longer region and must be laid, and one already laid is rewritten over
-    // the fresh fade rather than left under a cancel that has just erased half of it.
-    this.layNoteOff(voice);
+    this.layAmpTimeline(voice, regionEndTime(voice.detune, at, remaining), at);
   }
 
   /**
-   * Lay this voice's §5.4 note-off: the §6 release ramp, and whatever the end of its region
-   * still owns afterwards (spec §5.4, §6, issue #145).
+   * Write this voice's whole amp timeline from `from` onwards — the §6 contour, its §5.4
+   * note-off release, and the end-of-buffer declick landing on `endTime` (spec §5.4, §6).
    *
-   * **A release and the end-of-buffer declick must not fight over the same milliseconds**, and
-   * which of them owns the voice's end is decided by where the release LANDS:
+   * **One writer, writing FORWARD, is the answer to issue #146.** Every lay used to write its
+   * own piece and cut the pieces before it back with `cancelAndHoldAtTime`, and that method
+   * truncates a ramp by REPLACING it with a held value — so the second cancel, at an earlier
+   * time, found a held value rather than a ramp, inserted nothing, removed it, and lost the
+   * segment it stood for. `Voice.contourFrozenAt` modelled the first half of that damage as
+   * though it were the rule (§14 `(ay)`: each lay "truncates the §6 AHDSR at its own fade
+   * start and nothing restarts it"), and the model was self-consistent — but nothing has to
+   * stop the contour, and freezing it holds a voice at a level its own §6 envelope has left
+   * behind: 3.91 dB on a 60 ms region under a 500 ms decay, and the whole way back to the PEAK
+   * where a retune SHORTENS the region. The field is gone; the contour runs.
    *
-   *  - Lands inside the region: the release IS this voice's end. `scheduleAmpRelease` erases
-   *    the declick beyond the note-off as part of its own cancel, and the source then runs on
-   *    into silence until the buffer ends — which is spec §5.4 read exactly as written, "the
-   *    `ended` event finalises voice teardown". Stopping the source on the release instead
-   *    would be a second policy, and one a §7.8 `amp.release` lane could no longer move.
+   * The one cancel left is at `from`, which is where this lay begins and never earlier — so it
+   * finds the ramp a previous lay closed its own span with, truncates it correctly, and leaves
+   * the param holding a value at every instant. Everything after is written in time order and
+   * ends on a ramp, which is what keeps that true for the next lay.
+   *
+   * **Which of the release and the declick owns the voice's end is decided by where the
+   * release LANDS** (spec §5.4, issue #145), and the decision is re-taken on every lay because
+   * all three callers can move the fade start it is made against:
+   *
+   *  - Lands inside the region: the release IS this voice's end, nothing is laid past it, and
+   *    the source runs on into silence until the buffer ends — spec §5.4 read exactly as
+   *    written, "the `ended` event finalises voice teardown". Stopping the source instead would
+   *    be a second policy, and one a §7.8 `amp.release` lane could no longer move.
    *  - Outlives the region: §5.4's declick still owns the region's end, because the voice does
-   *    still play to it. It is re-laid from the level the RELEASE line holds where the fade
-   *    begins, so the ramp is truncated into the fade rather than left to end above zero at the
-   *    moment the buffer stops — which is the click the declick exists to prevent.
-   *  - Falls at or after the fade start: nothing is laid at all. That fade already reaches true
-   *    zero at the region's end, sooner than any §6 release could, so a release there has
-   *    nothing left to fade and could only lift the level back up.
-   *
-   * It is called from every lay of the amp timeline — the trigger, `rescheduleDeclick` and
-   * `relayAmpContour` — rather than once, because all three can move the fade start this
-   * decision is made against, and because two of them rewrite the very ramp it lays.
-   *
-   * **A §6 release of ZERO gets `DECLICK_FADE_MS` instead**, which is not a clamp on the
-   * envelope but §5.4's no-hard-cut rule applied where a §6 value can ask for one: the schema
-   * admits 0 and §8.5.5's field offers it, and a zero-length ramp is exactly the step to
-   * silence §5.4 forbids "every way a voice ends". Every other release, however short, still
-   * runs at its own length.
+   *    still play to it. The release ramp is truncated into the fade, which departs from the
+   *    level that ramp holds there — so the region's end still reaches true zero rather than
+   *    stopping a third of the way up when the buffer runs out.
+   *  - Falls at or after the fade start: the release is not laid at all. That fade already
+   *    reaches true zero at the region's end, sooner than any §6 release could.
    */
-  private layNoteOff(voice: Voice): void {
+  private layAmpTimeline(voice: Voice, endTime: number, from: number): void {
+    const param = voice.ampGain.gain;
+    const fadeStart = declickFadeStart(endTime, from, DECLICK_FADE_MS);
     const off = voice.noteOffAt;
-    if (off === null || off >= voice.declickFadeStart) return;
-    const level = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, Math.min(off, voice.contourFrozenAt));
-    const end = scheduleAmpRelease(voice.ampGain.gain, off, this.releaseSeconds(voice) * 1000, level);
-    if (end < voice.declickFadeStart) {
-      // The cancel inside `scheduleAmpRelease` has just ERASED the end-of-region fade, so the
-      // voice's own record of it must stop describing the timeline: the amp is at zero from
-      // `end` onwards, and an interruption after the erased fade start would otherwise be told
-      // to depart from a line that is no longer there — stepping the gain UP out of silence.
+    const releaseEnd = off !== null && off < fadeStart ? off + this.releaseSeconds(voice) : null;
+    // Erase this lay's own span. `cancelAndHoldAtTime` rather than `cancelScheduledValues`,
+    // because it leaves the param holding a value for the instant between this call and the
+    // first write below, and because it truncates the previous span's closing ramp instead of
+    // deleting the segment that ramp describes.
+    param.cancelAndHoldAtTime(from);
+    voice.declickEndTime = endTime;
+    voice.declickFadeStart = fadeStart;
+    this.layPreDeclick(voice, from, releaseEnd === null ? fadeStart : Math.min(releaseEnd, fadeStart));
+    if (releaseEnd !== null && releaseEnd < fadeStart) {
+      // The release owns the end, so no fade is on the timeline at all and the voice's record
+      // of it must stop describing one: reading its line afterwards would step a steal or a
+      // choke UP out of the silence the release left, and `voiceRefs` makes exactly these
+      // voices the preferred victims (issue #145).
       voice.declickLaid = false;
       return;
     }
-    voice.declickLaid = true;
-    voice.declickLevel = this.preDeclickLevel(voice, voice.declickFadeStart);
-    scheduleAmpDeclick(voice.ampGain.gain, voice.declickEndTime, off, DECLICK_FADE_MS, voice.declickLevel);
+    voice.declickLevel = this.preDeclickLevel(voice, fadeStart);
+    voice.declickLaid = endTime > fadeStart;
+    scheduleAmpDeclick(param, endTime, from, DECLICK_FADE_MS, voice.declickLevel);
+  }
+
+  /**
+   * Write what this voice's amp does over `[from, until]` before the §5.4 end-of-region fade:
+   * the §6 contour, and the note-off release line from the note-off onwards (spec §5.4, §6).
+   *
+   * It writes exactly what {@link preDeclickLevel} describes, and closes on a ramp landing on
+   * that function's own value at `until` — so the model and the sound are one statement rather
+   * than two that could drift, which is the discipline `ampLevelAt` already keeps for the
+   * contour itself (§14 `(ay)`).
+   */
+  private layPreDeclick(voice: Voice, from: number, until: number): void {
+    const param = voice.ampGain.gain;
+    const off = voice.noteOffAt;
+    if (off === null || off >= until) {
+      scheduleAmpContour(param, voice.ampPeak, voice.amp, voice.startTime, from, until);
+      return;
+    }
+    if (off > from) scheduleAmpContour(param, voice.ampPeak, voice.amp, voice.startTime, from, off);
+    // The §6 release line, from its own start or continued from wherever this lay begins.
+    const start = Math.max(off, from);
+    setParamNow(param, this.preDeclickLevel(voice, start), start);
+    if (until > start) param.linearRampToValueAtTime(this.preDeclickLevel(voice, until), until);
   }
 
   /**
    * The level this voice's amp holds at `when` BEFORE the §5.4 end-of-region declick — the §6
    * contour where the voice has no note-off, and the release line from the note-off onwards.
    *
-   * The contour's value is read where the contour STOPPED: at `when`, or at `contourFrozenAt`
-   * if an earlier lay froze it before then (issue #144). That is the one model of the timeline
-   * this file keeps, and `rescheduleDeclick` reads the same field for the same reason; whether
-   * the model is right at all is issue #146, and the two must not answer it differently.
+   * The contour is read where it RUNS, which is everywhere (issue #146). It used to be clamped
+   * to `Voice.contourFrozenAt`, on §14 `(ay)`'s reading that each declick lay stopped the
+   * AHDSR for good; measured in a browser, nothing has to stop it, and {@link layPreDeclick}
+   * is what puts it back. This is the one model of the timeline this file keeps, and
+   * {@link ampLevelNow} and {@link layAmpTimeline} both read it.
    */
   private preDeclickLevel(voice: Voice, when: number): number {
     const off = voice.noteOffAt;
-    const contour = (at: number): number =>
-      ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, Math.min(at, voice.contourFrozenAt));
+    const contour = (at: number): number => ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, at);
     if (off === null || when <= off) return contour(when);
     const span = this.releaseSeconds(voice);
     return contour(off) * Math.max(0, 1 - (when - off) / span);
@@ -915,7 +893,7 @@ export class VoicePool {
 
   /**
    * The seconds this voice's §5.4 note-off actually fades over — its §6 release, or
-   * `DECLICK_FADE_MS` where §6 asks for zero. It is one function because {@link layNoteOff}
+   * `DECLICK_FADE_MS` where §6 asks for zero. It is one function because {@link layPreDeclick}
    * WRITES that ramp and {@link preDeclickLevel} READS it, and a fade the two disagreed about
    * is the disagreement between the model and the sound this file exists to prevent.
    */
@@ -1051,7 +1029,6 @@ export class VoicePool {
     // The pad's §7.8 amp-envelope times where it holds them, and the §6 payload's where it
     // does not — the envelope-time half of {@link PadLane} (issue #143).
     const amp = this.padAmpEnvelope(lane, spec.amp);
-    scheduleAmpAttack(ampGain.gain, peak, amp, now);
 
     // LFOs → pitch (detune) and filter cutoff (filter.detune) targets (spec §6). Wired
     // before the declick because pitch-routed LFOs are part of the rate curve it solves.
@@ -1083,12 +1060,6 @@ export class VoicePool {
     const endTime = source.pitchCoupled
       ? regionEndTime(detune, now, source.sourceSeconds)
       : now + source.sourceSeconds;
-    // The fade departs from the level the AHDSR holds where it begins. The param cannot be
-    // asked for it — the declick is the last thing on that timeline, so `cancelAndHoldAtTime`
-    // has nothing to rewrite and pins nothing (issue #144).
-    const fadeStart = declickFadeStart(endTime, now, DECLICK_FADE_MS);
-    const declickLevel = ampLevelAt(peak, amp, now, fadeStart);
-    scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS, declickLevel);
 
     source.start(now);
     for (const osc of oscillators) osc.start(now);
@@ -1116,16 +1087,29 @@ export class VoicePool {
       detune,
       consumedSeconds: 0,
       consumedUntil: now,
-      declickFadeStart: fadeStart,
+      // Filled in by the lay below, which is the one writer of all four (issue #146).
+      declickFadeStart: endTime,
       declickEndTime: endTime,
-      declickLevel,
-      declickLaid: true,
-      contourFrozenAt: fadeStart,
-      noteOffAt: null,
+      declickLevel: 0,
+      declickLaid: false,
+      // The note's own §5.4 note-off, taken here because this is where it BINDS: a sequenced
+      // note states its length (spec §7.1.3 `durationSec`), and laying the off against the
+      // voice that length belongs to is the only unambiguous reading — `poly` lets two hits of
+      // one pad overlap, and an off addressed by pad and note alone would cut whichever it
+      // reached first. It is also what makes live and offline the same: a §9.5 render builds
+      // every voice before it applies any ramp, so a render issuing offs afterwards would be
+      // choosing between voices with no way to tell them apart (issue #145).
+      //
+      // A `oneShot` pad ignores it and plays to the sample's end (spec §5.4). A note that
+      // states no length has none to bind — see {@link VoiceTriggerSpec.durationSec}.
+      noteOffAt:
+        (spec.durationSec ?? 0) > 0 && spec.playbackMode !== 'oneShot' ? now + (spec.durationSec ?? 0) : null,
       startTime: now,
       released: false,
       stopScheduled: false,
     };
+    // The voice's whole amp timeline — §6 contour, note-off and §5.4 declick — in one lay.
+    this.layAmpTimeline(voice, endTime, now);
     // A finite source ends on its own → teardown; stolen/choked voices end after the fade.
     source.setOnEnded(() => this.teardown(spec.id));
     return voice;

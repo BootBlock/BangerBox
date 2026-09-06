@@ -62,11 +62,10 @@ describe('preview channel (spec §5.9)', () => {
     const amp = fake.nodes.filter((n) => n.nodeType === 'gain').at(-1) as unknown as {
       gain: { calls: { method: string; args: number[] }[] };
     };
-    // Declick: hold at 1s − DECLICK_FADE_MS, then ramp to zero exactly at the buffer's end.
-    expect(amp.gain.calls).toContainEqual({
-      method: 'cancelAndHoldAtTime',
-      args: [1 - DECLICK_FADE_MS / 1000],
-    });
+    // Declick: pin the level at 1s − DECLICK_FADE_MS, then ramp to zero exactly at the
+    // buffer's end. It cancels nothing — an audition's amp is a fresh node with nothing
+    // scheduled beyond its own unity, so there was never anything here to erase (issue #146).
+    expect(amp.gain.calls.map((c) => c.method)).not.toContain('cancelAndHoldAtTime');
     // …departing from unity, which is where the audition's own amp sits for its whole life.
     // Without this the fade interpolates from that opening `setValueAtTime` and the whole
     // audition decays — the same issue #144 defect the pool had, through the same helper.

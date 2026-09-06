@@ -17,12 +17,15 @@ import {
   renderLfoRateOffline,
   renderAmpEnvelopeLaneOffline,
   renderPreviewProfileOffline,
+  renderRetunedAmpProfileOffline,
+  RETUNE_PROFILE_TIMES,
   renderProgramNote,
   renderRampGuardOffline,
   type AmpEnvelopeLaneResult,
   type AmpProfileResult,
   type DelayEchoResult,
   type EffectRenderResult,
+  type RetunedAmpProfileResult,
 } from '@/core/audio/offlineTest';
 import { getActiveRepositories, loadOrCreateActiveProject, projectService } from '@/core/project';
 import { importDecodedSample } from '@/core/audio/sampleImport';
@@ -490,6 +493,24 @@ export interface VoiceReleaseResult {
   readonly liveRaceSounding: number;
   /** That pass's own peak, so a hit that never sounded cannot pass as one that was released. */
   readonly liveRacePeak: number;
+  /**
+   * Seconds that tap actually waited on its decode — 0 where it never raced one.
+   *
+   * The peak above is only a claim about the ENGINE where the race really happened: the voice
+   * sounds from its note-on to its note-off, so a decode that settles inside a render quantum
+   * leaves nothing to hear, on every build, by §5.4's own clamp. Without this the step asserts
+   * how fast the machine is (issue #146).
+   */
+  readonly liveRaceSeconds: number;
+  /**
+   * Whether that tap built a voice at ALL — the half {@link liveRaceSeconds} cannot answer.
+   *
+   * It reads 0 both for a decode that settled inside a render quantum and for a tap that
+   * reached no voice whatever, and only the second is a defect. Without this, a build where
+   * the note-off PREVENTED the voice would skip the peak assertion in silence, which is
+   * exactly what that assertion exists to catch (issue #146).
+   */
+  readonly liveRaceBuilt: boolean;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -659,6 +680,14 @@ export interface DeclickContourResult {
   readonly voiceProfile: AmpProfileResult;
   /** The same profile for a §5.9 audition, which declicks through the very same helper. */
   readonly previewProfile: AmpProfileResult;
+  /**
+   * The amp gain of a voice RETUNED twice while it sounds (issue #146). The profile above has
+   * no retune in it, and a retune is what moves the fade the §6 contour has to be read at — so
+   * this is the only reading in the repository that can say whether the contour still runs.
+   */
+  readonly retunedProfile: RetunedAmpProfileResult;
+  /** The moments `retunedProfile` samples, so a failure can name the one that moved. */
+  readonly retuneTimes: readonly number[];
   /** `DECLICK_FADE_MS` — the fade length §5.4 asks for, so a failure can quote its own budget. */
   readonly declickMs: number;
 }
@@ -2637,6 +2666,8 @@ async function declickContourProof(): Promise<DeclickContourResult> {
     sweptFinalMagnitude: swept.finalMagnitude,
     voiceProfile: await renderAmpProfileOffline(),
     previewProfile: await renderPreviewProfileOffline(),
+    retunedProfile: await renderRetunedAmpProfileOffline(),
+    retuneTimes: RETUNE_PROFILE_TIMES,
     declickMs: DECLICK_FADE_MS,
   };
 }
@@ -4713,6 +4744,8 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
   const NOTE_OFF_SECONDS = 0.125; // 240 ticks at 120 bpm — one §8.5.2 Grid cell
   const SHORT_RELEASE_MS = 20;
   const LONG_RELEASE_MS = 500;
+  /** The §6 release the decode-race tap uses — see where it is applied (issue #146). */
+  const RACE_RELEASE_MS = 150;
   const flat = engine.context.createBuffer(1, Math.floor(sampleRate * REGION_SECONDS), sampleRate);
   flat.getChannelData(0).fill(0.5);
   const sample = await importDecodedSample(flat, 'voice release probe', ['probe'], {
@@ -4838,17 +4871,29 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
   // bounces above decode into `bounceService`'s cache, not this one. The first hit of a pad
   // waits on that decode, so a tap short enough to end before the promise settles used to
   // release a voice that did not exist yet — and a §7.6 live hit carries no length, so the
-  // voice then sustained for the whole 1.2 s region rather than the 20 ms release.
+  // voice then sustained for the whole 1.2 s region rather than its own §6 release.
+  //
+  // It uses `RACE_RELEASE_MS` rather than the 20 ms above, because the §5.8 meter reports the
+  // peak of its LAST render quantum and `soundingOver` polls every 16 ms: a burst of a
+  // 10 ms decode plus a 20 ms release is shorter than the gap between two polls, so whether
+  // the reading lands on it at all is a lottery — the same tap has been seen at 0.16703,
+  // 0.05568, 0.01856 and 0.00000 with the engine identical call for call (issue #146). The
+  // race under test is `heldLiveNotes`, not the release LENGTH, which the two bounces above
+  // already prove at 0.0190 s and 0.4750 s; a burst several polls long makes the reading a
+  // measurement rather than a coin toss, and stays far short of the whole region.
   editPad({
     playbackMode: 'poly',
     envelopes: {
       ...basePad.envelopes,
-      amp: { ...basePad.envelopes.amp, release: SHORT_RELEASE_MS },
+      amp: { ...basePad.envelopes.amp, release: RACE_RELEASE_MS },
     },
   });
+  const notesBefore = engine.scheduledNoteCount();
   engine.triggerLiveNote(trackId, 0, 100, true);
   engine.triggerLiveNote(trackId, 0, 0, false);
   const race = await soundingOver(1_500);
+  const raceSeconds = engine.liveRaceSeconds();
+  const raceBuilt = engine.scheduledNoteCount() > notesBefore;
   await delay(400);
 
   const livePass = async (): Promise<{ fraction: number; peak: number }> => {
@@ -4887,6 +4932,8 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
     livePeak: Math.max(poly.peak, oneShotLive.peak),
     liveRaceSounding: race.fraction,
     liveRacePeak: race.peak,
+    liveRaceSeconds: raceSeconds,
+    liveRaceBuilt: raceBuilt,
   };
 }
 
