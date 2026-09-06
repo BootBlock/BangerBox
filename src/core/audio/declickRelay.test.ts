@@ -138,6 +138,25 @@ describe('VoicePool — the §5.4 declick re-lay (issue #146)', () => {
     pool.destroy();
   });
 
+  it('erases from where this lay BEGINS, never from the old fade start', () => {
+    // The one cancel a lay makes, and the whole reason it sits where it does.
+    // `cancelAndHoldAtTime` truncates the ramp it finds at or after the cancel time and
+    // REPLACES it with a held value — so cancelling at the old fade start leaves the stretch
+    // before it described by that held value alone, and the next lay, cancelling earlier
+    // still, removes it and the stretch with it. Cancelling where this lay begins finds the
+    // previous span's closing ramp instead, which truncates correctly.
+    //
+    // The §11.3 fake context records the call rather than performing it, so this is the half a
+    // unit test can see. What the param then HOLDS is `declickContourProof`'s retuned profile.
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    pool.trigger(spec(context, { id: 'erase', when: 0, startFrame: 0, endFrame: 2_880, amp: SLOW_DECAY }));
+    pool.applyProgramDetune('p1', -1200, 0.01);
+    const cancels = paramCalls(ampGain(fake)).filter((c) => c.method === 'cancelAndHoldAtTime');
+    expect(cancels.at(-1)?.args[0]).toBeCloseTo(0.01, 6); // the retune, not the 57 ms fade start
+    pool.destroy();
+  });
+
   it('departs a §5.4 steal after a re-lay from the running contour, not the frozen one', () => {
     // §14 `(az)` item (12) made `ampLevelNow` clamp to `contourFrozenAt` so this file kept ONE
     // model of the timeline, and said plainly that whether the model was right at all was this
