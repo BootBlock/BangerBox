@@ -335,7 +335,11 @@ export interface KeygroupMixResult {
    * realisation alone would leave the other at unity and read ×0.625.
    */
   readonly reloadedRms: number;
-  /** The same bounce at unity with the SECOND track's own fader closed — one of two voices. */
+  /**
+   * The same bounce as {@link reloadedRms} with the SECOND track's own fader closed — one of
+   * two unison voices, so ×0.5 of that one. It is read against the reloaded render rather
+   * than against unity so the keygroup's own fader stays where the save put it.
+   */
   readonly secondTrackClosedRms: number;
   /** The §6 payload on disk after a pan, a send and an insert were committed and saved. */
   readonly onDisk: PadStripReading;
@@ -3151,8 +3155,9 @@ async function keygroupMixProof(engine: AudioEngine): Promise<KeygroupMixResult>
   const reloadedRms = await measure();
 
   // 3 — the two tracks are genuinely separate §5.2 realisations, so each track's OWN strip
-  // still moves only its own voices. Half of two coherent unison voices.
-  setFader(keygroupChannel, 1);
+  // still moves only its own voices: half of two coherent unison voices. Measured against
+  // the render above rather than against unity, so the keygroup fader stays where the save
+  // put it and the §6 payload read below is the one the reload restored.
   setFader(`track:${secondTrackId}`, 0);
   const secondTrackClosedRms = await measure();
   setFader(`track:${secondTrackId}`, 1);

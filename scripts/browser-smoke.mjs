@@ -980,10 +980,11 @@ async function assertShellAndSelfTest(page, label) {
       );
     }
     // Each track still owns its own §5.2 realisation, so its own strip moves only its voices.
-    const trackRatio = r.secondTrackClosedRms / r.bothTracksRms;
+    // Against the reloaded render, which is the one it was measured beside.
+    const trackRatio = r.secondTrackClosedRms / r.reloadedRms;
     if (Math.abs(trackRatio - 0.5) > 0.03) {
       throw new Error(
-        `closing the second track's fader rendered ${trackRatio.toFixed(4)} of both — one of two unison voices is 0.5`,
+        `closing the second track's fader rendered ${trackRatio.toFixed(4)} of both tracks — one of two unison voices is 0.5`,
       );
     }
     if (r.liveRealisations !== 2) {
