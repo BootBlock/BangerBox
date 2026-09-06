@@ -72,6 +72,12 @@ function departure(gain: FakeParam): { level: number; at: number } {
   return { level: last.args[0]!, at: last.args[1]! };
 }
 
+/** Whether the nth voice's source has had `stop()` scheduled — a §5.4 steal, choke or mono cut. */
+function sourceStopped(fake: FakeAudioContext, index: number): boolean {
+  const sources = fake.nodes.filter((n) => n.nodeType === 'bufferSource');
+  return (sources[index] as unknown as { stopped: boolean }).stopped;
+}
+
 /** Every ramp on an amp param that reaches zero, in the order they were scheduled. */
 function fadesToZero(gain: FakeParam): number[] {
   return gain.calls
@@ -203,15 +209,17 @@ describe('a voice is released (spec §5.4, issue #145)', () => {
   });
 
   it('steals a voice whose note-off has PASSED before an older one still sustaining', () => {
-    const { context } = createFakeAudioContext();
+    const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context, 2);
     // spec §5.4 steals the oldest RELEASED voice first. A note-off laid ahead of time has
-    // released nothing yet, so the oldest voice must not be judged released by carrying one.
+    // released nothing yet, so the oldest voice must not be judged released merely by carrying
+    // one — that would steal the loudest voice in the pool every time.
     pool.trigger(spec(context, { id: 'oldest', when: 0, durationSec: 3 }));
     pool.trigger(spec(context, { id: 'newer', when: 0.5, durationSec: 0.1 }));
     // At 1 s the newer voice's note-off has passed and the older one's has not.
     pool.trigger(spec(context, { id: 'third', when: 1 }));
-    expect(pool.activeVoiceCount()).toBe(3); // the stolen voice is torn down on its own fade
+    expect(sourceStopped(fake, 0)).toBe(false);
+    expect(sourceStopped(fake, 1)).toBe(true);
     pool.destroy();
   });
 });
