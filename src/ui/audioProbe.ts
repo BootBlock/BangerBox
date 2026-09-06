@@ -32,6 +32,7 @@ import {
   createDefaultChannelStrip,
   createDefaultDrumProgram,
   createDefaultKeygroupProgram,
+  createDefaultKeygroupZone,
   createDefaultPad,
   createDefaultSequence,
   createDefaultTrack,
@@ -40,6 +41,7 @@ import {
   type EffectType,
   type InsertSlotState,
   automationLaneKey,
+  type KeygroupProgram,
   type KeygroupZone,
   type Pad,
   type ProjectPayload,
@@ -193,6 +195,9 @@ export interface AudioProbe {
   padLaneProof: () => Promise<PadLaneResult>;
   /** A §7.8 lane on a §6 amp-envelope TIME shapes the voices it reaches (§6, §7.8, #143). */
   ampEnvelopeLaneProof: () => Promise<AmpEnvelopeLaneProofResult>;
+  /** A keygroup's §6 program-scope mixer is reachable, persists and reaches every track
+   * playing it (§4.2, §5.2, §6, §9.3, #139). */
+  keygroupMixProof: () => Promise<KeygroupMixResult>;
 }
 
 /**
@@ -309,6 +314,43 @@ export interface PadStripResult {
   readonly afterReload: PadStripReading;
   /** RMS of the same bounce with the TRACK strip soloed, and the pad strips present (§5.2). */
   readonly soloedTrackRms: number;
+}
+
+/** Outcome of the keygroup program-scope mixer proof (see {@link AudioProbe.keygroupMixProof}). */
+export interface KeygroupMixResult {
+  /** The §4.2 channel a keygroup's program-scope mixer answers to, so a failure names it. */
+  readonly keygroupChannel: string;
+  /** Whether a §4.2 strip exists for it on a freshly loaded project. False is the defect. */
+  readonly stripPresentOnLoad: boolean;
+  /** What the fader commit put on the strip. −1 when `commit` found no strip to write. */
+  readonly committedLevel: number;
+  /** What the strip read after `saveNow()` and a reload — the persistence half. */
+  readonly reloadedLevel: number;
+  /** RMS of a §9.5 bounce with everything at unity: two tracks, one keygroup, in unison. */
+  readonly bothTracksRms: number;
+  /**
+   * The same bounce after the KEYGROUP strip's fader was committed to 0.8, saved and
+   * reloaded. ×0.2512 of the above says three things at once: the edit reached the store,
+   * it survived the round trip, and the one strip reached BOTH tracks' realisations — one
+   * realisation alone would leave the other at unity and read ×0.625.
+   */
+  readonly reloadedRms: number;
+  /** The same bounce at unity with the SECOND track's own fader closed — one of two voices. */
+  readonly secondTrackClosedRms: number;
+  /** The §6 payload on disk after a pan, a send and an insert were committed and saved. */
+  readonly onDisk: PadStripReading;
+  /** The §4.2 strip after the reload that followed — the same four values, read back. */
+  readonly afterReload: PadStripReading;
+  /**
+   * §5.8 master peak on a live pass with an 80 Hz lowpass in the keygroup's own insert rack,
+   * placed before either realisation existed — so it arrives only through
+   * `AudioBridge.seedChannel`. Two octaves below the 1 kHz tone.
+   */
+  readonly livePeakFiltered: number;
+  /** The same pass with that insert removed — the tone through an open chain. */
+  readonly livePeakOpen: number;
+  /** §5.2 pad channels the LIVE graph holds under that one id: one per track that played it. */
+  readonly liveRealisations: number;
 }
 
 /** Outcome of the §5.2 shared-pad-channel proof (see {@link AudioProbe.sharedPadChannelProof}). */
@@ -2950,6 +2992,259 @@ async function padStripProof(engine: AudioEngine): Promise<PadStripResult> {
 }
 
 /**
+ * A KEYGROUP program's §6 program-scope mixer is REACHABLE, it PERSISTS, and one strip
+ * reaches every track playing it (issue #139, spec §4.2, §5.2, §6, §9.3, §9.5).
+ *
+ * §6 gives a keygroup one `mixer` and one `inserts` rather than per-pad ones, and
+ * `resolveKeygroupVoice` has always merged its voices into `pad:<programId>:0` — so
+ * `ensureProgramChannel` seeded those values from the payload and they SOUNDED, live and in
+ * every bounce. Nothing could change them: `padStripsForProgram` published no §4.2 strip
+ * there, so `useMixerStore.commit` found none and returned before writing, and §8.5.6's Pads
+ * tab rendered no control at all. A control that sounds and cannot be reached is §3.4's
+ * mirror image of a dead one, so "it is reachable now" is an audio claim and is measured
+ * rather than inspected (spec §11.2, §13.5).
+ *
+ * TWO tracks play the one keygroup program in unison, which answers the second question in
+ * the same renders. §14 (av) realises a `pad:` channel once per track, so the keygroup has
+ * two — and the ONE strip has to reach both. That is what the ×0.2512 reading says: a fader
+ * reaching one realisation of two would leave the other at unity and render ×0.625.
+ *
+ * The probe owns its whole arrangement as real §9.3 ROWS — its own program, sequence and two
+ * tracks — because a save and a reload are two of the things it is about, so nothing it
+ * measures may be hydrated into the stores and left there. It deletes them and reloads:
+ * `installAudioProbe` runs in production builds.
+ */
+async function keygroupMixProof(engine: AudioEngine): Promise<KeygroupMixResult> {
+  const { bounceActiveSequence } = await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+  const { channelLevelPath, channelPanPath, channelSendPath, insertParamPath } =
+    await import('@/core/audio/params/registry');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const repos = getActiveRepositories();
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A tenth-second 1 kHz tone through a program with no envelope shaping and no §6 filter, so
+  // what a render measures is the strip and nothing else. 0.3 leaves headroom for two of them
+  // summing — a §9.5 WAV is written at the §9.3 bit depth and would clip at 1.0, which would
+  // cost the linearity every ratio below depends on.
+  const tone = engine.context.createBuffer(1, Math.floor(sampleRate * 0.1), sampleRate);
+  const toneData = tone.getChannelData(0);
+  for (let i = 0; i < toneData.length; i += 1) {
+    toneData[i] = 0.3 * Math.sin((2 * Math.PI * 1_000 * i) / sampleRate);
+  }
+  const sample = await importDecodedSample(tone, 'keygroup mix probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  const base = createDefaultKeygroupProgram('Keygroup mix probe');
+  const program: KeygroupProgram = {
+    ...base,
+    // Root note 60 played at note 60: unity pitch, so the tone stays at 1 kHz and its length
+    // stays a tenth of a second. A repitch here would move both and read as a level change.
+    zones: [createDefaultKeygroupZone(sample.id, 60)],
+    envelopes: {
+      ...base.envelopes,
+      amp: { ...base.envelopes.amp, attack: 0, hold: 0, decay: 0, sustain: 1, release: 1 },
+    },
+  };
+  const keygroupChannel = `pad:${program.id}:0`;
+
+  const sequence = { ...createDefaultSequence(projectId, 95, 'Keygroup mix probe'), lengthBars: 1 };
+  const firstTrackId = crypto.randomUUID();
+  const secondTrackId = crypto.randomUUID();
+
+  await repos.programs.create({
+    id: program.id,
+    project_id: projectId,
+    name: program.name,
+    type: 'keygroup',
+    payload: JSON.stringify(program),
+  });
+  await repos.sequences.create({
+    id: sequence.id,
+    project_id: projectId,
+    position: sequence.position,
+    name: sequence.name,
+    length_bars: sequence.lengthBars,
+    time_sig_numerator: sequence.timeSig.numerator,
+    time_sig_denominator: sequence.timeSig.denominator,
+    // A probe that places its windows in seconds gives its sequence its own §9.3 tempo:
+    // `activeSequenceSegments` otherwise falls back to whatever tempo an earlier step left.
+    tempo: 120,
+    swing_amount: sequence.swingAmount,
+    swing_division: sequence.swingDivision,
+  });
+  for (const [position, id] of [firstTrackId, secondTrackId].entries()) {
+    await repos.tracks.create({
+      id,
+      sequence_id: sequence.id,
+      program_id: program.id, // BOTH tracks, one keygroup — the second half of the question
+      position,
+      name: `Keygroup mix probe ${position === 0 ? 'first' : 'second'}`,
+      type: 'keygroup',
+      mixer: JSON.stringify(createDefaultChannelStrip(`track:${id}`)),
+    });
+    // One bar of 4/4 at 960 PPQN is 3840 ticks and, at 120 bpm, two seconds. The two tracks
+    // hit note 60 in UNISON, so every hit is two coherent voices and removing one halves it.
+    await repos.midiEvents.replaceTrack(
+      id,
+      [0, 960, 1_920, 2_880].map((tick) => ({
+        id: crypto.randomUUID(),
+        track_id: id,
+        tick_start: tick,
+        duration_ticks: 120,
+        note: 60,
+        velocity: 100,
+        extra: null,
+      })),
+    );
+  }
+
+  /** Re-read every row, then select the probe's own program and sequence (spec §4.4). */
+  const reload = async (): Promise<void> => {
+    await projectService.loadProject(projectId);
+    useProgramStore.getState().setActiveProgram(program.id);
+    const transport = useTransportStore.getState();
+    transport.setActiveSequenceId(sequence.id);
+    transport.setPlaybackMode('sequence');
+    transport.setMetronomeEnabled(false);
+    transport.setCountInBars(0);
+    transport.setRecording(false);
+    transport.setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+    commitTempo(120);
+  };
+  await reload();
+
+  // 1 — is there a strip at all? The project has just been loaded and the program selected
+  // exactly as hydration selects one; nothing has switched away from it and back.
+  const stripPresentOnLoad = useMixerStore.getState().channels[keygroupChannel] !== undefined;
+
+  /** Render the active sequence and measure the WAV back over real OPFS (spec §9.5, §11.2). */
+  const measure = async (): Promise<number> => {
+    const path = await bounceActiveSequence('probe-keygroup-mix', ctx);
+    const decoded = decodeWav(new Uint8Array(await (await readFile(path)).arrayBuffer()));
+    const left = decoded.channels[0]!;
+    const right = decoded.channels[1] ?? left;
+    const mono = new Float32Array(left.length);
+    for (let i = 0; i < mono.length; i += 1) mono[i] = (left[i]! + right[i]!) / 2;
+    return rmsBetween(mono, decoded.sampleRate, 0, 2);
+  };
+  const setFader = (channelId: string, level: number): void => {
+    useMixerStore.getState().commit(channelLevelPath(channelId), level);
+  };
+
+  const bothTracksRms = await measure();
+
+  // 2 — the audible half, and the two-track half in one reading. 0.8 on the §8.5.6 fader law
+  // is −12 dB, a quarter of the amplitude, and it has to apply to BOTH tracks' realisations.
+  setFader(keygroupChannel, 0.8);
+  const committedLevel = useMixerStore.getState().channels[keygroupChannel]?.level ?? -1;
+  await projectService.saveNow();
+  await reload();
+  const reloadedLevel = useMixerStore.getState().channels[keygroupChannel]?.level ?? -1;
+  const reloadedRms = await measure();
+
+  // 3 — the two tracks are genuinely separate §5.2 realisations, so each track's OWN strip
+  // still moves only its own voices. Half of two coherent unison voices.
+  setFader(keygroupChannel, 1);
+  setFader(`track:${secondTrackId}`, 0);
+  const secondTrackClosedRms = await measure();
+  setFader(`track:${secondTrackId}`, 1);
+
+  // 4 — the other three fields, into the §9.3 column and back onto the strip. The insert is
+  // an 80 Hz lowpass rather than a delay because the live pass below measures it too.
+  const mixer = () => useMixerStore.getState();
+  mixer().commit(channelPanPath(keygroupChannel), -0.5);
+  mixer().commit(channelSendPath(keygroupChannel, 1), 0.6);
+  const added = mixer().addInsert(keygroupChannel, 'filter');
+  const filterIndex =
+    mixer().channels[keygroupChannel]?.inserts.findIndex((slot) => slot.effectType !== null) ?? -1;
+  const filterSlotId = mixer().channels[keygroupChannel]?.inserts[filterIndex]?.id;
+  if (!added.ok || filterIndex < 0 || filterSlotId === undefined) {
+    throw new Error(
+      'keygroupMixProof: the keygroup strip took no insert, so it has no rack to reach at all.',
+    );
+  }
+  // §7.8 numbers a slot 1-based over the §4.2 array (spec §7.8, §14 (ar)).
+  mixer().commit(insertParamPath(keygroupChannel, filterIndex + 1, 'cutoff'), 80);
+  await projectService.saveNow();
+
+  const savedRow = await repos.programs.getById(program.id);
+  if (savedRow === undefined) throw new Error('keygroupMixProof: the probe program lost its row.');
+  const savedProgram = JSON.parse(savedRow.payload) as KeygroupProgram;
+  const onDisk = padStripReading(savedProgram.mixer, savedProgram.inserts);
+
+  await reload();
+  const strip = useMixerStore.getState().channels[keygroupChannel];
+  const afterReload = padStripReading(strip, strip?.inserts);
+
+  // 5 — the LIVE path. `bounceService` and `AudioEngine` build the same graph through the
+  // same factories but by their own routes, so the §5.8 master tap is read as well as the
+  // file. Nothing has played live yet — every bounce above built its own offline graph — so
+  // the engine holds no realisation of this channel and the 80 Hz lowpass reloaded above can
+  // only arrive through `AudioBridge.seedChannel`.
+  const peakOver = async (ms: number): Promise<number> => {
+    const slot = engine.meterRegistry.slotOf('master');
+    let peak = 0;
+    const until = performance.now() + ms;
+    while (performance.now() < until) {
+      if (slot !== undefined) {
+        const reading = engine.meterRegistry.read(slot);
+        peak = Math.max(peak, reading.peakL, reading.peakR);
+      }
+      await delay(16);
+    }
+    return peak;
+  };
+
+  const transport = () => useTransportStore.getState();
+  transport().play();
+  await delay(300); // past the first beat, so the meter is reading programme material
+  const livePeakFiltered = await peakOver(1_400);
+  const reloadedSlotId = useMixerStore
+    .getState()
+    .channels[keygroupChannel]?.inserts.find((slot) => slot.effectType !== null)?.id;
+  if (reloadedSlotId !== undefined) mixer().removeInsert(keygroupChannel, reloadedSlotId);
+  await delay(300);
+  const livePeakOpen = await peakOver(1_400);
+  transport().stop();
+  await delay(200);
+
+  // How many §5.2 channels the live graph holds under the one §4.2 id — one per track that
+  // played the program, which is the structural half of the same statement.
+  const liveRealisations = engine.graph.channelsFor(keygroupChannel).length;
+
+  // Put the project back: the probe's own rows go, and the load takes its stores with them.
+  // The sequence cascades to both tracks and each track to its events (spec §9.3). The save
+  // first, because §14 (aj) makes `loadProject` REFUSE over unsaved work.
+  await projectService.saveNow();
+  await repos.sequences.remove(sequence.id);
+  await repos.programs.remove(program.id);
+  await projectService.loadProject(projectId);
+
+  return {
+    keygroupChannel,
+    stripPresentOnLoad,
+    committedLevel,
+    reloadedLevel,
+    bothTracksRms,
+    reloadedRms,
+    secondTrackClosedRms,
+    onDisk,
+    afterReload,
+    livePeakFiltered,
+    livePeakOpen,
+    liveRealisations,
+  };
+}
+
+/**
  * A deleted track stops sounding, and leaves nothing behind (spec §7.1.3, §7.5, §7.8, #137).
  *
  * `subscribeSequencerSync`'s events subscriber only ever iterated the keys it was handed, so
@@ -4338,6 +4633,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     sequenceFilterProof: () => sequenceFilterProof(engine),
     trackWithdrawalProof: () => trackWithdrawalProof(engine),
     sharedPadChannelProof: () => sharedPadChannelProof(engine),
+    keygroupMixProof: () => keygroupMixProof(engine),
     padLaneProof: () => padLaneProof(engine),
     ampEnvelopeLaneProof: () => ampEnvelopeLaneProof(engine),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),

@@ -937,6 +937,89 @@ async function assertShellAndSelfTest(page, label) {
     );
   });
 
+  // A keygroup program's §6 program-scope mixer SOUNDED and nothing could edit it (#139).
+  // `ensureProgramChannel` seeds `pad:<programId>:0` from the payload, so its fader, pan,
+  // sends and insert rack were audible live and in every bounce — while `padStripsForProgram`
+  // published no §4.2 strip there, so `useMixerStore.commit` returned before writing and
+  // §8.5.6 rendered no control at all. That is §3.4's mirror image of a dead control, so
+  // "it is reachable now" is an audio claim and is measured in the file (spec §11.2, §13.5).
+  //
+  // TWO tracks play the one keygroup in unison, which answers the second question in the same
+  // renders: §14 (av) realises a `pad:` channel once per track, and the ONE strip has to reach
+  // both. A fader reaching one realisation of two would render ×0.625, not ×0.2512.
+  //
+  // It sits HERE, beside the pad-strip step, because both end on a fresh `loadProject` and
+  // the steps below them read the arrangement an earlier probe left in the stores.
+  await step(`${label}: a keygroup's program-scope mixer is reachable and persists (#139)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.keygroupMixProof());
+    if (!r.stripPresentOnLoad) {
+      throw new Error(
+        `no strip for ${r.keygroupChannel} on a freshly loaded project — every §8.5.6 control for the keygroup is inert while its §6 values sound`,
+      );
+    }
+    // A gesture that reached nothing would leave every number below at its default, so the
+    // committed value is asserted first: without it the reload check could pass while proving
+    // nothing at all.
+    if (Math.abs(r.committedLevel - 0.8) > 0.001) {
+      throw new Error(`the fader commit put the keygroup strip at ${r.committedLevel} — expected 0.8`);
+    }
+    if (Math.abs(r.reloadedLevel - 0.8) > 0.001) {
+      throw new Error(`the keygroup strip read ${r.reloadedLevel} after a save and reload — expected 0.8`);
+    }
+    if (!(r.bothTracksRms > 0.01)) {
+      throw new Error(
+        `the unedited bounce is silent (${r.bothTracksRms.toFixed(5)} RMS) — the keygroup sounded nothing`,
+      );
+    }
+    // §8.5.6's law maps 0.8 to −12 dB, which is 10^(-12/20) = 0.2512 of the amplitude — and
+    // it has to apply to BOTH tracks' realisations of the one channel (#141, #139).
+    const faderRatio = r.reloadedRms / r.bothTracksRms;
+    if (Math.abs(faderRatio - 0.2512) > 0.02) {
+      throw new Error(
+        `the keygroup fader rendered at ${faderRatio.toFixed(4)} of unity — −12 dB is 0.2512, and ~0.625 means it reached one of the two tracks`,
+      );
+    }
+    // Each track still owns its own §5.2 realisation, so its own strip moves only its voices.
+    const trackRatio = r.secondTrackClosedRms / r.bothTracksRms;
+    if (Math.abs(trackRatio - 0.5) > 0.03) {
+      throw new Error(
+        `closing the second track's fader rendered ${trackRatio.toFixed(4)} of both — one of two unison voices is 0.5`,
+      );
+    }
+    if (r.liveRealisations !== 2) {
+      throw new Error(
+        `the live graph holds ${r.liveRealisations} channels under ${r.keygroupChannel} — two tracks play it, so it is 2`,
+      );
+    }
+    for (const [where, reading] of [
+      ['the §6 payload on disk', r.onDisk],
+      ['the strip after a reload', r.afterReload],
+    ]) {
+      const wrong = [];
+      if (Math.abs(reading.level - 0.8) > 0.001) wrong.push(`level ${reading.level}`);
+      if (Math.abs(reading.pan + 0.5) > 0.001) wrong.push(`pan ${reading.pan}`);
+      if (Math.abs(reading.send1 - 0.6) > 0.001) wrong.push(`send 2 ${reading.send1}`);
+      if (reading.insertType !== 'filter') wrong.push(`insert ${String(reading.insertType)}`);
+      if (wrong.length > 0) throw new Error(`${where} carries ${wrong.join(', ')}`);
+    }
+    // The live half, through `AudioEngine` rather than `bounceService`. The 80 Hz lowpass was
+    // in the rack before either realisation existed, so it reaches them only through
+    // `AudioBridge.seedChannel` — two octaves below the 1 kHz tone.
+    if (!(r.livePeakOpen > 0.02)) {
+      throw new Error(
+        `the live pass peaked at ${r.livePeakOpen.toFixed(5)} with an open chain — nothing sounded`,
+      );
+    }
+    if (!(r.livePeakFiltered < r.livePeakOpen * 0.25)) {
+      throw new Error(
+        `an 80 Hz lowpass in the keygroup's own rack left ${r.livePeakFiltered.toFixed(5)} against ${r.livePeakOpen.toFixed(5)} open — the insert reached nothing`,
+      );
+    }
+    console.log(
+      `       keygroup mix: bounce ${r.bothTracksRms.toFixed(5)} → ${r.reloadedRms.toFixed(5)} RMS (×${faderRatio.toFixed(4)}) after a save and reload, second track closed ${r.secondTrackClosedRms.toFixed(5)} (×${trackRatio.toFixed(4)}), ${r.liveRealisations} realisations; disk and strip both read 0.8 / −0.5 / 0.6 / filter; live peak ${r.livePeakFiltered.toFixed(5)} filtered → ${r.livePeakOpen.toFixed(5)} open`,
+    );
+  });
+
   // A deleted track kept sounding until the project was reloaded (#137): the sender's events
   // subscriber never handled a removed key, where the automation subscriber beside it does,
   // so `removeTrack` told the worker nothing. The unit tests drive the core with an injected
