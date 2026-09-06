@@ -1,0 +1,55 @@
+name: Close outside pull requests
+
+# BangerBox does not take unsolicited pull requests (see CONTRIBUTING.md), so this
+# closes them on arrival with an explanation rather than leaving them to go stale.
+#
+# `pull_request_target`, not `pull_request`: a fork's `pull_request` run gets a
+# read-only token and cannot close anything. `pull_request_target` runs in the base
+# repository's context with a writable token, which is only safe because this job
+# never checks out, builds or executes the pull request's code. It reads event
+# metadata and calls the API. Do not add a checkout step here.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+# Least-privilege: closing and commenting on a pull request needs nothing else.
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    name: Close and explain
+    runs-on: ubuntu-latest
+    # Two separate exemptions, because they are two different things:
+    #
+    # 1. Bots. Dependabot's `author_association` is CONTRIBUTOR — the *same* value an
+    #    outside human gets — so associations alone cannot tell them apart and a filter
+    #    that ignored this would close every dependency update. Any bot able to open a
+    #    pull request here was installed by the repository owner, so account type is the
+    #    right discriminator.
+    # 2. People with write access. OWNER covers BootBlock, COLLABORATOR anyone invited,
+    #    and MEMBER an organisation's members should this repository ever move into one.
+    if: >-
+      github.event.pull_request.user.type != 'Bot' &&
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+      github.event.pull_request.author_association)
+    steps:
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Written out here rather than inline in the `run` block so that nothing from
+          # the event payload is ever interpolated into the shell command itself.
+          MESSAGE: |
+            Thanks for taking the time to look at BangerBox.
+
+            This repository does not accept unsolicited pull requests, so this one is
+            being closed automatically. It is not a judgement on the change — BangerBox
+            is built against a single binding specification by one maintainer, and
+            patches that arrive outside that process cost more to reconcile than to
+            write. See CONTRIBUTING.md for the reasoning.
+
+            Bug reports and observations are genuinely welcome as issues. If you have
+            found something broken, please open one.
+        run: gh pr close "$PR_NUMBER" --comment "$MESSAGE"
