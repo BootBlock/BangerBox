@@ -1,32 +1,56 @@
 /**
- * The mapping between a §6 pad and its §4.2 channel strip, in both directions (spec §4.2,
- * §6, §8.5.6). A drum program stores each pad's mixer values and insert slots inside its §6
- * payload; the Mixer mode edits *channel strips*. This is the single place that translates,
- * so the Mixer's "pads" tab, the §9.3 `programs.payload` and the graph agree on the channel
- * id form (`pad:<programId>:<padIndex>`) and on the values.
+ * The mapping between a §6 program's own mixer values and its §4.2 channel strips, in both
+ * directions (spec §4.2, §6, §8.5.6). §6 stores those values inside the program payload —
+ * per pad for a drum program, once at PROGRAM scope for a keygroup — while the Mixer mode
+ * edits *channel strips*. This is the single place that translates, so §8.5.6's Pads tab,
+ * the §9.3 `programs.payload` and the graph agree on the channel id form
+ * (`pad:<programId>:<padIndex>`) and on the values.
  *
  * Both directions live here deliberately: a write-back is the forward mapping run the other
  * way, and splitting the two is how the pair drifts as §6 or §4.2 gains a field.
  *
+ * **A keygroup projects onto exactly ONE strip**, at {@link KEYGROUP_PAD_INDEX} (issue
+ * #139). Its `mixer` and `inserts` have the same §6 shape a pad's do and its voices have
+ * always merged into `pad:<programId>:0`, so this is the same projection of a
+ * different §6 record rather than a second rule — which is why {@link withStripEdit} is one
+ * function over both.
+ *
  * Pure — no store or audio access — so the mapping is unit-testable (spec §2.5).
  */
+import { KEYGROUP_PAD_INDEX, programChannelId } from '@/core/audio/programVoice';
 import type { ChannelStrip, InsertSlotState, Pad, Program, SendLevels } from '@/core/project/schemas';
 
 /**
- * Channel strips for every assigned pad of a drum program. Keygroup programs have a single
- * program-scope mixer rather than per-pad strips (spec §6), so they contribute none.
+ * The §6 record a §4.2 strip projects from: a drum {@link Pad}, or a whole keygroup
+ * program. §6 gives both the same two members, which is what lets one mapping serve them.
  */
-export function padStripsForProgram(program: Program | undefined): ChannelStrip[] {
-  if (!program || program.type !== 'drum') return [];
-  return program.pads.map((pad) => ({
-    id: `pad:${program.id}:${pad.padIndex}`,
-    level: pad.mixer.level,
-    pan: pad.mixer.pan,
+type StripSource = Pick<Pad, 'mixer' | 'inserts'>;
+
+/** One §4.2 strip over a §6 record's mixer values (spec §4.2). */
+function stripOf(channelId: string, source: StripSource): ChannelStrip {
+  return {
+    id: channelId,
+    level: source.mixer.level,
+    pan: source.mixer.pan,
+    // §6 defines no `mute` or `solo` for either record, so both are session state on the
+    // strip — see the module note in `padStripMirror`.
     mute: false,
     solo: false,
-    sendLevels: [...pad.mixer.sendLevels] as SendLevels,
-    inserts: pad.inserts,
-  }));
+    sendLevels: [...source.mixer.sendLevels] as SendLevels,
+    inserts: source.inserts,
+  };
+}
+
+/**
+ * Channel strips for a program's own §5.2 channels: one per assigned pad of a drum program,
+ * or the single program-scope strip of a keygroup (spec §4.2, §6).
+ */
+export function padStripsForProgram(program: Program | undefined): ChannelStrip[] {
+  if (!program) return [];
+  if (program.type === 'keygroup') {
+    return [stripOf(programChannelId(program.id, KEYGROUP_PAD_INDEX), program)];
+  }
+  return program.pads.map((pad) => stripOf(programChannelId(program.id, pad.padIndex), pad));
 }
 
 /**
@@ -40,8 +64,8 @@ export function padStripsForProgram(program: Program | undefined): ChannelStrip[
  * unrelated touch of that strip's pan. Reporting only what changed is the same rule
  * `transportMirror` follows for the §4.2 tempo mirror and `mixerSync` for the graph.
  *
- * `mute` and `solo` are absent from the result because §6's `Pad.mixer` has no field for
- * them — see the module note in `padStripMirror`.
+ * `mute` and `solo` are absent from the result because §6 has no field for them on either
+ * record — see the module note in `padStripMirror`.
  */
 export interface PadStripEdit {
   readonly level?: number;
@@ -76,19 +100,26 @@ export function padStripEdit(strip: ChannelStrip, previous: ChannelStrip | undef
   return Object.keys(edit).length === 0 ? null : edit;
 }
 
-/** Apply a {@link PadStripEdit} to a §6 pad, returning the same pad when nothing moves. */
-export function padWithStripEdit(pad: Pad, edit: PadStripEdit): Pad {
-  const level = edit.level ?? pad.mixer.level;
-  const pan = edit.pan ?? pad.mixer.pan;
-  const sendLevels = edit.sendLevels ?? pad.mixer.sendLevels;
-  const inserts = edit.inserts ?? pad.inserts;
+/**
+ * Apply a {@link PadStripEdit} to the §6 record that owns the values, returning the SAME
+ * record when nothing moves.
+ *
+ * One function over both §6 shapes rather than one each, because it is one rule: a drum
+ * {@link Pad} and a keygroup program carry the same `mixer` and `inserts` members, so a
+ * second copy could only ever drift from this one (issue #139).
+ */
+export function withStripEdit<T extends StripSource>(source: T, edit: PadStripEdit): T {
+  const level = edit.level ?? source.mixer.level;
+  const pan = edit.pan ?? source.mixer.pan;
+  const sendLevels = edit.sendLevels ?? source.mixer.sendLevels;
+  const inserts = edit.inserts ?? source.inserts;
   if (
-    level === pad.mixer.level &&
-    pan === pad.mixer.pan &&
-    sendLevels === pad.mixer.sendLevels &&
-    inserts === pad.inserts
+    level === source.mixer.level &&
+    pan === source.mixer.pan &&
+    sendLevels === source.mixer.sendLevels &&
+    inserts === source.inserts
   ) {
-    return pad;
+    return source;
   }
-  return { ...pad, mixer: { level, pan, sendLevels }, inserts };
+  return { ...source, mixer: { level, pan, sendLevels }, inserts };
 }

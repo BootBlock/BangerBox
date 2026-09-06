@@ -38,7 +38,8 @@ import {
   type Range,
   type VelocityLayer,
 } from '@/core/project/schemas';
-import { padWithStripEdit, type PadStripEdit } from './padStrips';
+import { KEYGROUP_PAD_INDEX } from '@/core/audio/programVoice';
+import { withStripEdit, type PadStripEdit } from './padStrips';
 import { recordParamGesture } from './automationRecord';
 import {
   anyTransientInFlight,
@@ -96,8 +97,10 @@ interface ProgramState {
   removePad: (programId: string, padIndex: number) => void;
 
   /**
-   * Write a §4.2 pad-strip edit into the §6 pad that owns it, with NO undo entry (issue
-   * #133). `derive/padStripMirror` is the one caller.
+   * Write a §4.2 pad-strip edit into the §6 record that owns it, with NO undo entry (issue
+   * #133). `derive/padStripMirror` is the one caller. For a drum program that record is the
+   * pad at `padIndex`; for a keygroup it is the program itself, whose §6 `mixer` and
+   * `inserts` are program-scope and answer only to `KEYGROUP_PAD_INDEX` (issue #139).
    *
    * The entry was already recorded by the `useMixerStore` commit that moved the strip, whose
    * revert closure puts the strip back — which the mirror then follows out again. A second
@@ -490,11 +493,21 @@ export const useProgramStore = create<ProgramState>()(
         const program = state.programs[programId];
         // A strip can outlive its program — nothing removes a pad channel when a program is
         // deleted — so an edit addressing one that has gone is dropped rather than reviving it.
-        if (program?.type !== 'drum') return {};
+        if (program === undefined) return {};
+        // A keygroup's §6 mixer and inserts are PROGRAM-scope (spec §6), projected onto the
+        // one channel its voices merge into (issue #139). It has no pads, so no other index
+        // names anything it holds and an edit addressing one is dropped.
+        if (program.type === 'keygroup') {
+          if (padIndex !== KEYGROUP_PAD_INDEX) return {};
+          const next = withStripEdit(program, edit);
+          if (next === program) return {};
+          markDirty(dirtyKey.program(programId));
+          return { programs: { ...state.programs, [programId]: next } };
+        }
         let moved = false;
         const pads = program.pads.map((pad) => {
           if (pad.padIndex !== padIndex) return pad;
-          const next = padWithStripEdit(pad, edit);
+          const next = withStripEdit(pad, edit);
           if (next !== pad) moved = true;
           return next;
         });

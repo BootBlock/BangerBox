@@ -106,6 +106,18 @@ export function programChannelId(programId: string, padIndex: number): string {
 }
 
 /**
+ * The pad index a KEYGROUP program's single program-scope channel answers to (spec §4.2, §6).
+ *
+ * §6 gives a keygroup one `mixer` and one `inserts` rather than per-pad ones, and §4.2's
+ * channel-id grammar has only `pad:<programId>:<padIndex>` to name a program's own channel.
+ * `resolveKeygroupVoice` has always merged every keygroup voice into index 0, so the id form
+ * is settled rather than chosen here; this constant is where that reading is written
+ * down, so the graph, the §4.2 strip and §8.5.6 cannot disagree about which index it is
+ * (issue #139). A keygroup has no pads, so no other index names anything it holds.
+ */
+export const KEYGROUP_PAD_INDEX = 0;
+
+/**
  * The velocity layer for `velocity`, or null if none matches (spec §6: layers are
  * velocity-switched and may not overlap). The first band containing the velocity wins.
  */
@@ -215,8 +227,8 @@ export function resolveKeygroupVoice(
     lfos: program.lfos,
     modMatrix: program.modMatrix,
     mixer: program.mixer,
-    // A keygroup has one program-scope voice channel (index 0) — spec §4.2.
-    channelId: programChannelId(program.id, 0),
+    // A keygroup has one program-scope voice channel (spec §4.2) — see KEYGROUP_PAD_INDEX.
+    channelId: programChannelId(program.id, KEYGROUP_PAD_INDEX),
     padKey: `${program.id}:keygroup`,
     note,
     velocity,

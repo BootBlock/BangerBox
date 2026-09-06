@@ -19,6 +19,7 @@ import {
   useUIStore,
 } from '@/store';
 import { channelLevelPath, channelPanPath, channelSendPath } from '@/core/audio/params/registry';
+import { KEYGROUP_PAD_INDEX, programChannelId } from '@/core/audio/programVoice';
 import { bounceTrack } from '@/core/audio/bounceService';
 import { downloadBlob, downloadFileStem } from '@/core/platform/download';
 import { readFile } from '@/core/storage/opfs';
@@ -80,13 +81,27 @@ export function MixerMode() {
           .sort((a, b) => a.position - b.position)
           .map((track) => ({ id: `track:${track.id}`, name: track.name }));
       case 'pads': {
-        if (!activeProgramId || activeProgram?.type !== 'drum') return [];
+        if (!activeProgramId || activeProgram === undefined) return [];
+        // A keygroup has ONE program-scope mixer rather than per-pad ones (spec §6), so the
+        // tab shows one strip for it — the §5.2 channel its voices already merge into, named
+        // after the program because that is what the channel is (issue #139). The tab keeps
+        // its own name: §8.5.6 calls this group the active program's channels, which is one
+        // statement about both program kinds rather than two, and a tab whose label followed
+        // the selection would be the only one in the mode that did.
+        if (activeProgram.type === 'keygroup') {
+          return [
+            {
+              id: programChannelId(activeProgramId, KEYGROUP_PAD_INDEX),
+              name: activeProgram.name || 'Keygroup',
+            },
+          ];
+        }
         // Only assigned pads get a strip — 128 empty strips would be unusable (spec §6 sparse).
         return activeProgram.pads
           .slice()
           .sort((a, b) => a.padIndex - b.padIndex)
           .map((pad) => ({
-            id: `pad:${activeProgramId}:${pad.padIndex}`,
+            id: programChannelId(activeProgramId, pad.padIndex),
             name: pad.name || `Pad ${(pad.padIndex % PADS_PER_BANK) + 1}`,
           }));
       }
@@ -152,7 +167,7 @@ export function MixerMode() {
           tab === 'pads' ? (
             <EmptyState
               message="No pad channels yet."
-              hint="Select a drum program with assigned pads to mix its pads."
+              hint="Select a keygroup program, or a drum program with assigned pads, to mix its channels."
             />
           ) : (
             <EmptyState message="No channels in this group yet." />
