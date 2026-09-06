@@ -78,11 +78,6 @@
     },
     {
       "file": "src/core/audio/programVoice.ts",
-      "export": "programChannelId",
-      "reason": "Internal caller: resolveDrumVoice and resolveKeygroupVoice."
-    },
-    {
-      "file": "src/core/audio/programVoice.ts",
       "export": "selectVelocityLayer",
       "reason": "Internal caller: the drum voice resolver. Exported so §6 layer selection is testable without a voice pool."
     },

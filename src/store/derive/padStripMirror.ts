@@ -1,11 +1,12 @@
 /**
- * The pad mixer-strip mirror (spec §4.2, §6, §8.5.6 — issue #133).
+ * The program mixer-strip mirror (spec §4.2, §6, §8.5.6 — issues #133 and #139).
  *
- * §6 keeps a drum pad's level, pan, sends and insert slots inside the program payload, which
- * is what §9.3 `programs.payload` persists. §4.2 keeps the same values as a `pad:<programId>:
- * <padIndex>` channel strip, which is what §8.5.6's Pads tab edits and what the §4.3 sync
- * layer pushes to the graph. The strip is a PROJECTION of the payload, and a projection only
- * stays true if something maintains it in both directions:
+ * §6 keeps a program's own level, pan, sends and insert slots inside the program payload,
+ * which is what §9.3 `programs.payload` persists — per pad for a drum program, once at
+ * PROGRAM scope for a keygroup. §4.2 keeps the same values as a `pad:<programId>:<padIndex>`
+ * channel strip, which is what §8.5.6's Pads tab edits and what the §4.3 sync layer pushes to
+ * the graph. The strip is a PROJECTION of the payload, and a projection only stays true if
+ * something maintains it in both directions:
  *
  *  - **§6 → §4.2.** Publish the active program's pads as strips. Without this the Pads tab is
  *    dead on a freshly loaded project — `resolvePath` finds no strip, so `setTransient` and
@@ -29,15 +30,18 @@
  * `padStripEdit` reports the moved fields and nothing else, which is the rule `transportMirror`
  * states for the §4.2 tempo mirror.
  *
- * **`mute` and `solo` are not mirrored**, because §6's `Pad.mixer` defines no field for them
- * (level, pan and sendLevels are the whole of it). They stay session state on a pad strip,
- * where a track's own mute persists in the §9.3 `tracks.mixer` column. Adding them would be a
- * §6 schema change and a §13.6 halt, not a mirror change.
+ * **`mute` and `solo` are not mirrored**, because §6's mixer sub-object defines no field for
+ * them (level, pan and sendLevels are the whole of it). They stay session state on a pad
+ * strip, where a track's own mute persists in the §9.3 `tracks.mixer` column. Adding them
+ * would be a §6 schema change and a §13.6 halt, not a mirror change.
  *
- * **A keygroup program is out of scope by the same reading.** §6 gives it one program-scope
- * `mixer` and `inserts` rather than per-pad ones, `padStripsForProgram` publishes no strip for
- * it and §8.5.6 renders none, so there is no edit to lose — its strip is unreachable rather
- * than unpersisted, which is a different defect (issue #139).
+ * **A keygroup program takes the same mirror, one strip wide** (issue #139). §6 gives it one
+ * program-scope `mixer` and `inserts` rather than per-pad ones, and `resolveKeygroupVoice`
+ * has always merged its voices into `pad:<programId>:0` — so the §4.2 id already
+ * existed and the graph already sounded the values; what was missing was the strip that names
+ * them. Nothing here distinguishes the two program kinds: `padStripsForProgram` publishes
+ * whatever the program projects onto, and `applyPadStripEdit` writes it back into whichever
+ * §6 record holds it.
  */
 import { padStripEdit, padStripsForProgram } from '../padStrips';
 import { combineUnsubscribers, type Unsubscribe } from '../syncLayer/bridge';
@@ -55,7 +59,7 @@ function padChannelTarget(channelId: string): { programId: string; padIndex: num
 }
 
 /**
- * Publish the active program's pad strips (spec §4.2), never clobbering one already there.
+ * Publish the active program's own strips (spec §4.2), never clobbering one already there.
  *
  * The guard is what makes re-running this free: a strip that exists is the live one, and
  * replacing it would discard the edit the other direction has just written back. It also
@@ -75,7 +79,7 @@ function publishPadStrips(): void {
   }
 }
 
-/** Write every strip edit back into the §6 pad that owns it (spec §6, §9.3). */
+/** Write every strip edit back into the §6 record that owns it (spec §6, §9.3). */
 function writeBackPadStrips(
   channels: Record<string, ChannelStrip>,
   previous: Record<string, ChannelStrip>,
@@ -117,7 +121,8 @@ export function subscribePadStripMirror(): Unsubscribe {
       },
     ),
     // A pad assigned while its program is already active gains a strip here (spec §8.5.7);
-    // `programs` takes a new identity on every program write, including the §4.4 hydrate.
+    // `programs` takes a new identity on every program write, including the §4.4 hydrate. A
+    // keygroup's one strip needs nothing extra: it exists from the program's first publish.
     useProgramStore.subscribe((state) => state.programs, publishPadStrips),
     useProgramStore.subscribe((state) => state.activeProgramId, publishPadStrips),
   ]);

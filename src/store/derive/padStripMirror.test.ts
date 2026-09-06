@@ -13,6 +13,7 @@ import {
   createDefaultKeygroupProgram,
   createDefaultPad,
   type DrumProgram,
+  type KeygroupProgram,
   type Pad,
 } from '@/core/project/schemas';
 import { clearUndoHistory, useUndoStore } from '../undo';
@@ -31,6 +32,22 @@ function openProgram(pads: Pad[] = [createDefaultPad(0)]): DrumProgram {
   useProgramStore.getState().setPrograms({ [program.id]: program });
   useProgramStore.getState().setActiveProgram(program.id);
   useMixerStore.getState().setChannels({});
+  return program;
+}
+
+/** A keygroup program in the store, active, with the mixer holding no strip yet. */
+function openKeygroup(): KeygroupProgram {
+  const program = createDefaultKeygroupProgram('Bass', PROGRAM_ID);
+  useProgramStore.getState().setPrograms({ [program.id]: program });
+  useProgramStore.getState().setActiveProgram(program.id);
+  useMixerStore.getState().setChannels({});
+  return program;
+}
+
+/** The keygroup program as the §6 payload holds it right now. */
+function storedKeygroup(): KeygroupProgram {
+  const program = useProgramStore.getState().programs[PROGRAM_ID];
+  if (program?.type !== 'keygroup') throw new Error('the fixture keygroup is gone');
   return program;
 }
 
@@ -91,12 +108,55 @@ describe('publishing the active program’s pads (spec §6 → §4.2)', () => {
     expect(useMixerStore.getState().channels[PAD_CHANNEL]?.level).toBe(0.4);
   });
 
-  it('publishes nothing for a keygroup program — its mixer is program-scope (spec §6)', () => {
-    const keygroup = createDefaultKeygroupProgram('Pad', PROGRAM_ID);
-    useProgramStore.getState().setPrograms({ [keygroup.id]: keygroup });
-    useProgramStore.getState().setActiveProgram(keygroup.id);
+  it('publishes ONE strip for a keygroup — its mixer is program-scope (spec §6, #139)', () => {
+    openKeygroup();
     dispose = subscribePadStripMirror();
-    expect(useMixerStore.getState().channels).toEqual({});
+    expect(Object.keys(useMixerStore.getState().channels)).toEqual([PAD_CHANNEL]);
+    expect(useMixerStore.getState().channels[PAD_CHANNEL]).toMatchObject({ level: 1, pan: 0 });
+  });
+});
+
+describe('writing a strip edit back into a keygroup program (spec §4.2 → §6, issue #139)', () => {
+  beforeEach(() => {
+    openKeygroup();
+    dispose = subscribePadStripMirror();
+  });
+
+  it('writes a committed level, pan and send into the §6 program-scope mixer', () => {
+    const mixer = useMixerStore.getState();
+    mixer.commit(channelLevelPath(PAD_CHANNEL), 0.4);
+    mixer.commit(channelPanPath(PAD_CHANNEL), -0.5);
+    mixer.commit(channelSendPath(PAD_CHANNEL, 1), 0.6);
+    expect(storedKeygroup().mixer).toEqual({ level: 0.4, pan: -0.5, sendLevels: [0, 0.6, 0, 0] });
+  });
+
+  it('writes an added insert into the §6 program-scope rack', () => {
+    useMixerStore.getState().addInsert(PAD_CHANNEL, 'delay');
+    expect(storedKeygroup().inserts[0]).toMatchObject({ effectType: 'delay', enabled: true });
+  });
+
+  it('leaves the rest of the §6 program untouched', () => {
+    const before = storedKeygroup();
+    useMixerStore.getState().commit(channelLevelPath(PAD_CHANNEL), 0.4);
+    const after = storedKeygroup();
+    expect(after.zones).toBe(before.zones);
+    expect(after.envelopes).toBe(before.envelopes);
+    expect(after.polyphony).toBe(before.polyphony);
+  });
+
+  it('writes nothing for mute or solo — §6 defines neither on a keygroup either', () => {
+    const before = storedKeygroup();
+    useMixerStore.getState().setMute(PAD_CHANNEL, true);
+    useMixerStore.getState().setSolo(PAD_CHANNEL, true);
+    expect(storedKeygroup()).toBe(before);
+  });
+
+  it('drops an edit addressed to any index but the keygroup’s own', () => {
+    // A keygroup has no pads, so `pad:<id>:5` names nothing it holds. The strip is a stale
+    // one from another program that reused the id, and writing it would invent a value.
+    const before = storedKeygroup();
+    useProgramStore.getState().applyPadStripEdit(PROGRAM_ID, 5, { level: 0.4 });
+    expect(storedKeygroup()).toBe(before);
   });
 });
 

@@ -1,14 +1,39 @@
-# BangerBox — Phase Handover (after the amp-envelope lane closure)
+# BangerBox — Phase Handover (after the keygroup program-scope mixer closure)
 
-Generated at the close of the §7.8 amp-envelope-lane work per Protocol Alpha (spec §13.1). A
+Generated at the close of the §4.2 keygroup-mixer work per Protocol Alpha (spec §13.1). A
 new session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code,
 and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the amp-envelope-lane work merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §7.8/§5.4, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **2033 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **86/86 steps**), plus `lint`, `type-check`, `format:check`
+**State:** the keygroup-mixer work merged to `main` (`--no-ff`). All eight §12 phases were
+already complete; this was a defect closure against §4.2/§6, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **2051 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **88/88 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
+
+**A KEYGROUP program's §6 program-scope `mixer` and `inserts` are a §4.2 strip, and they take
+the same projection a drum pad's does.** `resolveKeygroupVoice` puts the program's own `mixer`
+on the `ResolvedVoice` and merges its voices into `pad:<programId>:0`, so those values SOUNDED
+live and in every §9.5 render — and `padStripsForProgram` published no strip there, so
+`useMixerStore.commit` returned before writing and §8.5.6's Pads tab rendered nothing. §3.4 is
+written against the DEAD control; this was its mirror image. See §2 (ba) and §4.
+
+**The §4.2 channel-id grammar needed no decision, and no §7.8 address FORM was added.**
+`ChannelStrip.id` already admits `pad:<programId>:<padIndex>`, and index 0 is what
+`resolveKeygroupVoice` has always used for a program that has no pads. `KEYGROUP_PAD_INDEX` in
+`programVoice.ts` is where that reading is written down, so the graph, the strip and §8.5.6
+cannot disagree about which index it is.
+
+**A keygroup gets a §4.2 STRIP rather than §8.5.6 editing the §6 payload, and §4.3 is what
+decides it.** The only route from a keygroup's payload to a live channel is the ONE seed
+`ensureProgramChannel` writes when it BUILDS the channel, so a payload edit afterwards moves
+nothing until the channel is destroyed and rebuilt — and §1.3 #16 makes a channel whose runtime
+values live only in a JSON payload the shape it forbids.
+
+**Two tracks playing one keygroup get one §5.2 realisation EACH, and the one strip supplies
+both.** Nothing had to be added for that — §14 (av) keys a `pad:` realisation by (channel id,
+track id) — but it had to be proven, because a fader reaching one realisation of two is a defect
+no single-track proof can see. Two coherent unison voices at −12 dB render ×0.2512 of unity,
+where a fader reaching one of them would render ×0.625.
 
 **A voice's §6 amp envelope is the pad's envelope as of that voice's own NOTE-ON.** That is
 what a §7.8 lane on `program:<id>.pad:<idx>.amp.attack` or `…amp.release` means, and it is one
@@ -251,6 +276,31 @@ All nineteen stand unchanged. Four that bear on recent work:
 ## 2. Spec deviations / corrections in effect
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
+
+- **(ba) — the keygroup program-scope mixer closure (§4.2, §4.3, §5.2, §6, §8.5.6, §9.3,
+  §9.5).** The ⚑ items below are settled policy a new session should treat as binding:
+  - **A keygroup's §6 `mixer` and `inserts` project onto ONE §4.2 strip**, at
+    `pad:<programId>:0` (`KEYGROUP_PAD_INDEX`). §6 and §8.5.6 were revised to record it; no
+    new §7.8 address FORM was introduced, so there was no §13.6 halt.
+  - ⚑ **The reason issue #139 gave is not quite the reason.** It said no §7.8 address
+    resolves to a keygroup's strip; `mixer.pad:<id>:0.level` has parsed and reached the
+    graph's realisations since (av). What did not exist was the §4.2 STRIP the store and
+    §8.5.6 read.
+  - ⚑ **`padWithStripEdit` is now `withStripEdit`, generic over `Pick<Pad, 'mixer' |
+'inserts'>`** — the two members §6 gives a drum `Pad` and a whole `KeygroupProgram`
+    alike. One rule, one function; a second copy could only drift.
+  - ⚑ **§8.5.6's Pads tab shows ONE strip for a keygroup, named after the PROGRAM, and the
+    tab keeps its own name.** "Pad 1" would name something the program does not have, and a
+    tab label that followed the selection would be the only one in the mode that did.
+  - ⚑ **`applyPadStripEdit` DROPS any index but `KEYGROUP_PAD_INDEX` for a keygroup**,
+    because a stale strip from another program that reused the id would otherwise invent a
+    value on a record that has no pads.
+  - **Issue #140 is not made reachable at a second address**, and that was checked rather
+    than assumed: `programAutomatableParams` offers nothing for a keygroup and
+    `resolvePadLeaf` returns null for one, so `program:<kgId>.pad:0.amp` is written by no
+    picker and no §10.3 binding.
+  - **No §9.2 migration.** The values have always lived in the §6 payload; the strip did not
+    exist even in memory, so nothing on disk is in a shape to correct.
 
 - **(az) — the amp-envelope-lane closure (§5.4, §6, §7.8, §9.5, §11.2, §11.4).** The ⚑ items
   below are settled policy a new session should treat as binding, not as spec text:
@@ -520,9 +570,10 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   - **`mute` and `solo` are NOT mirrored**, because §6's `Pad.mixer` defines no field for
     them. A track's mute persists because a track strip IS the persisted object; a pad's is a
     projection of a §6 record with nowhere to put one. Adding one is a §13.6 halt.
-  - **A keygroup's program-scope mixer is a DIFFERENT defect.** §6 gives it one `mixer` and
-    `inserts` rather than per-pad ones, and nothing publishes or renders a strip for it — so
-    its values sound and nothing can edit them. Unreachable, not unpersisted: issue #139.
+  - **A keygroup's program-scope mixer was a DIFFERENT defect, and is CLOSED.** §6 gives it
+    one `mixer` and `inserts` rather than per-pad ones, and nothing published or rendered a
+    strip for it — so its values sounded and nothing could edit them. Issue #139, closed by
+    (ba): it takes the same projection, one strip wide.
   - **No §9.2 migration, because the values already live in the payload.** The strip existed
     only in memory, so nothing on disk is in a shape to correct — the §14 (ap) reasoning in
     its own form.
@@ -1021,6 +1072,18 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   shell had gone — `declick` went at the start of this work and `voicelane` at the end of it —
   so try again before assuming otherwise. `git worktree list` shows only `main`, so `envlane`
   is not another agent's work: delete it if you can and ignore it if you cannot.
+- **A §11.4 probe's own precondition guard must not fire where the DEFECT is what breaks
+  it.** `keygroupMixProof` threw "the keygroup strip took no insert" against the unfixed
+  build, because `addInsert` on a channel with no §4.2 strip writes nothing — so the step
+  reported the symptom in place of the defect and never reached its own first assertion.
+  A guard belongs behind the condition that makes it meaningful; this one now fires only
+  where a strip DOES exist and the add was still refused.
+- **`%TEMP%` accumulates Playwright profile directories that CANNOT be deleted.** On
+  2026-09-06 there were 1865 of them, ~23 GB, on a C: drive with 10.4 GB free; every file
+  under each `Default/` answers `UnauthorizedAccessException` to `Remove-Item`, to `attrib`
+  and to `rd /s /q`, so it is an ACL rather than a lock. Only 20 of the 1865 went. The
+  three full smokes of this work ran anyway. Do not spend a session on it; check the free
+  space, and re-run a smoke that fails on `FileSystemSyncAccessHandle` before believing it.
 - **Driving the tab order in a browser needs `document.body.tabIndex = -1` first.** `body` is not
   focusable by default, so blurring alone leaves the caret where it was and Tab resumes from the
   middle of the page — which reads as "the skip link is not the first stop" when it is.
@@ -1030,6 +1093,26 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
+
+**A keygroup's program-scope mixer (spec §4.2, §5.2, §6, §8.5.6):**
+
+- **`KEYGROUP_PAD_INDEX` in `programVoice.ts` is the ONE place the index is written down.**
+  `resolveKeygroupVoice`, `padStripsForProgram`, `applyPadStripEdit` and §8.5.6 all read it,
+  and all four build the id through `programChannelId` rather than formatting it (§13.6).
+- **`withStripEdit` is generic over the §6 record that CARRIES the values**, not over the
+  program kind. A new §6 shape with a `mixer` and an `inserts` gets the projection for free;
+  a second copy of the rule is what `padStrips.ts` exists to prevent.
+- **`padStripsForProgram` answers "what §5.2 channels does this program own"**, which is one
+  question about both program kinds. `derive/padStripMirror` needed no change at all — it
+  never knew what a pad was, and that is what made the closure small.
+- **`applyPadStripEdit` drops an index a keygroup does not have.** A §4.2 strip can outlive
+  the program that published it, so an edit at `pad:<kgId>:5` is a stale strip from a program
+  that reused the id, not a value to write.
+- **§8.5.6's tab set does not follow the selection**, and the strip's NAME is what carries
+  the difference. A new program kind gets a strip and a name here, never a tab.
+- **The §11.4 `keygroupMixProof` gives TWO tracks one keygroup and reads the fader ratio.**
+  ×0.2512 says the strip persisted AND reached both realisations; ×0.625 would say it
+  reached one. A proof of a per-program value on a single track cannot see that at all.
 
 **A §7.8 amp-envelope lane (spec §5.4, §6, §7.8, §9.5):**
 
@@ -1172,10 +1255,10 @@ transient channel still stand. New this work:
   declares no foreign key, and `laneForTarget` lets a track lane override a sequence lane on the
   same address whatever track owns it.
 
-**A pad's mixer strip (spec §4.2, §6, §8.5.6):**
+**A program's mixer strips (spec §4.2, §6, §8.5.6):**
 
-- **`src/store/padStrips.ts` is the ONE mapping between a §6 pad and its §4.2 strip, in both
-  directions.** `padStripsForProgram` forward, `padStripEdit` + `padWithStripEdit` back.
+- **`src/store/padStrips.ts` is the ONE mapping between a §6 record and its §4.2 strip, in
+  both directions.** `padStripsForProgram` forward, `padStripEdit` + `withStripEdit` back.
   Pure, no store or audio access. It is no longer under `syncLayer/`, because nothing about it
   is store → graph.
 - **`src/store/derive/padStripMirror.ts` is the subscriber that runs both**, registered by
@@ -1698,7 +1781,14 @@ worklet hosts, which is what keeps that processor's kernel switch exhaustive rat
 
 ## 8. Stores — all eight implemented (§4.2)
 
-**No store slice, field or action SIGNATURE changed this work; one `useMixerStore` action
+**No store slice, field or action SIGNATURE changed this work; one `useProgramStore` action
+changed what it writes.** `applyPadStripEdit(programId, padIndex, edit)` still returns
+`void`, and now writes into a KEYGROUP program's own `mixer` and `inserts` where the program
+is one and `padIndex` is `KEYGROUP_PAD_INDEX`, dropping any other index. `padStrips.ts`'s
+`padWithStripEdit` is renamed `withStripEdit` and is generic over the §6 record; nothing
+outside that module and `useProgramStore` called it.
+
+From the previous work, and unchanged: **one `useMixerStore` action
 changed what it writes.** `removeInsert(channelId, slotId)` still returns `void`, and now
 EMPTIES the named slot in place — `effectType: null, enabled: false, params: {}`, the slot's
 own id kept — rather than filtering it out of the array. It also returns before `commit` for
@@ -1811,7 +1901,12 @@ Changes from the previous work, recorded in §14 (ai):
 
 ## 9. Component tree topography (as implemented)
 
-**Mode changes this work:** one. `InsertPanel` disables its Remove button on an EMPTY slot,
+**Mode changes this work:** one. §8.5.6's `MixerMode` renders ONE strip on its Pads tab for a
+keygroup program — the §4.2 channel `pad:<programId>:0`, named after the program — and its
+empty state names both ways in. Both branches build the channel id through
+`programChannelId` rather than formatting it. No primitive or shell component changed.
+
+From the previous work, and unchanged: `InsertPanel` disables its Remove button on an EMPTY slot,
 from the same `!effectType` the bypass toggle beside it already reads — a removal now empties a
 slot rather than dropping it (§14 (ax)), so there is nothing for the control to do there. No
 primitive or shell component changed.
@@ -1903,6 +1998,8 @@ per §14 (ak) — clamp in range, refuse a non-finite one, throw on a bad struct
 **`check:stubs` reports ZERO open stubs.** Outstanding work lives in GitHub issues, not in code
 comments.
 
+**A keygroup program's §6 program-scope mixer is a §4.2 strip** (#139), reachable in §8.5.6,
+persisted through `programs.payload`, and reaching every track that plays the program.
 **A §7.8 lane on a §6 amp-envelope TIME shapes the voices it reaches** (#143), by the rule that
 a voice's §6 amp envelope is the pad's as of its own note-on. **The §5.4 declick is 3 ms long**
 (#144) and departs from the level the §6 contour holds where it begins. **Removing an insert
@@ -1914,9 +2011,46 @@ EMPTIES its slot** (#142). **A §7.8 lane on a §6 sound-design parameter sounds
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#143 is CLOSED by this work.** Two new issues were filed while closing it — nothing releases
-a voice, so the §6 release stage is silent everywhere (#145), and `rescheduleDeclick`'s
-departure level rests on a reading of `cancelAndHoldAtTime` this work narrowed (#146). Nothing
+**#139 is CLOSED by this work.** No new issue was filed while closing it, and one entry LEFT
+the `check:orphans` allowlist: `programChannelId`, which §8.5.6 and `padStrips.ts` now import.
+
+**Honest scope notes for the keygroup-mixer work:**
+
+- **No §7.8 PER-VOICE address reaches a keygroup's voices**, before or after this. `padKeyFor`
+  builds `<id>:<padIndex>` and `resolveKeygroupVoice` sets `<id>:keygroup`, so
+  `program:<id>.pad:<idx>.filter.cutoff` and its two neighbours reach a keygroup through
+  nothing but `seedLaneNode`'s re-seed of a moved §6 payload (§14 (aw) item 14). Pre-existing,
+  untouched, and NOT what #139 is about — #139 is the §4.2 mixer, which is a channel rather
+  than a voice.
+- **A keygroup's `mute` and `solo` are session state**, because §6 defines neither on its
+  mixer sub-object any more than on a pad's. Its strip joins the PAD solo group, which is
+  right: only the ACTIVE program's strips are ever published, so the group holds one
+  program's channels at a time whichever kind it is.
+- **A §7.8 lane on the new address leaves the fader where its last ramp put it**, which is
+  what every §4.2 strip already does and is not issue #140.
+- **Every regression test was proven against the code it was written to catch**, by five
+  mutations: the defect as filed (**14** failures); the write-back alone reverted (**5**);
+  the publish alone reverted (**12**, and the four that pass are the guards — §8.5.6 renders
+  its strip list from the PROGRAM, so the tab looks right and is inert, which is the §14 (as)
+  shape exactly); the index guard dropped (**1**); and §8.5.6's own branch reverted (**4**).
+  **Two EXISTING tests pinned the old behaviour and were corrected rather than added to**:
+  `padStrips.test.ts`'s "returns no strips for a keygroup program" and
+  `padStripMirror.test.ts`'s "publishes nothing for a keygroup program".
+- **Measured in a real browser**: 88/88 smoke steps at ports 5342/5343, dev and offline, no
+  console errors. Two tracks on one keygroup, in unison, one bar of 4/4 at 120 bpm: unity
+  rendered **0.10540 RMS**, the keygroup's own fader at 0.8 SAVED and RELOADED rendered
+  **0.02648** (**×0.2512**), the second TRACK's fader closed rendered **0.01324**
+  (**×0.5000**), and the live graph held **2** realisations. Disk and strip both read
+  0.8 / −0.5 / 0.6 / filter. Live, an 80 Hz lowpass placed in the keygroup's rack before
+  either realisation existed held the §5.8 master peak at **0.00591 against 0.14964 open**
+  (dev) and **0.00677 against 0.14949** (offline). **Against the unfixed build**: no strip at
+  all, `committedLevel` −1, **0.10540484185610326 RMS against 0.10540484185610326** unedited —
+  the same number to every digit — the payload on disk untouched, and a live peak of
+  **0.28479 filtered against 0.29149 open (×0.977)**.
+
+**#143 was CLOSED by the previous work.** Two new issues were filed while closing it — nothing
+releases a voice, so the §6 release stage is silent everywhere (#145), and `rescheduleDeclick`'s
+departure level rests on a reading of `cancelAndHoldAtTime` that work narrowed (#146). Nothing
 was added to the `check:orphans` allowlist.
 
 **Honest scope notes for the amp-envelope-lane work:**
@@ -2122,7 +2256,8 @@ was added to the `check:orphans` allowlist.
 - **A pad's `mute` and `solo` are still session state**, because §6's `Pad.mixer` defines no
   field for them (§14 (as) item 6). A realisation is muted by the derived §5.2 result like any
   other channel, and that result is not persisted.
-- **A keygroup program's program-scope strip is still unreachable** (#139) and unaffected:
+- **A keygroup program's program-scope strip was still unreachable at the time** (#139, closed
+  since by (ba)) and unaffected:
   `padStripsForProgram` publishes no strip for it either way.
 - **The `pad:<trackId>:<note>` channel the demo fallback builds is unchanged.** It already
   carried a track in its id, so it has exactly one realisation, and it is not a §6 pad.
@@ -2251,8 +2386,8 @@ that play the same program share one §5.2 pad channel, wired to whichever trigg
   `automation_points` row, no `trackGrooveIds` key, no §4.2 strip and no §5.2 channel.
 
 **#133 was CLOSED by the previous work.** Two new issues were filed while closing it — a keygroup's
-program-scope mixer sounds and nothing can edit it (#139), and a §7.8 `program:….amp` edit
-leaves the Mixer's own pad fader stale until a reload (#140). Nothing was added to the
+program-scope mixer sounds and nothing can edit it (#139, closed since by (ba)), and a §7.8
+`program:….amp` edit leaves the Mixer's own pad fader stale until a reload (#140). Nothing was added to the
 `check:orphans` allowlist.
 
 **Honest scope notes for the pad-strip work:**
@@ -2261,7 +2396,8 @@ leaves the Mixer's own pad fader stale until a reload (#140). Nothing was added 
   until a reload (#140), and that is the reason the write-back is field-diffed rather than
   whole-strip. The values themselves are correct on both sides; only the reading is old.
 - **`mute` and `solo` on a pad strip are still session state**, because §6 defines no field.
-- **A keygroup's program-scope strip is still unreachable** (#139).
+- **A keygroup's program-scope strip was still unreachable at the time** (#139, closed since
+  by (ba)).
 - **The mirror writes on the COMMIT, never on a §4.1 transient**, because `setTransient` does
   not write the store at all (issue #27). A gesture in flight reaches the graph, and reaches the
   payload when it is let go.
@@ -2279,7 +2415,7 @@ leaves the Mixer's own pad fader stale until a reload (#140). Nothing was added 
 - **Every regression test was proven against the code it was written to catch**, by five
   mutations: no write-back at all — the defect as filed (8 failures); the pre-fix publish, on an
   active-program change alone (16, and the 5 that pass are the guards); a `padStripEdit` that
-  copies the whole strip (7); a `padWithStripEdit` that never hands the same pad back (1); and
+  copies the whole strip (7); a `withStripEdit` that never hands the same pad back (1); and
   a write-back through the undoable `updateProgram` (1, after the undo assertion was
   strengthened to read BOTH stores — it passed before, which is what said the assertion was too
   weak).
@@ -2289,7 +2425,7 @@ sound-design parameter still renders as nothing (#138), listed below. Nothing wa
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-**#143, #144, #142, #141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**, and #139,
+**#139, #143, #144, #142, #141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**, and
 #140, #145 and #146 remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
@@ -2308,9 +2444,6 @@ instead.
   leaves the Mixer's own fader showing the old position until a reload. Two registered §7.8
   addresses reach one value and only the mixer side writes through; the publish deliberately
   never clobbers an existing strip, which is what leaves the reading stale. No data is lost.
-- **#139** a keygroup program's §6 program-scope `mixer` and `inserts` sound — `ensureProgramChannel`
-  seeds the channel from the payload — and no surface can edit them: §8.5.6 renders no strip for a
-  keygroup, `padStripsForProgram` publishes none, and the §7.8 address resolves to nothing.
 - **#13** the Phase 8 live-hardware sign-off, which needs the human developer.
 
 **Honest scope notes for the bounce-mixer work:**
