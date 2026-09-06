@@ -21,25 +21,56 @@ export function velocityToGain(velocity: number, gainDb: number): number {
 }
 
 /**
- * Schedule attack→hold→decay→sustain from `when`. The decay follows the envelope's
- * `curve` (spec §6): an exponential decay tracks toward the sustain level, a linear
- * decay ramps straight to it. Returns the context time the sustain level is reached
- * (the earliest a note-off release can begin).
+ * Schedule the §6 attack→hold→decay→sustain contour of a voice whose note-on is `noteOn`,
+ * over the span `[from, until]` and no further. The decay follows the envelope's `curve`
+ * (spec §6): an exponential decay tracks toward the sustain level, a linear decay ramps
+ * straight to it.
+ *
+ * **A span rather than the whole contour, because a voice's amp timeline is written
+ * FORWARD and something else always takes over at the end of it** (issue #146): the §5.4
+ * declick at the region's end, or a note-off release before that. The old shape wrote the
+ * contour whole and let `cancelAndHoldAtTime` cut the tail off — which works once, and
+ * destroys the contour the second time. `cancelAndHoldAtTime` truncates a ramp it finds at
+ * or after the cancel time and REPLACES it with a held value; a later cancel at an EARLIER
+ * time then finds that held value, which is not a ramp, so it inserts nothing and removes it
+ * — and the segment the ramp described is gone. Measured in Edge on a 200 ms region under a
+ * 500 ms decay, a retune upward left the voice holding its PEAK for its whole life.
+ *
+ * Both ends are therefore explicit. The span starts on the contour's own value at `from`,
+ * and it ends on a RAMP landing on the contour's own value at `until` — a ramp, so that a
+ * later re-lay cancelling anywhere inside the span still truncates it correctly instead of
+ * losing it. Interpolating between two points of a segment reproduces that segment exactly,
+ * linearly and exponentially alike, so a span is the contour and not an approximation of it.
  */
-export function scheduleAmpAttack(param: AudioParam, peak: number, amp: AhdsrEnvelope, when: number): number {
-  const attackEnd = when + amp.attack / 1000;
+export function scheduleAmpContour(
+  param: AudioParam,
+  peak: number,
+  amp: AhdsrEnvelope,
+  noteOn: number,
+  from: number,
+  until: number,
+): void {
+  const attackEnd = noteOn + amp.attack / 1000;
   const holdEnd = attackEnd + amp.hold / 1000;
   const decayEnd = holdEnd + amp.decay / 1000;
   const sustain = peak * amp.sustain;
-  param.setValueAtTime(0, when);
-  param.linearRampToValueAtTime(peak, attackEnd); // attack stays linear (0 → peak)
-  param.setValueAtTime(peak, holdEnd); // hold the peak before decay begins
-  if (amp.curve === 'exponential' && sustain > EXP_FLOOR && amp.decay > 0) {
-    param.exponentialRampToValueAtTime(sustain, decayEnd);
-  } else {
-    param.linearRampToValueAtTime(sustain, decayEnd);
+  // Exactly the condition the decay is written on below, so {@link ampLevelAt} and the closing
+  // ramp cannot disagree with it (spec §6).
+  const exponential = amp.curve === 'exponential' && sustain > EXP_FLOOR && amp.decay > 0;
+  setParamNow(param, ampLevelAt(peak, amp, noteOn, from), from);
+  if (until <= from) return;
+  if (attackEnd > from && attackEnd < until) param.linearRampToValueAtTime(peak, attackEnd); // attack stays linear
+  if (holdEnd > from && holdEnd < until) param.setValueAtTime(peak, holdEnd); // hold before decay
+  if (decayEnd > from && decayEnd < until) {
+    if (exponential) param.exponentialRampToValueAtTime(sustain, decayEnd);
+    else param.linearRampToValueAtTime(sustain, decayEnd);
   }
-  return decayEnd;
+  const level = ampLevelAt(peak, amp, noteOn, until);
+  if (exponential && until > holdEnd && until < decayEnd && level > EXP_FLOOR) {
+    param.exponentialRampToValueAtTime(level, until);
+  } else {
+    param.linearRampToValueAtTime(level, until);
+  }
 }
 
 /**
@@ -94,7 +125,7 @@ export function scheduleModEnvelope(
 }
 
 /**
- * The level the amp contour {@link scheduleAmpAttack} lays down holds at `time` (spec §6).
+ * The level the amp contour {@link scheduleAmpContour} lays down holds at `time` (spec §6).
  *
  * It is evaluated from the same four segment boundaries that function writes, so the model
  * and the sound cannot disagree — the discipline {@link modEnvelopeBreakpoints} already keeps
@@ -115,7 +146,7 @@ export function ampLevelAt(peak: number, amp: AhdsrEnvelope, when: number, time:
   if (time >= decayEnd) return sustain;
   if (time >= holdEnd) {
     const progress = (time - holdEnd) / (decayEnd - holdEnd);
-    // Exactly the condition `scheduleAmpAttack` applies the exponential decay on (spec §6).
+    // Exactly the condition `scheduleAmpContour` applies the exponential decay on (spec §6).
     if (amp.curve === 'exponential' && sustain > EXP_FLOOR && amp.decay > 0) {
       return peak * (sustain / peak) ** progress;
     }
@@ -157,11 +188,16 @@ export function declickFadeStart(endTime: number, earliest: number, declickMs: n
  * §4.3 guard rather than written, which leaves the fade departing from the contour — the
  * defect's own shape, and audible rather than the silence a NaN would leave behind.
  *
- * `cancelAndHoldAtTime` stays for the job it can do: erasing whatever is scheduled beyond
- * the fade's start, and truncating an AHDSR segment still running there — reaching zero by
- * `endTime` outranks completing the contour. A later note-off, steal or choke cancels this
- * ramp in turn through {@link scheduleAmpRelease}, which needs a departure level of its own
- * for the reason recorded there.
+ * **It no longer cancels, and the caller owns the timeline up to the fade start**
+ * (issue #146). `cancelAndHoldAtTime(fadeStart)` used to cut the §6 contour off here, which
+ * left a held value where a ramp had been — and a later re-lay cancelling EARLIER then found
+ * that held value, inserted nothing, removed it, and lost the whole segment it described. The
+ * contour is now written only as far as this fade ({@link scheduleAmpContour}), so there is
+ * nothing beyond it to erase and the event before it is a ramp a later cancel can truncate.
+ * A §5.9 audition writes its own unity level and has nothing scheduled beyond it either.
+ * A later note-off, steal or choke cancels this ramp in turn through
+ * {@link scheduleAmpRelease}, which needs a departure level of its own for the reason
+ * recorded there.
  */
 export function scheduleAmpDeclick(
   param: AudioParam,
@@ -172,7 +208,6 @@ export function scheduleAmpDeclick(
 ): void {
   const fadeStart = declickFadeStart(endTime, earliest, declickMs);
   if (endTime <= fadeStart) return; // zero-length region: nothing to fade
-  param.cancelAndHoldAtTime(fadeStart);
   setParamNow(param, level, fadeStart);
   param.linearRampToValueAtTime(0, endTime);
 }

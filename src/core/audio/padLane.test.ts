@@ -21,7 +21,7 @@ import {
   type PadFilter,
 } from '@/core/project/schemas';
 import { createFakeAudioContext, liveNodeCount, type FakeAudioContext } from '@/test/mocks/audioContext';
-import { DECLICK_FADE_MS as DECLICK_MS, SCHEDULER_INTERVAL_MS } from '@/core/constants';
+import { SCHEDULER_INTERVAL_MS } from '@/core/constants';
 import { ampLevelAt } from './voiceEnvelope';
 import { VoicePool, type VoiceTriggerSpec } from './voicePool';
 
@@ -94,7 +94,7 @@ function ampGainOf(fake: FakeAudioContext): FakeParam {
 /**
  * How long the §6 attack currently written on an amp gain lasts, in seconds.
  *
- * `scheduleAmpAttack` opens with `setValueAtTime(0, when)` followed by a linear ramp to the
+ * `scheduleAmpContour` opens with `setValueAtTime(0, when)` followed by a linear ramp to the
  * peak, so the LAST such pair is the contour in force — a re-lay cancels and rewrites, and
  * what matters is what the timeline ends up holding.
  */
@@ -575,7 +575,7 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     pool.destroy();
   });
 
-  it('departs an interruption from where the contour STOPPED, not from where it would be', () => {
+  it('departs an interruption from the RUNNING contour, which a re-lay puts back', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
     const decaying: AhdsrEnvelope = {
@@ -586,17 +586,19 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
       release: 20,
       curve: 'linear',
     };
-    // A one-second region under a four-second decay: the §5.4 declick freezes the contour a
-    // quarter of the way down, and a retune that pushes the region's end out does not restart it.
-    pool.trigger(spec(context, { id: 'frozen', velocity: 127, gainDb: 0, amp: decaying }));
-    const frozen = ampLevelAt(1, decaying, 0, 1 - DECLICK_MS / 1_000);
+    // A one-second region under a four-second decay. §14 `(az)` clamped this reading to
+    // `Voice.contourFrozenAt` so the file kept ONE model of the timeline, and said plainly
+    // that whether the model was right at all was issue #146. It was not: the retune re-lays
+    // the contour, so it is still decaying at the note-off and the release departs from where
+    // the voice actually is — 0.625 at 1.5 s rather than the 0.75075 the fade start froze.
+    pool.trigger(spec(context, { id: 'relaid', velocity: 127, gainDb: 0, amp: decaying }));
     pool.applyPadParam('p1:0', 'detune', -1_200, 0.2);
-    // The note-off lands between the old fade start and the new one: `rescheduleDeclick` reads
-    // the frozen point and so must this, or the two disagree about one timeline (issue #146).
+    // The note-off lands between the old fade start and the new one, which is exactly where
+    // the frozen reading and the running one differ.
     pool.release('p1:0', 0, 1.5);
     const gain = ampGainsOf(fake)[0]!;
     const held = gain.calls.filter((call) => call.method === 'setValueAtTime');
-    expect(held[held.length - 1]!.args[0]).toBeCloseTo(frozen, 6);
+    expect(held[held.length - 1]!.args[0]).toBeCloseTo(ampLevelAt(1, decaying, 0, 1.5), 6);
     pool.destroy();
   });
 
