@@ -17,12 +17,15 @@ import {
   renderLfoRateOffline,
   renderAmpEnvelopeLaneOffline,
   renderPreviewProfileOffline,
+  renderRetunedAmpProfileOffline,
+  RETUNE_PROFILE_TIMES,
   renderProgramNote,
   renderRampGuardOffline,
   type AmpEnvelopeLaneResult,
   type AmpProfileResult,
   type DelayEchoResult,
   type EffectRenderResult,
+  type RetunedAmpProfileResult,
 } from '@/core/audio/offlineTest';
 import { getActiveRepositories, loadOrCreateActiveProject, projectService } from '@/core/project';
 import { importDecodedSample } from '@/core/audio/sampleImport';
@@ -659,6 +662,14 @@ export interface DeclickContourResult {
   readonly voiceProfile: AmpProfileResult;
   /** The same profile for a §5.9 audition, which declicks through the very same helper. */
   readonly previewProfile: AmpProfileResult;
+  /**
+   * The amp gain of a voice RETUNED twice while it sounds (issue #146). The profile above has
+   * no retune in it, and a retune is what moves the fade the §6 contour has to be read at — so
+   * this is the only reading in the repository that can say whether the contour still runs.
+   */
+  readonly retunedProfile: RetunedAmpProfileResult;
+  /** The moments `retunedProfile` samples, so a failure can name the one that moved. */
+  readonly retuneTimes: readonly number[];
   /** `DECLICK_FADE_MS` — the fade length §5.4 asks for, so a failure can quote its own budget. */
   readonly declickMs: number;
 }
@@ -2637,6 +2648,8 @@ async function declickContourProof(): Promise<DeclickContourResult> {
     sweptFinalMagnitude: swept.finalMagnitude,
     voiceProfile: await renderAmpProfileOffline(),
     previewProfile: await renderPreviewProfileOffline(),
+    retunedProfile: await renderRetunedAmpProfileOffline(),
+    retuneTimes: RETUNE_PROFILE_TIMES,
     declickMs: DECLICK_FADE_MS,
   };
 }

@@ -447,6 +447,58 @@ async function assertShellAndSelfTest(page, label) {
     }
   });
 
+  // Issue #146, and the reading no proof in this repository had ever taken: the SHAPE of a
+  // RETUNED voice. The profile above has no retune in it, #87's assertions are lengths, and
+  // §14 (bb)'s reads a fall time at unity rate — so nothing could say whether a voice whose
+  // fade a retune has moved still follows its own §6 contour in between. It did not: each lay
+  // truncated the AHDSR with `cancelAndHoldAtTime` and the next lay's earlier cancel lost the
+  // segment that method was holding, so the voice stuck at the level the FIRST fade start
+  // froze. A 200 ms region under a 500 ms decay, bent an octave down twice, is where the
+  // frozen reading and the running one are furthest apart.
+  await step(`${label}: a RETUNED voice keeps following its §6 contour (#146)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.declickContourProof());
+    const p = r.retunedProfile;
+    // Logged before the assertions, for the same reason the step above logs first: the two
+    // rows ARE the evidence, and a run that trips on one of them should still report the rest.
+    console.log(
+      `       retuned: gain ${p.gains.map((g) => g.toFixed(5)).join(' ')} against contour ${p.contour.map((g) => g.toFixed(5)).join(' ')} at ${r.retuneTimes.map((t) => t.toFixed(2)).join(' ')} s — worst ${p.worstErrorDb.toFixed(2)} dB`,
+    );
+    console.log(
+      `       retuned: region ${p.regionSeconds.toFixed(4)} s, ${p.fadeStartGain.toFixed(5)} against ${p.fadeStartContour.toFixed(5)} at its fade start, ${p.endGain.toFixed(5)} past its end`,
+    );
+    if (!(p.gains[0] > 0.5)) {
+      throw new Error(`the retuned voice rendered ${p.gains[0].toFixed(5)} at its head — nothing sounded`);
+    }
+    // Two bends an octave down treble the region: 200 ms → 600 ms. Without that the readings
+    // below would fall inside the fade rather than on the contour, and would prove nothing.
+    if (!(p.regionSeconds > 0.5)) {
+      throw new Error(
+        `the retuned voice sounded for ${p.regionSeconds.toFixed(4)} s, where two octave-down bends should treble a 200 ms region — the fade did not follow the retune`,
+      );
+    }
+    // The defect as filed. Under the frozen contour every reading past 197 ms sticks at
+    // 0.6848, so the last of them is 10.7 dB above what the voice's own §6 envelope says.
+    if (!(p.worstErrorDb < 1)) {
+      const i = p.gains.findIndex((g, n) => Math.abs(20 * Math.log10(g / p.contour[n])) > 1);
+      throw new Error(
+        `at ${r.retuneTimes[i]} s the retuned voice held ${p.gains[i].toFixed(5)} where its §6 contour holds ${p.contour[i].toFixed(5)} (${p.worstErrorDb.toFixed(2)} dB worst) — the contour stopped running at the first fade start`,
+      );
+    }
+    // …and the re-lay MOVED §5.4's fade rather than lengthening it: the voice is still on its
+    // own contour three milliseconds before the end, and on true zero a millisecond past it.
+    const held = p.fadeStartGain / p.fadeStartContour;
+    if (!(held > 0.9 && held < 1.1)) {
+      throw new Error(
+        `the retuned voice held ${p.fadeStartGain.toFixed(5)} where its contour holds ${p.fadeStartContour.toFixed(5)} (×${held.toFixed(3)}) ${r.declickMs} ms before its end — the fade is not ${r.declickMs} ms long`,
+      );
+    }
+    if (!(p.endGain < 0.01)) {
+      throw new Error(
+        `the retuned voice was still at ${p.endGain.toFixed(5)} a millisecond past its end — the fade did not land on true zero`,
+      );
+    }
+  });
+
   await step(`${label}: a synced LFO follows the tempo (spec §6, issue #107)`, async () => {
     const rates = await page.evaluate(() => globalThis.__bangerboxAudioProbe.syncedLfoRates());
     // A 1/4-synced LFO is 1 Hz at 60 bpm and 4 Hz at 240 bpm; the free one ignores both.

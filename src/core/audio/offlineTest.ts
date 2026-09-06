@@ -29,6 +29,7 @@ import { DECLICK_FADE_MS } from '@/core/constants';
 import { MixerGraph } from './graph';
 import { createAudioBridge } from './audioBridge';
 import { programParamPath } from './params/registry';
+import { ampLevelAt } from './voiceEnvelope';
 
 export interface EffectRenderResult {
   inputRms: number;
@@ -614,6 +615,131 @@ export async function renderAmpProfileOffline(
   const rendered = await context.startRendering();
   pool.destroy();
   return ampProfile(rendered.getChannelData(0), sampleRate);
+}
+
+/**
+ * The moments {@link renderRetunedAmpProfileOffline} reads its voice at, in seconds from the
+ * note-on. All five sit well before the retuned region's own fade, so every one of them is a
+ * reading of the §6 contour rather than of the §5.4 declick.
+ *
+ * The middle three straddle the fade start the voice began with (197 ms) and the two a retune
+ * moved it to (347 ms, then 597 ms) — which is exactly where a frozen contour and a running
+ * one part company, and where no proof in this repository had ever looked.
+ */
+export const RETUNE_PROFILE_TIMES: readonly number[] = [0.02, 0.1, 0.25, 0.4, 0.55];
+
+/**
+ * What a RETUNED voice's amp gain did across its whole life (spec §5.4, §6, §11.2, issue #146).
+ */
+export interface RetunedAmpProfileResult {
+  /** Seconds from the note-on to the last frame above the noise floor — the retuned end. */
+  readonly regionSeconds: number;
+  /** The rendered gain at each of {@link RETUNE_PROFILE_TIMES} — the voice's own amp. */
+  readonly gains: readonly number[];
+  /** What the voice's §6 AHDSR holds at those same moments, from `ampLevelAt`. */
+  readonly contour: readonly number[];
+  /** The worst gap between the two rows above, in dB — the headline number. */
+  readonly worstErrorDb: number;
+  /**
+   * The gain `DECLICK_FADE_MS` before the retuned region ends, and what the §6 contour holds
+   * there. §5.4's fade is 3 ms long, so the voice is still on its contour at that moment — the
+   * reading that says the re-lay moved the fade rather than lengthening it.
+   */
+  readonly fadeStartGain: number;
+  readonly fadeStartContour: number;
+  /** The gain a millisecond past that end — §5.4's "true zero", so a fade that landed. */
+  readonly endGain: number;
+}
+
+/**
+ * Profile one pool voice that is RETUNED twice while it sounds (spec §5.4, §6, issue #146).
+ *
+ * Nothing in this repository had ever read the shape of a retuned voice: issue #87's
+ * assertions are LENGTHS, §14 `(ay)`'s profile has no retune in it, and `(bb)`'s reads a fall
+ * time at unity rate. A retune is the whole of issue #146, so the instrument has to carry one.
+ *
+ * The pad plays a CONSTANT sample, so every rendered frame IS the voice's own amp gain (§14
+ * `(ay)`'s instrument), and it carries a 200 ms region under a 500 ms LINEAR decay to sustain
+ * 0.2 — the one shape where the three candidate rules differ, because the region's end lands
+ * inside the voice's own decay. Two bends an octave down at 50 ms and 100 ms push that end out
+ * to 350 ms and then 600 ms, and every reading is taken before the fade at the end of it.
+ *
+ * Under the frozen model the gain sticks at the level the contour held at the FIRST fade start
+ * (0.6848) for the rest of the voice; under the running one it keeps decaying to its sustain.
+ * `worstErrorDb` is the difference, and it reaches 10.7 dB by 550 ms.
+ */
+export async function renderRetunedAmpProfileOffline(): Promise<RetunedAmpProfileResult> {
+  const sampleRate = 48_000;
+  const context = new OfflineAudioContext(1, Math.floor(sampleRate * 0.75), sampleRate);
+  const programId = 'retune-offline';
+  const program = { ...createDefaultDrumProgram('Retuned declick profile'), id: programId };
+  const pad = createDefaultPad(0);
+  pad.layers = [{ ...createDefaultVelocityLayer('offline'), velocityStart: 0, velocityEnd: 127 }];
+  pad.filter = { ...pad.filter, type: 'off' }; // nothing may colour the constant sample
+  const amp = { attack: 0, hold: 0, decay: 500, sustain: 0.2, release: 10, curve: 'linear' as const };
+  pad.envelopes = { ...pad.envelopes, amp };
+  program.pads = [pad];
+
+  const resolved = resolveVoice(program, 0, 127);
+  if (!resolved) {
+    return {
+      regionSeconds: 0,
+      gains: [],
+      contour: [],
+      worstErrorDb: 0,
+      fadeStartGain: 0,
+      fadeStartContour: 0,
+      endGain: 0,
+    };
+  }
+
+  const pool = new VoicePool(context);
+  const destination = context.createGain();
+  destination.connect(context.destination);
+  pool.trigger(
+    resolvedVoiceToTrigger(resolved, {
+      id: 'offline-retune',
+      buffer: constantBuffer(context, 0.2),
+      destination,
+      when: 0,
+      velocity: 127,
+      programId,
+      bpm: DEFAULT_BPM,
+    }),
+  );
+  // Two §10.2 bends an octave down, each halving the rate and so doubling what is left of the
+  // region. They travel `applyProgramDetune` → `retune` → `rescheduleDeclick`, which is the
+  // path a §7.8 `pitch` lane and a §6 live detune edit take as well.
+  pool.applyProgramDetune(programId, -1200, 0.05);
+  pool.applyProgramDetune(programId, -2400, 0.1);
+
+  const rendered = await context.startRendering();
+  pool.destroy();
+  const data = rendered.getChannelData(0);
+  const at = (seconds: number): number =>
+    Math.abs(data[Math.min(data.length - 1, Math.max(0, Math.round(seconds * sampleRate)))] ?? 0);
+  const gains = RETUNE_PROFILE_TIMES.map(at);
+  const contour = RETUNE_PROFILE_TIMES.map((t) => ampLevelAt(1, amp, 0, t));
+  const worstErrorDb = gains.reduce((worst, gain, i) => {
+    const want = contour[i]!;
+    if (want <= 0 || gain <= 0) return worst;
+    return Math.max(worst, Math.abs(20 * Math.log10(gain / want)));
+  }, 0);
+  // Where the signal really dies is where the fade LANDS, so the fade begins `DECLICK_FADE_MS`
+  // before it. The region's end is measured rather than predicted: the §4.3 dezipper on
+  // `detune` is treated as instantaneous by the integrator (issue #87) and a quarter-rate bend
+  // magnifies that approximation into about 12 ms of a 600 ms region.
+  const end = soundingSeconds(data, sampleRate);
+  const fadeStart = end - DECLICK_FADE_MS / 1000;
+  return {
+    regionSeconds: end,
+    gains,
+    contour,
+    worstErrorDb,
+    fadeStartGain: at(fadeStart),
+    fadeStartContour: ampLevelAt(1, amp, 0, fadeStart),
+    endGain: at(end + 0.001),
+  };
 }
 
 /**
