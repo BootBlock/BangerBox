@@ -1210,9 +1210,11 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   `trackwithdraw`, `bouncemix`, `padstrip`, `declick`, `voicelane`, `envlane`, `keygroupmix` and
   `voicerelease` were all like this, and **every one of them DID delete once its shell had
   gone** — `envlane` at the start of the keygroup-mixer work, `keygroupmix` at the start of the
-  voice-release work, `voicerelease` at the start of the declick re-lay work. None is standing
-  now. `git worktree list` is what says whether a directory is a registered worktree: one it
-  does not list is not another agent's work, so delete it if you can and ignore it if you cannot.
+  voice-release work, `voicerelease` at the start of the declick re-lay work. **`declickrelay`
+  is the one standing now**, and it is the declick re-lay work's own: `git worktree remove`
+  deregistered it and the branch is deleted, but the directory would not go. `git worktree list`
+  is what says whether a directory is a registered worktree: one it does not list is not another
+  agent's work, so delete it if you can and ignore it if you cannot.
 - **A §11.4 probe's own precondition guard must not fire where the DEFECT is what breaks
   it.** `keygroupMixProof` threw "the keygroup strip took no insert" against the unfixed
   build, because `addInsert` on a channel with no §4.2 strip writes nothing — so the step
