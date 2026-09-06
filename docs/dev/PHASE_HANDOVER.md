@@ -1,13 +1,13 @@
-# BangerBox — Phase Handover (after the voice-release closure)
+# BangerBox — Phase Handover (after the declick re-lay closure)
 
-Generated at the close of the §5.4 voice-release work per Protocol Alpha (spec §13.1). A
+Generated at the close of the §5.4 declick re-lay work per Protocol Alpha (spec §13.1). A
 new session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code,
 and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the voice-release work merged to `main` (`--no-ff`). All eight §12 phases were
+**State:** the declick re-lay work merged to `main` (`--no-ff`). All eight §12 phases were
 already complete; this was a defect closure against §5.4, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **2071 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **90/90 steps**), plus `lint`, `type-check`, `format:check`
+`package.json` `config.phase` remains **"8"**. Suite: **2079 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **92/92 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
 
 **A KEYGROUP program's §6 program-scope `mixer` and `inserts` are a §4.2 strip, and they take
@@ -43,7 +43,7 @@ note-on has not yet ARRIVED is, which offline is every voice a write can reach. 
 and §4.
 
 **An envelope TIME cannot ride a `ConstantSourceNode`, and that is why §14 (aw)'s pattern does
-not transfer.** `scheduleAmpAttack` reads the value once, in JavaScript, and writes four
+not transfer.** `scheduleAmpContour` reads the value once, in JavaScript, and writes four
 boundaries from it — there is no `AudioParam` to sum onto. The PAD holds the two times as
 plain numbers in the same `PadLane` record, and `applyPadParam` holds them for the voices
 still to be built AND re-lays the contour of any voice already built whose note-on is at or
@@ -108,6 +108,30 @@ RISE TIME.** Neither a level reading nor a length reading can see an attack: the
 reaches the same plateau either way, and the region ends where the buffer runs out whatever
 shape got it there. That is the same blindness that let issue #144 survive twenty proofs.
 
+**A voice's amp timeline is written FORWARD by ONE method, and `Voice.contourFrozenAt` is
+gone.** `VoicePool.layAmpTimeline` writes the §6 contour over the span a lay owns, then the
+§5.4 note-off release, then the end-of-buffer declick. Every span is explicit and closes on a
+RAMP, and the one cancel a lay makes is at the point that lay BEGINS and never earlier. See §2
+(bc) and §4.
+
+**`cancelAndHoldAtTime` truncates a ramp by REPLACING it with a held value, and a later cancel
+at an EARLIER time then loses the segment that ramp described.** It finds the held value, does
+not recognise it as a ramp, inserts nothing and removes it. That is §14 (az)'s narrowing applied
+to a param already cancelled once, which is what every re-lay after the first presents. It is
+why the §6 contour used to stop at a voice's first fade start and never restart.
+
+**Issue #146 was HALF right, and the half that was wrong is the useful one.** The departure
+level `rescheduleDeclick` read did match what the timeline held — `contourFrozenAt` was
+self-consistent to five decimal places. Freezing was never a rule anyone chose; it was damage,
+and the model described the damage faithfully. Measured: **3.91 dB** of error on a 60 ms region
+under a 500 ms decay, and a return to the full PEAK where a retune SHORTENED a region.
+
+**A claim about a RETUNED voice needs a profile that carries a retune.**
+`renderRetunedAmpProfileOffline` bends a 200 ms region under a 500 ms decay an octave down
+twice and reads the gain against `ampLevelAt` at five moments straddling all three fade starts:
+**0.00 dB** worst error, against **10.69 dB** on the unfixed build. Issue #87's assertions are
+lengths, §14 (ay)'s profile has no retune, and (bb)'s reads a fall at unity rate.
+
 **The §5.4 declick is 3 ms long, and it departs from a level the CALLER supplies.**
 `scheduleAmpDeclick` used `cancelAndHoldAtTime(fadeStart)` as its anchor, and that method pins a
 held value only where there is an event at or after the cancel time to REWRITE. A voice's amp
@@ -118,7 +142,7 @@ now. See §2 (ay) and §4.
 
 **Nothing on the public `AudioParam` surface reports the value a contour WILL hold at a future
 time.** `param.value` answers for now. That is why the level is computed rather than read:
-`ampLevelAt` evaluates the §6 AHDSR from the same four boundaries `scheduleAmpAttack` writes, so
+`ampLevelAt` evaluates the §6 AHDSR from the same four boundaries `scheduleAmpContour` writes, so
 the model and the sound cannot drift apart. A new fade that is the LAST thing on its timeline
 needs the same treatment.
 
@@ -310,6 +334,40 @@ All nineteen stand unchanged. Four that bear on recent work:
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
 
+- **(bc) — the declick re-lay closure (§5.4, §6, §11.2, §11.4).** The ⚑ items below are settled
+  policy a new session should treat as binding:
+  - ⚑ **A voice's amp timeline is written FORWARD by ONE method**, `VoicePool.layAmpTimeline`:
+    the §6 contour over the span this lay owns, the §5.4 note-off release, then the
+    end-of-buffer declick. Every span is explicit and closes on a RAMP, and the single cancel a
+    lay makes is at the point that lay BEGINS and never earlier. §5.4 was revised to record it.
+  - ⚑ **`cancelAndHoldAtTime` truncates a ramp by REPLACING it with a held value**, so a later
+    cancel at an EARLIER time finds no ramp, inserts nothing, removes that held value and loses
+    the segment it stood for. That is §14 (az)'s narrowing applied to a param already cancelled
+    once — the case every re-lay after the first presents, and the one (az) did not measure.
+  - ⚑ **`Voice.contourFrozenAt` is GONE, not repaired.** Nothing has to stop the §6 contour;
+    the field modelled damage the code itself did, faithfully enough that the departure level
+    it gave really was the level the param held. Freezing cost **3.91 dB** on a 60 ms region
+    under a 500 ms decay, and a return to the full PEAK where a retune SHORTENED a region.
+  - ⚑ **`scheduleAmpContour` takes a SPAN and `scheduleAmpDeclick` cancels nothing.** Two
+    points of a segment reproduce that segment, linearly and exponentially alike, so a span is
+    the contour rather than an approximation of it — and its closing ramp is what lets the next
+    lay's cancel truncate rather than destroy it.
+  - ⚑ **`layPreDeclick` WRITES what `preDeclickLevel` describes**, so the file's one model of
+    the timeline is checkable rather than merely self-consistent. `ampLevelNow` reads the same
+    model, so a §5.4 steal, choke or note-off after a retune departs from the running contour.
+  - **An UNRETUNED voice is unchanged to the sample, and no recorded §11.4 figure moved.** The
+    same smoke reproduces every number (ar) through (bb) recorded, on both builds. One that
+    looks moved is not: `ampEnvelopeLaneProof`'s live slow-attack peak reads 0.05526 (×0.198)
+    where (az) recorded 0.05454, and the UNFIXED build reads 0.05526 too.
+  - **A RETUNED voice is louder or quieter for longer, whichever its own §6 envelope says** — a
+    bend down on a decaying pad keeps decaying instead of holding, and a bend up no longer
+    restores the voice to its peak. That is the change, and it is what §5.4 asks for.
+  - ⚑ **A §11.4 proof must not assert how fast the machine is.** `voiceReleaseProof`'s §7.6
+    decode-race step demanded a §5.8 peak from a burst shorter than the gap between two meter
+    polls, and read 0.16703, 0.05568, 0.01856 and 0.00000 for an engine identical call for
+    call. The raced tap now uses a 150 ms release, and `AudioEngine.liveRaceSeconds` plus
+    `liveRaceBuilt` say whether the race happened and whether a voice existed at all.
+
 - **(bb) — the voice-release closure (§5.4, §6, §7.1.3, §7.6, §9.5, §11.2, §11.4).** The ⚑ items
   below are settled policy a new session should treat as binding:
   - **A sequenced note's §5.4 note-off is laid at that note's own NOTE-ON**, from
@@ -419,11 +477,9 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
     fade beginning at its note-on. Its degenerate case is stated rather than hidden: a voice
     shorter than its own §6 attack departs from silence and is silent — unchanged by this
     work, and pinned by a test so it is not rediscovered as a defect.
-  - ⚑ **A RE-LAID fade reads the contour where it STOPPED — the EARLIEST fade start the
-    voice has had, tracked as a running minimum in `Voice.contourFrozenAt`.** Reading the
-    previous one is right for a single retune and wrong for every one after it; a §7.8 pitch
-    lane re-lays every `SCHEDULER_INTERVAL_MS`, so the level walks down a frozen contour a
-    window at a time.
+  - ⚑ **A RE-LAID fade used to read the contour where it STOPPED, tracked as a running
+    minimum in `Voice.contourFrozenAt`. That field is GONE** — see (bc): nothing has to stop
+    the contour, and freezing it held a voice at a level its own §6 envelope had left behind.
   - ⚑ **The §5.9 preview shared the helper and shared the defect to five decimal places.** It
     passes unity, which is where an audition's own amp sits for its whole life.
   - ⚑ **Absolute RMS figures recorded in §14 since (t) are superseded**; ratios, peaks and
@@ -1117,6 +1173,18 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   had been. **A ramp that has to depart from a known level is given that level**, never left to
   the method. `rampParamLinear` (§14 (ar)) still anchors this way deliberately, for a param
   already carrying a later RAMP.
+- **The same method DESTROYS a segment when it is called a second time, EARLIER.** It truncates
+  the ramp it finds by REPLACING that ramp with a held value; a later cancel before that point
+  finds the held value, does not recognise it as a ramp, inserts nothing and removes it — and
+  the segment the ramp described is gone. Measured in Edge on the §6 AHDSR's own shape: a
+  200 ms region under a 500 ms decay, re-laid after a retune upward, holds the PEAK across its
+  whole life. That is issue #146, and the answer is to write every span explicitly and close it
+  on a RAMP, never to cancel earlier than where the current write begins.
+- **A §11.4 proof must never assert how fast the MACHINE is.** The §5.8 meter reports the peak
+  of its last render quantum and `soundingOver` polls every 16 ms, so any burst shorter than
+  two polls is a lottery: `voiceReleaseProof`'s §7.6 decode-race tap read 0.16703, 0.05568,
+  0.01856 and 0.00000 with the engine identical call for call. Give the thing under test a span
+  several polls long, or read something that does not depend on when the poll lands.
 - **A voice's amp gain can be profiled directly by playing a CONSTANT sample.** Every rendered
   frame is then the gain itself, so a 3 ms fade can be told from a 250 ms one without estimating
   an envelope from a tone. `renderAmpProfileOffline` and `renderPreviewProfileOffline` in
@@ -1135,14 +1203,12 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
 - **A removed worktree can leave an EMPTY directory behind under `.claude/worktrees/`.** A
   lingering shell holds its CWD, so `git worktree remove` and `rm -rf` both fail with
   "Permission denied" / "Device or resource busy". `slotshift`, `padchannel`, `slotlimit`,
-  `trackwithdraw`, `bouncemix`, `padstrip`, `declick`, `voicelane`, `envlane` and `keygroupmix`
-  were all like this, and every one of them DID delete once its shell had gone — `envlane` at
-  the start of the keygroup-mixer work, `keygroupmix` at the start of the voice-release work —
-  so try again before assuming otherwise. **`voicerelease` is the one still standing**, and it
-  is the voice-release work's own: `git worktree remove` deregistered it and the branch is
-  deleted, but the directory would not go. `git worktree list` is what says whether a directory
-  is a registered worktree: one it does not list is not another agent's work, so delete it if
-  you can and ignore it if you cannot.
+  `trackwithdraw`, `bouncemix`, `padstrip`, `declick`, `voicelane`, `envlane`, `keygroupmix` and
+  `voicerelease` were all like this, and **every one of them DID delete once its shell had
+  gone** — `envlane` at the start of the keygroup-mixer work, `keygroupmix` at the start of the
+  voice-release work, `voicerelease` at the start of the declick re-lay work. None is standing
+  now. `git worktree list` is what says whether a directory is a registered worktree: one it
+  does not list is not another agent's work, so delete it if you can and ignore it if you cannot.
 - **A §11.4 probe's own precondition guard must not fire where the DEFECT is what breaks
   it.** `keygroupMixProof` threw "the keygroup strip took no insert" against the unfixed
   build, because `addInsert` on a channel with no §4.2 strip writes nothing — so the step
@@ -1174,18 +1240,20 @@ transient channel still stand. New this work:
 - **`resolvedVoiceToTrigger` is the ONE seam the live dispatcher and the §9.5 render both map
   through**, so the note-off a bounce lays and the one live playback lays are the same field
   read the same way. `SchedulerCore` fills it at its own tempo; `bounceService` at the SEGMENT's.
-- **`VoicePool.layNoteOff` is the one place a note-off reaches the timeline**, and it decides
-  which of the release and the §5.4 declick owns the voice's end by where the release LANDS:
-  inside the region the release is the end (its own cancel erases the declick); outliving the
-  region the declick is re-laid from the RELEASE line's level at its fade start; at or after
-  that fade start nothing is laid. A new way to end a voice early goes through it.
+- **`VoicePool.layAmpTimeline` is the one place ANY of a voice's amp timeline reaches the
+  param**, and it decides which of the release and the §5.4 declick owns the voice's end by
+  where the release LANDS: inside the region the release is the end and no fade is written;
+  outliving the region the release ramp is truncated INTO the fade, which departs from the level
+  that ramp holds there; at or after the fade start the release is not laid at all. A new way to
+  end a voice early goes through it, and a new lay never cancels earlier than where it begins.
 - **`VoicePool.preDeclickLevel` is what the voice's amp holds BEFORE the end-of-region fade** —
-  the §6 contour, or the release line from the note-off onwards. `ampLevelNow` and
-  `rescheduleDeclick` both read it, so this file keeps ONE model of the timeline; whether that
-  model is right at all is still issue #146, and the two must not answer it differently.
-- **`Voice.declickLevel` banks what the fade in force was GIVEN.** Every lay writes it —
-  `buildVoice`, `rescheduleDeclick`, `relayAmpContour`, `layNoteOff` — because a release still
-  in flight at the fade start is what that fade departs from, and the §6 contour is not.
+  the §6 contour where it RUNS, or the release line from the note-off onwards. `ampLevelNow` and
+  `layAmpTimeline` both read it, so this file keeps ONE model of the timeline — and
+  `layPreDeclick` WRITES exactly what it describes, which is what makes the model checkable
+  rather than merely self-consistent.
+- **`Voice.declickLevel` banks what the fade in force was GIVEN**, because a release still in
+  flight at the fade start is what that fade departs from, and the §6 contour is not. One method
+  writes it now, so there is nowhere for the four callers to disagree.
 - **`relayAmpContour` re-lays the NOTE-OFF as well**, last, so it erases the part of the fresh
   contour it supersedes. A §7.8 `amp.release` lane reaches a voice built ahead of the write,
   whose release ramp was written from the value being replaced.
@@ -1198,17 +1266,18 @@ transient channel still stand. New this work:
 - **`VoiceTriggerSpec.note` is the voice's own note**, used to match a §7.6 note-off and as the
   §6 `noteNumber` mod source. `noteFromPadKey` derived the second from the pad key and is gone —
   two derivations of one fact is what "ONE place" exists to stop.
-- **Every lay of the amp timeline calls `layNoteOff` LAST** — the trigger, `rescheduleDeclick`
-  and `relayAmpContour`. All three move the fade start its lay/skip decision is made against,
-  and two of them rewrite the very ramp it lays. A new lay does the same, or a note-off outside
-  the old region is never revisited once a retune grows the region past it.
-- **`Voice.declickLaid` says whether the end-of-region fade is still ON the timeline.** A
-  note-off landing inside the region erases it, as part of `scheduleAmpRelease`'s own cancel,
-  and `ampLevelNow` must stop reading its line or a later steal steps the gain UP out of
-  silence — which `voiceRefs` makes the common case rather than a corner, by preferring exactly
-  those voices.
+- **Every lay of the amp timeline IS one call**, from the trigger, `rescheduleDeclick`,
+  `relayAmpContour` and `release`. All four move the fade start the note-off's lay/skip decision
+  is made against, so that decision is re-taken every time; and the release is written in its own
+  place in TIME ORDER rather than over a fade it would then have to cut back. Nothing is
+  scheduled only to be erased.
+- **`Voice.declickLaid` says whether the end-of-region fade is on the timeline at ALL.** Where
+  a note-off lands inside the region the release is the voice's end and no fade is written, and
+  `ampLevelNow` must not read a line that was never drawn or a later steal steps the gain UP out
+  of silence — which `voiceRefs` makes the common case rather than a corner, by preferring
+  exactly those voices.
 - **`VoicePool.releaseSeconds` is the one rule for how long a note-off fades**: the §6 release,
-  or `DECLICK_FADE_MS` where §6 asks for zero. It is one function because `layNoteOff` WRITES
+  or `DECLICK_FADE_MS` where §6 asks for zero. It is one function because `layPreDeclick` WRITES
   that ramp and `preDeclickLevel` READS it, and §6 `release` is `nonNegative` with an §8.5.5
   field that offers 0 — a zero-length ramp is the hard cut §5.4 forbids every way a voice ends.
 - **`AudioEngine.heldLiveNotes` is what closes the §7.6 decode race.** The first hit of a pad
@@ -1254,9 +1323,10 @@ transient channel still stand. New this work:
 - **`applyPadParam`'s envelope cases re-lay every voice whose `startTime >= when`, and no
   other.** That is the mirror of the `detune` case, and the half without which a lane renders
   as nothing: offline every voice exists before any ramp is applied.
-- **`relayAmpContour` erases from the voice's note-on and rewrites the whole contour**, because
-  an envelope time moves all four boundaries `scheduleAmpAttack` writes. It moves neither the
-  region's end nor `contourFrozenAt` — an envelope time is not the playback rate.
+- **`relayAmpContour` lays from the voice's note-on**, because an envelope time moves all four
+  boundaries `scheduleAmpContour` writes. It does not move the region's END — an envelope time is
+  not the playback rate — and it is safe to erase from the note-on because it only ever runs on a
+  voice that has not started.
 - **`Voice.declickEndTime` is banked beside `declickFadeStart`**, so a re-lay need not re-solve
   the region end. Anything that re-lays a fade without moving it reads them both.
 - **`VoicePool.ampLevelNow` is the ONE answer to "what does this voice's amp hold now"**, and
@@ -1308,7 +1378,7 @@ transient channel still stand. New this work:
 **Ending a voice (spec §5.4, §5.9, §6):**
 
 - **`voiceEnvelope.ts` owns the §6 amp contour twice over, and the two descriptions are one.**
-  `scheduleAmpAttack` writes the four AHDSR boundaries to the param and `ampLevelAt` evaluates
+  `scheduleAmpContour` writes the four AHDSR boundaries to the param and `ampLevelAt` evaluates
   the same four, so the model and the sound cannot drift — the discipline
   `modEnvelopeBreakpoints` already keeps for the §5.4 declick's detune integrator. A new §6 amp
   stage goes in both, or the declick departs from a level the voice never reaches.
@@ -1323,11 +1393,15 @@ transient channel still stand. New this work:
   reads `ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, …)`; `PreviewChannel` passes 1.
 - **`Voice` carries `amp` and `ampPeak`, and `releaseMs` is gone.** The envelope IS the release
   time, and the same two fields are what every re-lay evaluates the departure level from.
-- **`rescheduleDeclick` reads the contour at `voice.contourFrozenAt`, a running MINIMUM of
-  every fade start the voice has had.** Each lay truncates the §6 AHDSR at its own fade start
-  and nothing restarts it, so that earliest point is where the contour stopped. Reading
-  `declickFadeStart` — the fade currently in force — is right for one retune and wrong for
-  every one after it, which is the defect the review caught.
+- **`rescheduleDeclick` re-lays the contour rather than reading a frozen one**, through
+  `layAmpTimeline` at the moment of the retune. `Voice.contourFrozenAt` is gone: nothing has to
+  stop the §6 AHDSR, and the field modelled damage the code itself did (issue #146).
+- **`scheduleAmpContour(param, peak, amp, noteOn, from, until)` takes a SPAN**, and closes it on
+  a ramp landing on the contour's own value at `until`. Two points of a segment reproduce that
+  segment, linearly and exponentially alike, so a span is the contour rather than an
+  approximation of it — and the closing ramp is what lets the next lay's cancel truncate it.
+- **`scheduleAmpDeclick` cancels NOTHING.** The caller owns the timeline up to the fade start; a
+  §5.9 audition builds a fresh gain node per hit and never had anything beyond its own unity.
 - **`scheduleAmpRelease` takes a departure level like the declick does**, because
   `cancelAndHoldAtTime` pins one only where the event it finds is a RAMP and the declick's
   first event is a `setValueAtTime`. A new interruption fade goes through it and asks
@@ -2163,9 +2237,9 @@ to the `check:orphans` allowlist.
 - **A keygroup with a §6 `noteNumber` mod route sounds different.** `noteFromPadKey` gave 0 for
   every keygroup voice; the note now travels on the trigger spec. Recorded rather than
   smuggled — see §14 (bb) item (7).
-- **`rescheduleDeclick`'s departure level is untouched and still unresolved** (#146).
-  `preDeclickLevel` is where a note-off joins that one model, so both answers still move
-  together; settling #146 still needs a browser profile of a RETUNED voice.
+- **`rescheduleDeclick`'s departure level was untouched by that work and is now settled**
+  (#146, §14 (bc)). `preDeclickLevel` is where a note-off joined that one model, and both
+  answers moved together when the model was replaced.
 - **Four of the six review findings are defects this work made REACHABLE rather than
   introduced**, which is what closing a path nothing used to take does: a §6 release of ZERO
   wrote a zero-length ramp (a hard cut, one §8.5.5 control away); an in-region note-off erased
@@ -2259,10 +2333,9 @@ narrowed (#146, still open). Nothing was added to the `check:orphans` allowlist.
   start where a ramp had been, so the method inserted nothing and the fade drew its line from
   the note-on. **No recorded §11.4 figure moved**: the same smoke reproduces every number §14
   (ar), (as), (av), (aw), (ax) and (ay) recorded, because no recorded step steals or chokes.
-- **`rescheduleDeclick` is untouched and its departure level is unresolved** (#146). It reads
-  at `Voice.contourFrozenAt` on (ay)'s claim that each lay truncates the §6 AHDSR, and that
-  claim rests on the same reading of `cancelAndHoldAtTime` item above narrowed. Settling it
-  needs a browser profile of a RETUNED voice, which no proof has ever read.
+- **`rescheduleDeclick` was untouched by that work; #146 has since settled it** (§14 (bc)).
+  (ay)'s claim that each lay truncates the §6 AHDSR is true, and the conclusion drawn from it
+  was not: the truncation is damage rather than a rule, and the contour now runs.
 - **No §7.8 address reaches a KEYGROUP's voices**, before or after this, and `changedPadLeaves`
   skips non-drum programs. Pre-existing, untouched, adjacent to #139.
 - **Every regression test was proven against the code it was written to catch.** The defect as
@@ -2612,15 +2685,11 @@ sound-design parameter still renders as nothing (#138), listed below. Nothing wa
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-**#145, #139, #143, #144, #142, #141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**,
-and #140 and #146 remain open.
+**#146, #145, #139, #143, #144, #142, #141, #138, #137, #135, #134, #133, #132 and #131 are
+CLOSED**, and #140 remains open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **#146** `rescheduleDeclick` reads its departure level at `Voice.contourFrozenAt` on a claim
-  about `cancelAndHoldAtTime` that §14 (az) narrowed, and the figures behind that claim come
-  from the §11.3 fake context. Settling it needs a browser profile of a RETUNED voice, which
-  no proof has ever read.
 - **#140** a §7.8 `program:<id>.pad:<idx>.amp` or `.pan` edit changes the pad and the graph and
   leaves the Mixer's own fader showing the old position until a reload. Two registered §7.8
   addresses reach one value and only the mixer side writes through; the publish deliberately
@@ -2904,12 +2973,13 @@ and #140 and #146 remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**2071**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **90/90 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**2079**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **92/92 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
 
 **`factoryPacks.test.ts`'s determinism test is marginal on a loaded machine.** It builds every
 §9.8 pack once at module scope and once inside the test against vitest's 5 s default, and the
 second build takes about two seconds when the machine is quiet and over five when it is not. A
 `Test timed out in 5000ms` there is machine load, not a §9.8 regression — re-run the file on its
-own before believing it. Pre-existing; the voice-release work neither caused nor fixed it.
+own before believing it. Pre-existing; neither the voice-release nor the declick re-lay work
+caused or fixed it.
