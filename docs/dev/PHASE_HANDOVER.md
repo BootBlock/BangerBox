@@ -366,7 +366,11 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
     decode-race step demanded a §5.8 peak from a burst shorter than the gap between two meter
     polls, and read 0.16703, 0.05568, 0.01856 and 0.00000 for an engine identical call for
     call. The raced tap now uses a 150 ms release, and `AudioEngine.liveRaceSeconds` plus
-    `liveRaceBuilt` say whether the race happened and whether a voice existed at all.
+    `liveRaceBuilt` say whether the race happened and whether a voice existed at all. One run
+    shows both halves: the dev pass waited 10.7 ms and sounded 8.9 % at 0.26354, the offline
+    pass waited 0.0 ms and was correctly silent. `liveRaceSeconds` reads 0 for an instant race
+    AND for a tap that reached no voice, so only `liveRaceBuilt` can tell a defect from a fast
+    machine — assert it unconditionally.
 
 - **(bb) — the voice-release closure (§5.4, §6, §7.1.3, §7.6, §9.5, §11.2, §11.4).** The ⚑ items
   below are settled policy a new session should treat as binding:
