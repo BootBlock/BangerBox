@@ -544,7 +544,7 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     pool.destroy();
   });
 
-  it('re-bases the frozen contour it erases, so the fade departs from where it now stops', () => {
+  it('re-lays the contour it erases, so the fade departs from where the fresh one runs', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
     // A four-second decay under a one-second region, so the contour is still running at BOTH
@@ -559,11 +559,11 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     };
     pool.trigger(spec(context, { id: 'future', when: 1, velocity: 127, gainDb: 0, amp: decaying }));
     // A §10.2 bend an octave DOWN on a voice that has not started: it doubles the region, so
-    // the fade moves later while `contourFrozenAt` keeps the earlier point (issue #144).
+    // the fade moves later (issue #144).
     pool.applyProgramDetune('p1', -1_200, 0.95);
-    // The re-lay writes the contour AFRESH from the note-on, so no earlier freeze survives it:
-    // the level the fade departs from is the contour's value at THIS fade's own start, and the
-    // stale frozen point would depart from a level the timeline no longer holds.
+    // The re-lay writes the contour AFRESH from the note-on, so the level the fade departs
+    // from is the contour's value at THIS fade's own start — a level the fresh contour really
+    // reaches, rather than one an earlier lay left behind.
     pool.applyPadParam('p1:0', 'ampAttack', 5, 0.95);
     const gain = ampGainsOf(fake)[0]!;
     const held = gain.calls.filter((call) => call.method === 'setValueAtTime');

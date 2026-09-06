@@ -502,6 +502,15 @@ export interface VoiceReleaseResult {
    * how fast the machine is (issue #146).
    */
   readonly liveRaceSeconds: number;
+  /**
+   * Whether that tap built a voice at ALL — the half {@link liveRaceSeconds} cannot answer.
+   *
+   * It reads 0 both for a decode that settled inside a render quantum and for a tap that
+   * reached no voice whatever, and only the second is a defect. Without this, a build where
+   * the note-off PREVENTED the voice would skip the peak assertion in silence, which is
+   * exactly what that assertion exists to catch (issue #146).
+   */
+  readonly liveRaceBuilt: boolean;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -4879,10 +4888,12 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
       amp: { ...basePad.envelopes.amp, release: RACE_RELEASE_MS },
     },
   });
+  const notesBefore = engine.scheduledNoteCount();
   engine.triggerLiveNote(trackId, 0, 100, true);
   engine.triggerLiveNote(trackId, 0, 0, false);
   const race = await soundingOver(1_500);
   const raceSeconds = engine.liveRaceSeconds();
+  const raceBuilt = engine.scheduledNoteCount() > notesBefore;
   await delay(400);
 
   const livePass = async (): Promise<{ fraction: number; peak: number }> => {
@@ -4922,6 +4933,7 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
     liveRaceSounding: race.fraction,
     liveRacePeak: race.peak,
     liveRaceSeconds: raceSeconds,
+    liveRaceBuilt: raceBuilt,
   };
 }
 

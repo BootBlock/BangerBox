@@ -318,10 +318,10 @@ interface Voice {
   /**
    * Whether the end-of-region fade those three fields describe is still ON the timeline.
    *
-   * A §5.4 note-off landing inside the region erases it, as part of the cancel that lays the
-   * release, and the voice is then silent from the release's end rather than from the region's
-   * (issue #145). Reading the fade's line after that would step the gain UP out of that
-   * silence, and `voiceRefs` makes exactly these voices the preferred steal victims.
+   * Where a §5.4 note-off lands inside the region the release IS the voice's end, so no fade
+   * is written at all and the voice is silent from the release's end rather than from the
+   * region's (issue #145). Reading the fade's line after that would step the gain UP out of
+   * that silence, and `voiceRefs` makes exactly these voices the preferred steal victims.
    */
   declickLaid: boolean;
   /**
@@ -893,7 +893,7 @@ export class VoicePool {
 
   /**
    * The seconds this voice's §5.4 note-off actually fades over — its §6 release, or
-   * `DECLICK_FADE_MS` where §6 asks for zero. It is one function because {@link layNoteOff}
+   * `DECLICK_FADE_MS` where §6 asks for zero. It is one function because {@link layPreDeclick}
    * WRITES that ramp and {@link preDeclickLevel} READS it, and a fade the two disagreed about
    * is the disagreement between the model and the sound this file exists to prevent.
    */
@@ -1108,11 +1108,7 @@ export class VoicePool {
       released: false,
       stopScheduled: false,
     };
-    // Declick the natural end of the region (spec §5.4). On a coupled source the detune
-    // contour IS the playback rate, so the end is integrated from it and a pitch envelope,
-    // glide or pitch LFO lands the fade where the buffer truly runs out (issue #87); a later
-    // retune moves it (`rescheduleDeclick`). A §5.7.9 warp source decouples the two, so its
-    // end is simply its own length and nothing can move it.
+    // The voice's whole amp timeline — §6 contour, note-off and §5.4 declick — in one lay.
     this.layAmpTimeline(voice, endTime, now);
     // A finite source ends on its own → teardown; stolen/choked voices end after the fade.
     source.setOnEnded(() => this.teardown(spec.id));

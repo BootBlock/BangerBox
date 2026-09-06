@@ -1459,6 +1459,15 @@ async function assertShellAndSelfTest(page, label) {
     // hear, on every build, by §5.4's own clamp on a voice shorter than its own attack. Read
     // unconditionally the assertion measures how fast the machine is: the same tap has been
     // seen at 0.16703, 0.05568, 0.01856 and 0.00000 with the engine identical call for call.
+    //
+    // A voice must exist EITHER way, and that is asserted unconditionally: `liveRaceSeconds`
+    // reads 0 both for a decode that settled inside a quantum and for a tap that reached no
+    // voice at all, so without this the conditional below would let the second pass in silence.
+    if (!r.liveRaceBuilt) {
+      throw new Error(
+        `the tap released during the decode built no voice at all — a note-off must release a voice, not prevent one`,
+      );
+    }
     const RACE_AUDIBLE_SECONDS = 0.005;
     if (r.liveRaceSeconds >= RACE_AUDIBLE_SECONDS && !(r.liveRacePeak > 0.05)) {
       throw new Error(
