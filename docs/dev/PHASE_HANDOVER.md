@@ -1065,13 +1065,13 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   those files on its FIRST pass, before any mutation has been applied.
 - **A removed worktree can leave an EMPTY directory behind under `.claude/worktrees/`.** A
   lingering shell holds its CWD, so `git worktree remove` and `rm -rf` both fail with
-  "Permission denied" / "Device or resource busy". `envlane` is the one still standing, and it
-  is THIS work's own: `git worktree remove` deregistered it and the branch is deleted, but the
-  directory would not go. `slotshift`, `padchannel`, `slotlimit`, `trackwithdraw`, `bouncemix`,
-  `padstrip`, `declick` and `voicelane` were others, and every one of those DID delete once its
-  shell had gone — `declick` went at the start of this work and `voicelane` at the end of it —
-  so try again before assuming otherwise. `git worktree list` shows only `main`, so `envlane`
-  is not another agent's work: delete it if you can and ignore it if you cannot.
+  "Permission denied" / "Device or resource busy". `keygroupmix` is the one still standing, and
+  it is THIS work's own: `git worktree remove` deregistered it and the branch is deleted, but
+  the directory would not go. `slotshift`, `padchannel`, `slotlimit`, `trackwithdraw`,
+  `bouncemix`, `padstrip`, `declick`, `voicelane` and `envlane` were others, and every one of
+  those DID delete once its shell had gone — `envlane` went at the start of this work — so try
+  again before assuming otherwise. `git worktree list` shows only `main`, so `keygroupmix` is
+  not another agent's work: delete it if you can and ignore it if you cannot.
 - **A §11.4 probe's own precondition guard must not fire where the DEFECT is what breaks
   it.** `keygroupMixProof` threw "the keygroup strip took no insert" against the unfixed
   build, because `addInsert` on a channel with no §4.2 strip writes nothing — so the step
