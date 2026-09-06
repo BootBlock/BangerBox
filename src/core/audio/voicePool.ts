@@ -316,6 +316,15 @@ interface Voice {
    */
   declickLevel: number;
   /**
+   * Whether the end-of-region fade those three fields describe is still ON the timeline.
+   *
+   * A §5.4 note-off landing inside the region erases it, as part of the cancel that lays the
+   * release, and the voice is then silent from the release's end rather than from the region's
+   * (issue #145). Reading the fade's line after that would step the gain UP out of that
+   * silence, and `voiceRefs` makes exactly these voices the preferred steal victims.
+   */
+  declickLaid: boolean;
+  /**
    * Context time this voice's §5.4 note-off falls, or null while it has none.
    *
    * A sequenced note's off is laid at its own NOTE-ON, from the length the note states
@@ -718,6 +727,7 @@ export class VoicePool {
     voice.declickFadeStart = fadeStart;
     voice.contourFrozenAt = fadeStart;
     voice.declickLevel = ampLevelAt(voice.ampPeak, amp, voice.startTime, fadeStart);
+    voice.declickLaid = true;
     scheduleAmpDeclick(param, voice.declickEndTime, voice.startTime, DECLICK_FADE_MS, voice.declickLevel);
     this.layNoteOff(voice);
   }
@@ -829,6 +839,12 @@ export class VoicePool {
     voice.declickFadeStart = fadeStart;
     voice.declickEndTime = endTime;
     voice.declickLevel = level;
+    voice.declickLaid = true;
+    // The retune has MOVED the fade start `layNoteOff` decides against, so the decision is
+    // taken again: a note-off that fell at or after the old fade start — and so laid nothing —
+    // is now inside a longer region and must be laid, and one already laid is rewritten over
+    // the fresh fade rather than left under a cancel that has just erased half of it.
+    this.layNoteOff(voice);
   }
 
   /**
@@ -850,13 +866,31 @@ export class VoicePool {
    *  - Falls at or after the fade start: nothing is laid at all. That fade already reaches true
    *    zero at the region's end, sooner than any §6 release could, so a release there has
    *    nothing left to fade and could only lift the level back up.
+   *
+   * It is called from every lay of the amp timeline — the trigger, `rescheduleDeclick` and
+   * `relayAmpContour` — rather than once, because all three can move the fade start this
+   * decision is made against, and because two of them rewrite the very ramp it lays.
+   *
+   * **A §6 release of ZERO gets `DECLICK_FADE_MS` instead**, which is not a clamp on the
+   * envelope but §5.4's no-hard-cut rule applied where a §6 value can ask for one: the schema
+   * admits 0 and §8.5.5's field offers it, and a zero-length ramp is exactly the step to
+   * silence §5.4 forbids "every way a voice ends". Every other release, however short, still
+   * runs at its own length.
    */
   private layNoteOff(voice: Voice): void {
     const off = voice.noteOffAt;
     if (off === null || off >= voice.declickFadeStart) return;
     const level = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, Math.min(off, voice.contourFrozenAt));
-    const end = scheduleAmpRelease(voice.ampGain.gain, off, voice.amp.release, level);
-    if (end < voice.declickFadeStart) return;
+    const end = scheduleAmpRelease(voice.ampGain.gain, off, this.releaseSeconds(voice) * 1000, level);
+    if (end < voice.declickFadeStart) {
+      // The cancel inside `scheduleAmpRelease` has just ERASED the end-of-region fade, so the
+      // voice's own record of it must stop describing the timeline: the amp is at zero from
+      // `end` onwards, and an interruption after the erased fade start would otherwise be told
+      // to depart from a line that is no longer there — stepping the gain UP out of silence.
+      voice.declickLaid = false;
+      return;
+    }
+    voice.declickLaid = true;
     voice.declickLevel = this.preDeclickLevel(voice, voice.declickFadeStart);
     scheduleAmpDeclick(voice.ampGain.gain, voice.declickEndTime, off, DECLICK_FADE_MS, voice.declickLevel);
   }
@@ -875,9 +909,18 @@ export class VoicePool {
     const contour = (at: number): number =>
       ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, Math.min(at, voice.contourFrozenAt));
     if (off === null || when <= off) return contour(when);
-    const span = voice.amp.release / 1000;
-    if (span <= 0) return 0;
+    const span = this.releaseSeconds(voice);
     return contour(off) * Math.max(0, 1 - (when - off) / span);
+  }
+
+  /**
+   * The seconds this voice's §5.4 note-off actually fades over — its §6 release, or
+   * `DECLICK_FADE_MS` where §6 asks for zero. It is one function because {@link layNoteOff}
+   * WRITES that ramp and {@link preDeclickLevel} READS it, and a fade the two disagreed about
+   * is the disagreement between the model and the sound this file exists to prevent.
+   */
+  private releaseSeconds(voice: Voice): number {
+    return (voice.amp.release > 0 ? voice.amp.release : DECLICK_FADE_MS) / 1000;
   }
 
   /**
@@ -888,9 +931,13 @@ export class VoicePool {
    * in force was GIVEN and reaching zero at the region's end — an interruption in the last
    * three milliseconds of a voice is a corner, and this is what stops it stepping UP. Before
    * the fade it is {@link preDeclickLevel}.
+   *
+   * `declickLaid` is what says whether that fade is still on the timeline at all: a §5.4
+   * note-off landing inside the region ERASES it, and reading its line afterwards would step
+   * the gain up out of the silence the release left (spec §5.4, issue #145).
    */
   private ampLevelNow(voice: Voice, when: number): number {
-    if (when <= voice.declickFadeStart) return this.preDeclickLevel(voice, when);
+    if (!voice.declickLaid || when <= voice.declickFadeStart) return this.preDeclickLevel(voice, when);
     const span = voice.declickEndTime - voice.declickFadeStart;
     if (span <= 0) return 0;
     return voice.declickLevel * Math.max(0, 1 - (when - voice.declickFadeStart) / span);
@@ -1072,6 +1119,7 @@ export class VoicePool {
       declickFadeStart: fadeStart,
       declickEndTime: endTime,
       declickLevel,
+      declickLaid: true,
       contourFrozenAt: fadeStart,
       noteOffAt: null,
       startTime: now,

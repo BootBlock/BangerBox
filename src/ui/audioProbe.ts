@@ -483,6 +483,13 @@ export interface VoiceReleaseResult {
   readonly liveOneShotSounding: number;
   /** The live master peak, so a silent live pass cannot pass as a short one. */
   readonly livePeak: number;
+  /**
+   * Fraction of a window the master meter reads signal for after a §7.6 tap RELEASED before
+   * the pad's first, uncached sample finished decoding — the race `soundResolvedVoice` closes.
+   */
+  readonly liveRaceSounding: number;
+  /** That pass's own peak, so a hit that never sounded cannot pass as one that was released. */
+  readonly liveRacePeak: number;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -4678,6 +4685,10 @@ function fallSeconds(data: Float32Array, sampleRate: number, from: number, to: n
  *     A `poly` pad releasing 20 ms after a 125 ms note sounds for a fourteenth of the bar; the
  *     same pad as `oneShot` sounds for its whole 1.2 s region. That is what says the §7.1.4
  *     dispatcher hands the note's length to the pool, which no offline render can show.
+ *  3. **A §7.6 tap released before its own sample finished decoding**, read the same way. The
+ *     FIRST hit of a pad waits on that decode, so the note-off used to reach a voice that did
+ *     not exist yet — and a live hit carries no length, so it then sustained for the whole
+ *     region. It runs before the live passes because it needs the engine's cache COLD.
  *
  * The §8.5.5 write goes through `useProgramStore.upsertPad`, the action that control calls, so
  * what is proven is that the CONTROL changes the sound rather than that the pool can be made
@@ -4823,6 +4834,23 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
     const sounding = readings.filter((value) => value > peak * 0.05).length;
     return { fraction: sounding / readings.length, peak };
   };
+  // The decode race, FIRST, because it needs the engine's own sample cache to be cold: the
+  // bounces above decode into `bounceService`'s cache, not this one. The first hit of a pad
+  // waits on that decode, so a tap short enough to end before the promise settles used to
+  // release a voice that did not exist yet — and a §7.6 live hit carries no length, so the
+  // voice then sustained for the whole 1.2 s region rather than the 20 ms release.
+  editPad({
+    playbackMode: 'poly',
+    envelopes: {
+      ...basePad.envelopes,
+      amp: { ...basePad.envelopes.amp, release: SHORT_RELEASE_MS },
+    },
+  });
+  engine.triggerLiveNote(trackId, 0, 100, true);
+  engine.triggerLiveNote(trackId, 0, 0, false);
+  const race = await soundingOver(1_500);
+  await delay(400);
+
   const livePass = async (): Promise<{ fraction: number; peak: number }> => {
     transport().play();
     await delay(300); // past the first hit, so the meter is reading programme material
@@ -4857,6 +4885,8 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
     livePolySounding: poly.fraction,
     liveOneShotSounding: oneShotLive.fraction,
     livePeak: Math.max(poly.peak, oneShotLive.peak),
+    liveRaceSounding: race.fraction,
+    liveRacePeak: race.peak,
   };
 }
 

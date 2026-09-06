@@ -63,6 +63,12 @@ export class AudioEngine {
   private readonly programBuffers = new Map<string, AudioBuffer>();
   /** Reversed copies for §6 reversed layers, one per decoded buffer (spec §6). */
   private readonly reversedBuffers: ReversedBufferCache;
+  /**
+   * The §7.6 live notes currently HELD, keyed `${trackId}:${note}` — see
+   * {@link soundResolvedVoice}. It exists because the first hit of a pad waits on the sample
+   * decode, so a tap can end before the voice it releases exists.
+   */
+  private readonly heldLiveNotes = new Set<string>();
   /** Preloaded demo sample the scheduler dispatch triggers per note (the demo instrument). */
   private demoBuffer: AudioBuffer | null = null;
   private playheadRaf: number | null = null;
@@ -168,17 +174,24 @@ export class AudioEngine {
     on = true,
     timestampMs: number = performance.now(),
   ): void {
+    const heldKey = `${trackId}:${note}`;
     if (on) {
+      this.heldLiveNotes.add(heldKey);
       const resolved = this.resolveNote(trackId, note, velocity);
       if (resolved) {
-        this.soundResolvedVoice(trackId, resolved, {
-          kind: 'noteOn',
+        this.soundResolvedVoice(
           trackId,
-          note,
-          velocity,
-          when: this.context.currentTime,
-          tick: 0,
-        });
+          resolved,
+          {
+            kind: 'noteOn',
+            trackId,
+            note,
+            velocity,
+            when: this.context.currentTime,
+            tick: 0,
+          },
+          heldKey,
+        );
       } else {
         this.triggerFallbackDemo({
           kind: 'noteOn',
@@ -190,6 +203,7 @@ export class AudioEngine {
         });
       }
     } else {
+      this.heldLiveNotes.delete(heldKey);
       this.releaseLiveNote(trackId, note);
     }
     // Leg 2 — note repeat + record capture (spec §7.3, §7.7).
@@ -276,6 +290,7 @@ export class AudioEngine {
     }
     this.playheadRaf = null;
     this.eventObservers.clear();
+    this.heldLiveNotes.clear();
     this.scheduler.dispose();
     setAutomationClock(null);
     meterScope.setRegistry(null);
@@ -365,8 +380,22 @@ export class AudioEngine {
     return resolveVoice(programWithLiveGestures(program, note), note, velocity);
   }
 
-  /** Sound a resolved §6 voice, decoding its sample once and applying the §6 pad mixer. */
-  private soundResolvedVoice(trackId: string, resolved: ResolvedVoice, event: ScheduledEvent): void {
+  /**
+   * Sound a resolved §6 voice, decoding its sample once and applying the §6 pad mixer.
+   *
+   * `heldKey` is passed by the §7.6 live path only, and is what closes the race between a hit
+   * and its own note-off: the first hit of a pad waits on the sample decode, so a tap short
+   * enough to end before that promise settles releases a voice that does not exist yet. The
+   * note-off is applied on the way out instead. A live hit carries no `durationSec`, so without
+   * this the voice would sustain for the whole sample — and a keygroup, which is never
+   * `oneShot`, is exactly where a player expects the opposite (spec §5.4, §7.6, issue #145).
+   */
+  private soundResolvedVoice(
+    trackId: string,
+    resolved: ResolvedVoice,
+    event: ScheduledEvent,
+    heldKey?: string,
+  ): void {
     const projectId = useProjectStore.getState().projectId || DEMO_PROGRAM_ID;
     const programId = useSequenceStore.getState().tracks[trackId]?.programId ?? trackId;
     const channel = this.ensureProgramChannel(trackId, resolved);
@@ -392,6 +421,9 @@ export class AudioEngine {
           durationSec: event.durationSec,
         }),
       );
+      if (heldKey !== undefined && !this.heldLiveNotes.has(heldKey)) {
+        this.releaseLiveNote(trackId, resolved.note);
+      }
     };
     const cached = this.programBuffers.get(resolved.sampleId);
     if (cached) {

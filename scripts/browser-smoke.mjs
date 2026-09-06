@@ -1398,8 +1398,20 @@ async function assertShellAndSelfTest(page, label) {
         `a live poly bar carried signal for ${(r.livePolySounding * 100).toFixed(1)} % against ${(r.liveOneShotSounding * 100).toFixed(1)} % as oneShot — the §7.1.4 dispatcher gave the pool no note length, so nothing released live`,
       );
     }
+    // A §7.6 tap released before its own sample finished decoding. The hit must SOUND — a
+    // note-off that silenced it altogether would pass a fraction test and fail the instrument.
+    if (!(r.liveRacePeak > 0.05)) {
+      throw new Error(
+        `the tap released during the decode never sounded at all (peak ${r.liveRacePeak.toFixed(5)}) — a note-off must release a voice, not prevent one`,
+      );
+    }
+    if (!(r.liveRaceSounding < 0.2)) {
+      throw new Error(
+        `a tap released before its sample finished decoding carried signal for ${(r.liveRaceSounding * 100).toFixed(1)} % of the window — the note-off reached a voice that did not exist yet, so the hit sustained for its whole ${r.regionSeconds} s region`,
+      );
+    }
     console.log(
-      `       voice release: bounce fell ${r.shortRelease.fallSeconds.toFixed(4)} s at ${r.shortReleaseMs} ms release → ${r.longRelease.fallSeconds.toFixed(4)} s at ${r.longReleaseMs} ms, oneShot ${r.oneShot.fallSeconds.toFixed(4)} s over its ${r.regionSeconds} s region; live bar sounded ${(r.livePolySounding * 100).toFixed(1)} % poly → ${(r.liveOneShotSounding * 100).toFixed(1)} % oneShot (peak ${r.livePeak.toFixed(5)})`,
+      `       voice release: bounce fell ${r.shortRelease.fallSeconds.toFixed(4)} s at ${r.shortReleaseMs} ms release → ${r.longRelease.fallSeconds.toFixed(4)} s at ${r.longReleaseMs} ms, oneShot ${r.oneShot.fallSeconds.toFixed(4)} s over its ${r.regionSeconds} s region; live bar sounded ${(r.livePolySounding * 100).toFixed(1)} % poly → ${(r.liveOneShotSounding * 100).toFixed(1)} % oneShot (peak ${r.livePeak.toFixed(5)}); tap released mid-decode sounded ${(r.liveRaceSounding * 100).toFixed(1)} % at peak ${r.liveRacePeak.toFixed(5)}`,
     );
   });
 

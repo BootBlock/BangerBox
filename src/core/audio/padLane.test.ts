@@ -593,7 +593,7 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     pool.applyPadParam('p1:0', 'detune', -1_200, 0.2);
     // The note-off lands between the old fade start and the new one: `rescheduleDeclick` reads
     // the frozen point and so must this, or the two disagree about one timeline (issue #146).
-    pool.release('p1:0', 1.5);
+    pool.release('p1:0', 0, 1.5);
     const gain = ampGainsOf(fake)[0]!;
     const held = gain.calls.filter((call) => call.method === 'setValueAtTime');
     expect(held[held.length - 1]!.args[0]).toBeCloseTo(frozen, 6);

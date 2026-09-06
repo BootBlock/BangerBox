@@ -16,6 +16,7 @@
  * §7.6 live path, where a held pad can only be held once.
  */
 import { describe, expect, it } from 'vitest';
+import { DECLICK_FADE_MS } from '@/core/constants';
 import { createDefaultEnvelope, type AhdsrEnvelope } from '@/core/project/schemas';
 import { createFakeAudioContext, type FakeAudioContext } from '@/test/mocks/audioContext';
 import { VoicePool, type VoiceTriggerSpec } from './voicePool';
@@ -220,6 +221,49 @@ describe('a voice is released (spec §5.4, issue #145)', () => {
     pool.trigger(spec(context, { id: 'third', when: 1 }));
     expect(sourceStopped(fake, 0)).toBe(false);
     expect(sourceStopped(fake, 1)).toBe(true);
+    pool.destroy();
+  });
+});
+
+describe('a released voice and the §5.4 fade that is no longer there', () => {
+  it('never writes a zero-length release ramp, whatever §6 asks for', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // §6 `release` is `nonNegative` and §8.5.5's field offers 0. A zero-length ramp is a hard
+    // cut mid-sample, which §5.4 forbids "every way a voice ends" — so a release of zero gets
+    // `DECLICK_FADE_MS`. Every other release, however short, still runs at its own length.
+    pool.trigger(spec(context, { id: 'instant', amp: { ...FLAT, release: 0 }, durationSec: 1 }));
+    expect(silentAt(ampGains(fake)[0]!)).toBeCloseTo(1 + DECLICK_FADE_MS / 1_000, 9);
+    pool.destroy();
+  });
+
+  it('does not step a steal UP out of the silence an in-region release left', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context, 1);
+    // The release lands at 1.12 s, well inside the four-second region, so its own cancel ERASES
+    // the end-of-region declick. A steal three seconds later must depart from the silence the
+    // release left, not from a fade line that is no longer on the timeline — and §5.4's steal
+    // rule makes exactly this voice the preferred victim.
+    pool.trigger(spec(context, { id: 'released', durationSec: 1 }));
+    pool.trigger(spec(context, { id: 'stealer', when: 3.998, padKey: 'p1:1', note: 1 }));
+    expect(departure(ampGains(fake)[0]!).level).toBeCloseTo(0, 9);
+    pool.destroy();
+  });
+
+  it('lays a note-off a retune has brought back inside the region', () => {
+    const { context, fake } = createFakeAudioContext();
+    const pool = new VoicePool(context);
+    // A note-off past the region's end lays nothing — and then a §7.8 pitch lane an octave DOWN
+    // doubles the region, so the same note-off is now well inside it. Without re-deciding, the
+    // voice would run to the new end with no release, and `preDeclickLevel` would still report
+    // the release line: a full-scale step to zero at the fade start.
+    pool.trigger(spec(context, { id: 'stretched', durationSec: REGION_SECONDS + 0.2 }));
+    expect(fadesToZero(ampGains(fake)[0]!)).toEqual([REGION_SECONDS]);
+    pool.applyPadParam('p1:0', 'detune', -1_200, 0.1);
+    const gain = ampGains(fake)[0]!;
+    // The region now ends at about eight seconds, and the release runs from 4.2 s to 4.32 s.
+    expect(fadesToZero(gain).some((at) => Math.abs(at - (REGION_SECONDS + 0.32)) < 1e-6)).toBe(true);
+    expect(departure(gain).level).toBeGreaterThan(0);
     pool.destroy();
   });
 });

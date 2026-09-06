@@ -184,7 +184,7 @@ describe('LfoConfig.retrigger (spec §6)', () => {
   it('leaves the shared oscillator running when a voice using it ends', () => {
     const { context, fake, pool } = setup();
     pool.trigger(spec(context, { id: 'a', lfos: lfos({ retrigger: false }) }));
-    pool.release('p1:0', 1);
+    pool.release('p1:0', 0, 0.1);
     expect(oscillators(fake)[0]!.stopped).toBe(false);
   });
 
