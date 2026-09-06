@@ -6,7 +6,7 @@ and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
 **State:** the voice-release work merged to `main` (`--no-ff`). All eight §12 phases were
 already complete; this was a defect closure against §5.4, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **2068 unit tests**, `test:e2e`
+`package.json` `config.phase` remains **"8"**. Suite: **2071 unit tests**, `test:e2e`
 real-browser smoke (dev + offline, **90/90 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
 
@@ -1196,11 +1196,30 @@ transient channel still stand. New this work:
 - **`VoiceTriggerSpec.note` is the voice's own note**, used to match a §7.6 note-off and as the
   §6 `noteNumber` mod source. `noteFromPadKey` derived the second from the pad key and is gone —
   two derivations of one fact is what "ONE place" exists to stop.
-- **The §11.4 `voiceReleaseProof` reads a DURATION in both halves**: a fall time from three §9.5
-  bounces, and the fraction of a live bar the §5.8 meter sees signal for. A release cannot be
-  seen in a peak — the contour reaches the same plateau whatever ends it. Its `oneShot` render
-  is the anti-over-correction guard, and its §8.5.5 writes go through `upsertPad`, the action
-  that panel calls, so what is proven is that the CONTROL changes the sound.
+- **Every lay of the amp timeline calls `layNoteOff` LAST** — the trigger, `rescheduleDeclick`
+  and `relayAmpContour`. All three move the fade start its lay/skip decision is made against,
+  and two of them rewrite the very ramp it lays. A new lay does the same, or a note-off outside
+  the old region is never revisited once a retune grows the region past it.
+- **`Voice.declickLaid` says whether the end-of-region fade is still ON the timeline.** A
+  note-off landing inside the region erases it, as part of `scheduleAmpRelease`'s own cancel,
+  and `ampLevelNow` must stop reading its line or a later steal steps the gain UP out of
+  silence — which `voiceRefs` makes the common case rather than a corner, by preferring exactly
+  those voices.
+- **`VoicePool.releaseSeconds` is the one rule for how long a note-off fades**: the §6 release,
+  or `DECLICK_FADE_MS` where §6 asks for zero. It is one function because `layNoteOff` WRITES
+  that ramp and `preDeclickLevel` READS it, and §6 `release` is `nonNegative` with an §8.5.5
+  field that offers 0 — a zero-length ramp is the hard cut §5.4 forbids every way a voice ends.
+- **`AudioEngine.heldLiveNotes` is what closes the §7.6 decode race.** The first hit of a pad
+  waits on the sample decode, so a tap short enough to end before that promise settles reaches
+  no voice — and a live hit carries no length, so it would then sustain for the whole sample.
+  `soundResolvedVoice` applies the note-off on the way out instead. A new deferred trigger path
+  takes the same `heldKey`, or it inherits the race.
+- **The §11.4 `voiceReleaseProof` reads a DURATION in all three halves**: a fall time from three
+  §9.5 bounces, the fraction of a live bar the §5.8 meter sees signal for, and the same fraction
+  after a §7.6 tap released mid-decode. A release cannot be seen in a peak — the contour reaches
+  the same plateau whatever ends it. Its `oneShot` render is the anti-over-correction guard, its
+  §8.5.5 writes go through `upsertPad` so what is proven is that the CONTROL changes the sound,
+  and the race pass runs FIRST because it needs the engine's own sample cache cold.
 
 **A keygroup's program-scope mixer (spec §4.2, §5.2, §6, §8.5.6):**
 
@@ -2145,22 +2164,36 @@ to the `check:orphans` allowlist.
 - **`rescheduleDeclick`'s departure level is untouched and still unresolved** (#146).
   `preDeclickLevel` is where a note-off joins that one model, so both answers still move
   together; settling #146 still needs a browser profile of a RETUNED voice.
-- **Every regression test was proven against the code it was written to catch**, by nine
+- **Four of the six review findings are defects this work made REACHABLE rather than
+  introduced**, which is what closing a path nothing used to take does: a §6 release of ZERO
+  wrote a zero-length ramp (a hard cut, one §8.5.5 control away); an in-region note-off erased
+  the end-of-region declick while the voice's record of it went on describing the timeline, so a
+  steal stepped the gain UP out of silence; `rescheduleDeclick` never re-decided a note-off a
+  retune had brought back inside the region; and a §7.6 tap could be released before its own
+  voice existed. The other two are stale two-argument `pool.release` calls that had gone
+  vacuous — `tsconfig.app.json` excludes tests, so `type-check` cannot see an arity error, which
+  is the gate's own blind spot and worth knowing before the next signature change.
+- **Every regression test was proven against the code it was written to catch**, by thirteen
   mutations: the defect as filed (**10** failures); no guard on the declick fade start (**1**);
   a release departing from the peak rather than the contour (**2**); no declick re-lay where the
   release outlives the region (**1**); a `oneShot` pad honouring its note-off (**2**); a note
   stating no length released at once (**26** — the whole §5.4 declick suite, the sharpest guard
   here); a release addressed by pad key alone (**1**); a future note-off counted as released
-  (**1**); and a §7.8 release lane that never re-lays its ramp (**1**). One EXISTING test pinned
-  the old behaviour and was replaced: `padLane.test.ts`'s "schedules nothing for a release
-  write".
+  (**1**); and a §7.8 release lane that never re-lays its ramp (**1**). The review round adds
+  four more: no floor under a §6 release of zero (**1**); `ampLevelNow` reading an erased fade
+  (**1**); `rescheduleDeclick` never re-deciding the note-off (**1**); and the §7.6 decode race
+  left open, which is a browser mutation rather than a unit one — the smoke step reports
+  **78.7 %** against **1.2 %**. One EXISTING test pinned the old behaviour and was replaced:
+  `padLane.test.ts`'s "schedules nothing for a release write".
 - **Measured in a real browser**: 90/90 smoke steps at ports 5342/5343, dev and offline, no
   console errors. One hit of a constant 1.2 s sample per bar, a note-off 240 ticks (0.125 s) in:
   the bounce fell in **0.0190 s** at a 20 ms §8.5.5 Release, **0.4750 s** at 500 ms and
   **1.0749 s** as `oneShot` over its whole region. Live, the §5.8 master meter saw signal for
-  **5.6 %** of the bar as `poly` against **66.4 %** as `oneShot`, at a peak of 0.27839.
+  **5.9 %** of the bar as `poly` against **66.9 %** as `oneShot`, at a peak of 0.27839, and a
+  §7.6 tap released mid-decode sounded for **1.2 %** of a 1.5 s window at a peak of 0.16703.
   **Against the unfixed build** the `poly` bar fell in **1.0749 s** — the `oneShot` figure to
-  four decimal places, because the two are the same file.
+  four decimal places, because the two are the same file — and the mid-decode tap sounded for
+  **78.7 %**.
 
 **#139 was CLOSED by the previous work.** No new issue was filed while closing it, and one entry
 LEFT the `check:orphans` allowlist: `programChannelId`, which §8.5.6 and `padStrips.ts` import.
@@ -2869,7 +2902,7 @@ and #140 and #146 remain open.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**2068**) · `format:check` · `verify` (**no open stubs**)
+`npm run type-check` · `lint` · `test` (**2071**) · `format:check` · `verify` (**no open stubs**)
 · `test:e2e` (dev + offline, **90/90 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
 
