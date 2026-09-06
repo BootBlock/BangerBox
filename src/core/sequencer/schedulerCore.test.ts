@@ -67,6 +67,20 @@ describe('SchedulerCore — sequence playback (spec §7.1.4)', () => {
     expect(scheduled.filter((e) => e.tick === 0)).toHaveLength(1);
   });
 
+  it('states each note’s own length, which is where its §5.4 note-off falls', () => {
+    // spec §7.1.3 `ScheduledEvent.durationSec`. It was emitted here and read by nobody, so
+    // every voice played its whole region and the §6 release stage was silent (issue #145).
+    const core = new SchedulerCore();
+    oneBarMeta(core, ['S'], 'S', 'sequence');
+    core.setTempo(120);
+    core.setLoop(LOOP_1_BAR);
+    core.applyEventsDiff('t1', 'S', [note('a', 0, 36, 480)], []);
+    core.setTransport(true, false, 0);
+
+    // 480 ticks is an eighth note: a quarter of a second at 120 bpm.
+    expect(notes(run(core, steps(0.2))).find((e) => e.tick === 0)?.durationSec).toBeCloseTo(0.25, 6);
+  });
+
   it('applies swing to off-beat subdivisions (spec §7.4)', () => {
     const core = new SchedulerCore();
     oneBarMeta(core, ['S'], 'S', 'sequence');
@@ -177,6 +191,26 @@ describe('SchedulerCore — song transition (spec §7.9)', () => {
     const bHit = scheduled.find((e) => e.note === 38);
     expect(bHit?.when).toBeCloseTo(2, 3);
     expect(result.songAdvanced).toEqual([0, 1]); // entered entry 0, then entry 1
+  });
+
+  it('states a note’s length in song mode too, at the SEGMENT’s tempo (spec §5.4, §7.9)', () => {
+    // `emitSongPass` is where song mode does everything sequence mode does (issue #94), and a
+    // note-off is a schedule-time feature like any other. The tempo it converts at is the
+    // segment's, so a note releases where it would have live at that entry's tempo.
+    const core = new SchedulerCore();
+    core.setSequenceMeta(
+      { A: { lengthBars: 1, timeSigNumerator: 4, timeSigDenominator: 4, tempo: 60 } },
+      120,
+      'A',
+      'song',
+    );
+    core.setSongSequence([{ sequenceId: 'A', repeats: 1 }]);
+    core.setTempo(120);
+    core.applyEventsDiff('ta', 'A', [note('a', 0, 36, 480)], []);
+    core.setTransport(true, false, 0);
+
+    // 480 ticks at the entry's own 60 bpm is half a second, not the transport's quarter.
+    expect(notes(run(core, steps(0.2))).find((e) => e.note === 36)?.durationSec).toBeCloseTo(0.5, 6);
   });
 
   it('swings in song mode exactly as in sequence mode (spec §7.4, §7.9)', () => {

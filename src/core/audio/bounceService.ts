@@ -46,11 +46,12 @@
  * builds every voice before it applies any ramp, a write reaches back to the voices whose
  * note-on is at or after it. Live the same rule reaches the same voices.
  *
- * **What a render still does not carry is a note-OFF.** The loop triggers and never releases,
- * so the §6 release stage is silent in every bounce — as it is live, where the §7.1.4
- * dispatcher discards `noteOff` and `triggerLiveNote(..., false)` reaches only the scheduler.
- * A §7.8 `amp.release` lane therefore reaches the voice and cannot yet be heard; that is a
- * §5.4 defect of its own, not this loop's.
+ * **A render carries the note-OFF** (issue #145). Each event's `duration_ticks` (spec §9.3)
+ * travels to the pool as `durationSec` at the voice's own note-on, exactly as it does live on
+ * the §7.1.3 `noteOn`, so the §6 release stage sounds here for the same reason and by the same
+ * code. It has to arrive that way round: this loop builds every voice before it applies any
+ * ramp, so a pass that issued note-offs afterwards would be addressing voices by pad and note
+ * — and a `poly` pad hit twice gives two of those with the same name.
  *
  * **What a render cannot see, and does not guess.** A bounce is of COMMITTED state. A §4.1
  * gesture still in flight lives on the transient channel and has not been committed, so a
@@ -204,6 +205,11 @@ async function renderSegments(
             // The segment's own tempo, so a §6 synced LFO renders at the rate the live
             // scheduler would have played it at (spec §6, §7.9).
             bpm: segment.bpm,
+            // The note's own length, so the §6 release stage renders (spec §5.4, issue #145).
+            // It is the same number `SchedulerCore` puts on the live `noteOn` — ticks × the
+            // SEGMENT's seconds-per-tick, so a song entry at its own tempo releases where it
+            // would have live — and it reaches the pool the same way, at the voice's note-on.
+            durationSec: event.durationTicks * perTick,
           }),
         );
       }

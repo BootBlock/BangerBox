@@ -32,6 +32,7 @@ function spec(context: AudioContext, over: Partial<VoiceTriggerSpec> = {}): Voic
     chokeGroup: 0,
     programId: 'p1',
     padKey: 'p1:0',
+    note: 0,
     amp: createDefaultEnvelope(),
     gainDb: 0,
     tuneSemitones: 0,

@@ -809,7 +809,7 @@ export async function renderAmpEnvelopeLaneOffline(): Promise<AmpEnvelopeLaneRes
       bpm: DEFAULT_BPM,
     }),
   );
-  pool.release(resolved.padKey, noteOff);
+  pool.release(resolved.padKey, resolved.note, noteOff);
 
   const rendered = await context.startRendering();
   pool.destroy();

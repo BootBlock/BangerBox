@@ -38,6 +38,7 @@ function spec(context: AudioContext, over: Partial<VoiceTriggerSpec> = {}): Voic
     chokeGroup: 0,
     programId: 'p1',
     padKey: 'p1:0',
+    note: 0,
     amp: createDefaultEnvelope(),
     gainDb: 0,
     tuneSemitones: 0,
@@ -438,10 +439,13 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
   it('gives the release the voice releases with (spec §5.4 note-off)', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    pool.trigger(spec(context, { id: 'before', amp: FAST }));
+    // Four seconds of region each, so one note-off at 2 s is inside BOTH voices: a release
+    // beyond the region's own end has nothing left to fade and is not laid (issue #145).
+    const long = context.createBuffer(1, 48_000 * 4, 48_000);
+    pool.trigger(spec(context, { id: 'before', amp: FAST, buffer: long }));
     pool.applyPadParam('p1:0', 'ampRelease', 400, 0.5);
-    pool.trigger(spec(context, { id: 'after', when: 1, amp: FAST }));
-    pool.release('p1:0', 2);
+    pool.trigger(spec(context, { id: 'after', when: 1, amp: FAST, buffer: long }));
+    pool.release('p1:0', 0, 2);
 
     const [first, second] = ampGainsOf(fake);
     expect(ampReleaseSeconds(first!, 2)).toBeCloseTo(0.12, 9);
@@ -498,7 +502,7 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
       curve: 'linear',
     };
     pool.trigger(spec(context, { id: 'decaying', velocity: 127, gainDb: 0, amp: decaying }));
-    pool.release('p1:0', 0.2);
+    pool.release('p1:0', 0, 0.2);
     const gain = ampGainsOf(fake)[0]!;
     const held = gain.calls.filter((call) => call.method === 'setValueAtTime');
     // The last `setValueAtTime` is the release's own departure level, at the note-off.
@@ -526,17 +530,16 @@ describe('a §7.8 lane on a §6 amp-envelope time (spec §6, §7.8, issue #143)'
     pool.destroy();
   });
 
-  it('schedules nothing for a release write, which is read at the note-OFF', () => {
+  it('re-lays the note-off of a voice built ahead of a release write', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    pool.trigger(spec(context, { id: 'future', when: 1, amp: FAST }));
-    const settled = ampGainsOf(fake)[0]!.calls.length;
-    // A release moves no boundary `scheduleAmpAttack` writes, so re-laying the contour for one
-    // would rewrite an identical timeline once per §7.1.4 window.
+    // A voice built ahead of the write, carrying its own §5.4 note-off half a second in
+    // (issue #145) — so the release ramp on its timeline was written from the §6 payload's
+    // value and the lane has to rewrite it, which before #145 there was nothing to do.
+    const long = context.createBuffer(1, 48_000 * 4, 48_000);
+    pool.trigger(spec(context, { id: 'future', when: 1, amp: FAST, buffer: long, durationSec: 0.5 }));
+    expect(ampReleaseSeconds(ampGainsOf(fake)[0]!, 1.5)).toBeCloseTo(0.12, 9);
     pool.applyPadParam('p1:0', 'ampRelease', 400, 0.95);
-    expect(ampGainsOf(fake)[0]!.calls.length).toBe(settled);
-    // It still reaches the voice, which is what the note-off reads.
-    pool.release('p1:0', 1.5);
     expect(ampReleaseSeconds(ampGainsOf(fake)[0]!, 1.5)).toBeCloseTo(0.4, 9);
     pool.destroy();
   });

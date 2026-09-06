@@ -24,6 +24,7 @@ function spec(context: AudioContext, over: Partial<VoiceTriggerSpec> = {}): Voic
     chokeGroup: 0,
     programId: 'p1',
     padKey: 'p1:0',
+    note: 0,
     amp: createDefaultEnvelope(),
     gainDb: 0,
     tuneSemitones: 0,
@@ -81,6 +82,20 @@ function paramCalls(param: unknown): { method: string; args: number[] }[] {
   return (param as { calls: { method: string; args: number[] }[] }).calls;
 }
 
+/** The first voice's amp `gain` — the gain the voice's source is connected to. */
+function ampGainOf(fake: FakeAudioContext): unknown {
+  const node = fake.nodes.find(
+    (n) => n.nodeType === 'gain' && paramCalls((n as { gain: unknown }).gain).length > 0,
+  );
+  return (node as { gain: unknown }).gain;
+}
+
+/** Context time the last ramp on an amp param reaches its target — where the voice goes silent. */
+function ampReleaseEnd(param: unknown): number {
+  const ramps = paramCalls(param).filter((call) => call.method === 'linearRampToValueAtTime');
+  return ramps[ramps.length - 1]!.args[1]!;
+}
+
 describe('voice pool (spec §5.4)', () => {
   it('starts a voice connected into the pad destination', () => {
     const { context } = createFakeAudioContext();
@@ -135,17 +150,22 @@ describe('voice pool (spec §5.4)', () => {
   it('releases sustaining voices on note-off but not oneShot voices', () => {
     const { context, fake } = createFakeAudioContext();
     const pool = new VoicePool(context);
-    pool.trigger(spec(context, { id: 'poly', padKey: 'p1:0', playbackMode: 'poly' }));
-    const polySource = fake.nodes.find((n) => n.nodeType === 'bufferSource');
-    pool.release('p1:0', 1);
-    expect(sourceState(polySource).stopped).toBe(true);
+    // Four seconds of region, so the note-off at 1 s is well inside it.
+    const long = context.createBuffer(1, 48_000 * 4, 48_000);
+    pool.trigger(spec(context, { id: 'poly', padKey: 'p1:0', playbackMode: 'poly', buffer: long }));
+    pool.release('p1:0', 0, 1);
+    // The §6 release ramp, reaching zero 120 ms after the note-off. The source is NOT stopped:
+    // spec §5.4 gives note-off the envelope release and the `ended` event the teardown, and a
+    // §7.8 `amp.release` lane could not move a stop already scheduled (issue #145).
+    expect(ampReleaseEnd(ampGainOf(fake))).toBeCloseTo(1.12, 9);
 
     const { context: ctx2, fake: fake2 } = createFakeAudioContext();
     const pool2 = new VoicePool(ctx2);
-    pool2.trigger(spec(ctx2, { id: 'one', padKey: 'p1:0', playbackMode: 'oneShot' }));
-    const oneShotSource = fake2.nodes.find((n) => n.nodeType === 'bufferSource');
-    pool2.release('p1:0', 1);
-    expect(sourceState(oneShotSource).stopped).toBe(false); // oneShot ignores note-off
+    pool2.trigger(spec(ctx2, { id: 'one', padKey: 'p1:0', playbackMode: 'oneShot', buffer: long }));
+    pool2.release('p1:0', 0, 1);
+    // oneShot ignores note-off (spec §5.4): the only ramp on its timeline is the §5.4 declick
+    // landing on the region's own end four seconds in.
+    expect(ampReleaseEnd(ampGainOf(fake2))).toBeCloseTo(4, 9);
     pool2.destroy();
     pool.destroy();
   });

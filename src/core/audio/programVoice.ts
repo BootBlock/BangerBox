@@ -118,6 +118,29 @@ export function programChannelId(programId: string, padIndex: number): string {
 export const KEYGROUP_PAD_INDEX = 0;
 
 /**
+ * The §5.4 pad key a program's note sounds on — the ONE place the two forms are written.
+ *
+ * A drum program keys by pad index, which IS the note (spec §1.3.1). A keygroup has zones
+ * rather than pads and one program-scope voice channel (see {@link KEYGROUP_PAD_INDEX}), so
+ * every note of it shares one key — which is why a §5.4 note-off matches the voice's own note
+ * as well as its key, or letting go of one finger would release the chord (issue #145).
+ *
+ * It answers for a note whether or not a layer or a zone covers it, because a note-off has no
+ * velocity to resolve one with: the voice it releases was resolved by the note-ON.
+ */
+export function padKeyForNote(program: Program, note: number): string {
+  return program.type === 'drum' ? drumPadKey(program.id, note) : keygroupPadKey(program.id);
+}
+
+function drumPadKey(programId: string, padIndex: number): string {
+  return `${programId}:${padIndex}`;
+}
+
+function keygroupPadKey(programId: string): string {
+  return `${programId}:keygroup`;
+}
+
+/**
  * The velocity layer for `velocity`, or null if none matches (spec §6: layers are
  * velocity-switched and may not overlap). The first band containing the velocity wins.
  */
@@ -194,7 +217,7 @@ function drumVoice(
     modMatrix: pad.modMatrix,
     mixer: pad.mixer,
     channelId: programChannelId(programId, pad.padIndex),
-    padKey: `${programId}:${pad.padIndex}`,
+    padKey: drumPadKey(programId, pad.padIndex),
     note,
     velocity,
   };
@@ -229,7 +252,7 @@ export function resolveKeygroupVoice(
     mixer: program.mixer,
     // A keygroup has one program-scope voice channel (spec §4.2) — see KEYGROUP_PAD_INDEX.
     channelId: programChannelId(program.id, KEYGROUP_PAD_INDEX),
-    padKey: `${program.id}:keygroup`,
+    padKey: keygroupPadKey(program.id),
     note,
     velocity,
     polyphony: program.polyphony,
@@ -260,6 +283,13 @@ export interface VoiceTriggerParams {
   readonly programId: string;
   /** Transport tempo a §6 tempo-synced LFO locks to (spec §7.2); omitted = project default. */
   readonly bpm?: number;
+  /**
+   * The note's own length in seconds, where the caller knows it — spec §7.1.3's
+   * `ScheduledEvent.durationSec` live, and `duration_ticks` × the segment's seconds-per-tick
+   * in a §9.5 render. It is where the voice's §5.4 note-off falls; a §7.6 live hit omits it
+   * and is released by {@link VoicePool.release} when the pad is let go (issue #145).
+   */
+  readonly durationSec?: number;
 }
 
 /**
@@ -292,6 +322,8 @@ export function resolvedVoiceToTrigger(
     chokeGroup: resolved.chokeGroup,
     programId: params.programId,
     padKey: resolved.padKey,
+    note: resolved.note,
+    durationSec: params.durationSec,
     amp: resolved.envelopes.amp,
     gainDb: resolved.gainDb,
     tuneSemitones: resolved.padTuneSemitones,

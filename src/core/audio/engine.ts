@@ -30,7 +30,7 @@ import { Looper } from './looper';
 import { MeterRegistry } from './metering';
 import { Metronome } from './metronome';
 import { PreviewChannel } from './preview';
-import { resolvedVoiceToTrigger, resolveVoice, type ResolvedVoice } from './programVoice';
+import { padKeyForNote, resolvedVoiceToTrigger, resolveVoice, type ResolvedVoice } from './programVoice';
 import { SampleCache } from './sampleCache';
 import { ReversedBufferCache } from './voiceBuffer';
 import { VoicePool } from './voicePool';
@@ -141,6 +141,7 @@ export class AudioEngine {
       chokeGroup: 0,
       programId: DEMO_PROGRAM_ID,
       padKey: `${DEMO_PROGRAM_ID}:${DEMO_PAD_INDEX}`,
+      note: DEMO_PAD_INDEX,
       amp: createDefaultEnvelope(),
       gainDb: 0,
       tuneSemitones: 0,
@@ -188,9 +189,27 @@ export class AudioEngine {
           tick: 0,
         });
       }
+    } else {
+      this.releaseLiveNote(trackId, note);
     }
     // Leg 2 — note repeat + record capture (spec §7.3, §7.7).
     this.scheduler.sendLiveNote(note, velocity, on, timestampMs, trackId);
+  }
+
+  /**
+   * Leg 1 of §7.6's dual path for a note-OFF: apply the §6 amp release to the pad's sounding
+   * voices (spec §5.4). It is the same sanctioned store bypass the audition is, and it mutates
+   * nothing.
+   *
+   * The pad key comes from {@link padKeyForNote} rather than from {@link resolveVoice},
+   * because a note-off has no velocity to resolve a §6 layer or zone with — the voice it
+   * releases was resolved by the note-on that built it.
+   */
+  private releaseLiveNote(trackId: string, note: number): void {
+    const track = useSequenceStore.getState().tracks[trackId];
+    const program = track?.programId ? useProgramStore.getState().programs[track.programId] : undefined;
+    if (!program) return;
+    this.voicePool.release(padKeyForNote(program, note), note, this.context.currentTime);
   }
 
   /**
@@ -308,13 +327,14 @@ export class AudioEngine {
         }
         return;
       case 'noteOff':
-        // NOTHING releases a voice, and this comment used to claim otherwise: "sequenced note
-        // lifetime is carried by `durationSec` on the noteOn, so the voice releases itself".
-        // `durationSec` is read by nobody, `VoiceTriggerSpec` has no duration field, and
-        // `VoicePool.release` has no production caller — so every voice plays its whole region
-        // and ends on the §5.4 declick, and the §6 amp release stage is silent. §5.4 asks for
-        // the opposite. Issue #145: an audible change to every voice in the application, and a
-        // §13.3.2 question about the §6 `poly` default rather than a mechanical fix.
+        // A sequenced note's lifetime IS carried by `durationSec` on the `noteOn`, and the
+        // pool lays the note-off against the voice that length belongs to, at that voice's own
+        // note-on (spec §5.4, `VoicePool.trigger`). Nothing emits this kind, and that is the
+        // decision rather than an omission: `poly` lets two hits of one pad overlap, so an off
+        // addressed by track and note — all a `ScheduledEvent` carries — cannot say WHICH of
+        // them it ends, and a §9.5 render, which builds every voice before it applies any
+        // ramp, would have no way to tell them apart either (issue #145). §7.1.3 declares the
+        // kind, so the dispatcher answers for it rather than falling through.
         return;
     }
   }
@@ -367,6 +387,9 @@ export class AudioEngine {
           // the segment's own rather than the transport's (spec §7.9). A live audition
           // carries none and falls back to the transport, which is the tempo it is played at.
           bpm: event.bpm ?? useTransportStore.getState().bpm,
+          // spec §7.1.3 `durationSec` — where this note's §5.4 note-off falls. A §7.6 live
+          // audition carries none and is released when the pad is let go (issue #145).
+          durationSec: event.durationSec,
         }),
       );
     };
@@ -464,6 +487,7 @@ export class AudioEngine {
       chokeGroup: 0,
       programId: event.trackId,
       padKey: `${event.trackId}:${event.note}`,
+      note: event.note,
       amp: createDefaultEnvelope(),
       gainDb: 0,
       tuneSemitones: 0,

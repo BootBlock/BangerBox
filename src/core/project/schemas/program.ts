@@ -260,7 +260,13 @@ export function createDefaultPad(padIndex: number, name = `Pad ${padIndex + 1}`)
     padIndex,
     name,
     chokeGroup: 0,
-    playbackMode: 'poly',
+    // spec §5.4 names `poly` the default mode, and this is a documented deviation from it
+    // (§14 `2026-09-06 (bb)`), taken by the human developer under §13.3.2. A pad is what a
+    // user gets by dropping a sample on one, and §5.4's own words for `oneShot` — "ignores
+    // note-off, plays to sample end" — are what a drum hit does. Under `poly` a Grid-drawn
+    // hit would be cut at its 240-tick length, which no sampler does by default; the §9.8
+    // factory content already sets `oneShot` on every pad by hand for that reason.
+    playbackMode: 'oneShot',
     warp: false,
     layers: [],
     envelopes: createDefaultEnvelopes(),

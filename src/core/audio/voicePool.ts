@@ -116,6 +116,25 @@ export interface VoiceTriggerSpec extends VoiceSoundDesign {
   readonly chokeGroup: number;
   readonly programId: string;
   readonly padKey: string; // `${programId}:${padIndex}`
+  /**
+   * The MIDI note this hit sounds — a drum pad's index, a keygroup's key (spec §1.3.1).
+   *
+   * A keygroup's whole program shares one pad key (`resolveKeygroupVoice`), so the note is
+   * the only thing that tells its voices apart: a §5.4 note-off for one key must not release
+   * the chord around it. It is also the §6 `noteNumber` mod source, which used to be derived
+   * from the pad key and so read 0 for every keygroup voice.
+   */
+  readonly note: number;
+  /**
+   * The note's own length in seconds — spec §7.1.3 `ScheduledEvent.durationSec`, and where
+   * this voice's §5.4 note-off falls.
+   *
+   * Omitted or non-positive means the note states no length, and nothing releases the voice:
+   * a §7.6 live hit whose note-off arrives later through {@link VoicePool.release}, and a
+   * §7.3 note-repeat hit, which has no gate to state (§7.7's minimum note is 1 tick, so zero
+   * is never a length a note really has).
+   */
+  readonly durationSec?: number;
   readonly amp: AhdsrEnvelope;
   readonly gainDb: number;
   /** The §7.8 `pitch` leaf's value — it rides the pad's own lane node (spec §7.8, issue #138). */
@@ -257,6 +276,8 @@ interface Voice {
   readonly laneLinks: { readonly from: ConstantSourceNode; readonly to: AudioParam }[];
   readonly padKey: string;
   readonly programId: string;
+  /** The MIDI note this voice sounds — what a §5.4 note-off matches (spec §1.3.1). */
+  readonly note: number;
   readonly chokeGroup: number;
   readonly oneShot: boolean;
   /**
@@ -284,6 +305,29 @@ interface Voice {
   declickFadeStart: number;
   /** Context time the region ends, where that fade lands — banked so a re-lay need not re-solve it. */
   declickEndTime: number;
+  /**
+   * The level the declick fade currently in force DEPARTS from — the number handed to
+   * {@link scheduleAmpDeclick} on the lay that put it there (spec §5.4).
+   *
+   * It is banked rather than recomputed because a note-off changes what the timeline holds at
+   * the fade start: a release still in flight there is what the fade departs from, and the §6
+   * contour is not. Every lay writes it, so {@link VoicePool.ampLevelNow} reads one number
+   * instead of re-deriving a level that could disagree with the one on the param.
+   */
+  declickLevel: number;
+  /**
+   * Context time this voice's §5.4 note-off falls, or null while it has none.
+   *
+   * A sequenced note's off is laid at its own NOTE-ON, from the length the note states
+   * ({@link VoiceTriggerSpec.durationSec}) — which is what binds an off to the voice it
+   * belongs to. A pad key and a note cannot: `poly` lets two hits of one pad overlap, so an
+   * off addressed by name would cut whichever of them it reached. A §7.6 live note-off, where
+   * a held pad can only be held once, sets it through {@link VoicePool.release} instead.
+   *
+   * It is NOT the same thing as `released`: a steal or choke fade is an interruption of its
+   * own length (§2.6), not the §6 release stage.
+   */
+  noteOffAt: number | null;
   /**
    * The EARLIEST fade start this voice has ever had — where its §6 amp contour stopped
    * running (spec §5.4, issue #144). Each lay truncates the AHDSR at its own fade start and
@@ -339,7 +383,7 @@ export class VoicePool {
 
     // 4. Capacity: steal a voice when the global pool is exhausted (spec §5.4).
     if (this.voices.size >= this.maxVoices) {
-      const victimId = selectStealVictim(this.voiceRefs());
+      const victimId = selectStealVictim(this.voiceRefs(now));
       const victim = victimId ? this.voices.get(victimId) : undefined;
       if (victim) this.fadeAndStop(victim, now, VOICE_STEAL_FADE_MS);
     }
@@ -347,21 +391,38 @@ export class VoicePool {
     // 5. Build and start the enriched voice chain (spec §5.2 stages 1–2, §6).
     const voice = this.buildVoice(spec, now, glideFrom);
     this.voices.set(spec.id, voice);
+
+    // 6. The note's own §5.4 note-off, laid here because this is where it BINDS: a sequenced
+    // note states its length (spec §7.1.3 `durationSec`), and laying the off against the voice
+    // that length belongs to is the only unambiguous reading — `poly` lets two hits of one pad
+    // overlap, and an off addressed by pad and note alone would cut whichever it reached
+    // first. It is also what makes live and offline the same: a §9.5 render builds every voice
+    // before it applies any ramp, so a render that had to issue offs afterwards would be
+    // choosing between voices with no way to tell them apart (issue #145).
+    //
+    // A `oneShot` pad ignores it and plays to the sample's end (spec §5.4). A note that states
+    // no length has none to bind — see {@link VoiceTriggerSpec.durationSec}.
+    const duration = spec.durationSec ?? 0;
+    if (duration > 0 && !voice.oneShot) {
+      voice.noteOffAt = now + duration;
+      this.layNoteOff(voice);
+    }
   }
 
-  /** Note-off for a pad: release its sustaining voices (oneShot ignores note-off, §5.4). */
-  release(padKey: string, when: number): void {
+  /**
+   * A §7.6 live note-off: release the sounding voices of `padKey` on `note` (spec §5.4).
+   *
+   * The note is matched as well as the pad key because a keygroup program's whole set of
+   * voices shares ONE key (`resolveKeygroupVoice`), so releasing by key alone would take the
+   * rest of the chord with the key the player let go of. A `oneShot` pad ignores note-off
+   * entirely (spec §5.4), and a voice that already carries one keeps the first.
+   */
+  release(padKey: string, note: number, when: number): void {
     for (const voice of this.voices.values()) {
-      if (voice.padKey !== padKey || voice.oneShot || voice.stopScheduled) continue;
-      const end = scheduleAmpRelease(
-        voice.ampGain.gain,
-        when,
-        voice.amp.release,
-        this.ampLevelNow(voice, when),
-      );
-      this.safeStop(voice, end);
-      voice.released = true;
-      voice.stopScheduled = true;
+      if (voice.padKey !== padKey || voice.note !== note) continue;
+      if (voice.oneShot || voice.stopScheduled || voice.noteOffAt !== null) continue;
+      voice.noteOffAt = Math.max(when, voice.startTime);
+      this.layNoteOff(voice);
     }
   }
 
@@ -463,10 +524,11 @@ export class VoicePool {
           // pad's held value: a lane that never changes still has to reach a voice its first
           // window could not see, so short-circuiting the whole walk would lose that voice.
           if ((attack ? voice.amp.attack : voice.amp.release) === ms) continue;
-          // A release is read at the note-OFF, so moving it schedules nothing and re-laying the
-          // contour for it would rewrite an identical timeline.
-          if (attack) this.relayAmpContour(voice, { ...voice.amp, attack: ms });
-          else voice.amp = { ...voice.amp, release: ms };
+          // Both leaves re-lay the whole contour. A release used to move nothing on the
+          // timeline, because nothing scheduled one — since issue #145 a sequenced note's off
+          // is laid at its own note-on, so a voice built ahead of this write already carries a
+          // release ramp written from the value being replaced.
+          this.relayAmpContour(voice, attack ? { ...voice.amp, attack: ms } : { ...voice.amp, release: ms });
         }
         break;
       }
@@ -642,6 +704,10 @@ export class VoicePool {
    * is this fade's own start, and reading the old one would depart from a level a contour that
    * runs again never holds. A §10.2 bend on a voice that has not started moves the old value,
    * which is what makes this reachable rather than theoretical.
+   *
+   * **The voice's §5.4 note-off is re-laid with it**, because the release ramp was written from
+   * the envelope this is replacing (issue #145). It is written last, so it erases the part of
+   * the fresh contour it supersedes rather than the other way round.
    */
   private relayAmpContour(voice: Voice, amp: AhdsrEnvelope): void {
     voice.amp = amp;
@@ -649,15 +715,11 @@ export class VoicePool {
     param.cancelScheduledValues(voice.startTime);
     scheduleAmpAttack(param, voice.ampPeak, amp, voice.startTime);
     const fadeStart = declickFadeStart(voice.declickEndTime, voice.startTime, DECLICK_FADE_MS);
-    scheduleAmpDeclick(
-      param,
-      voice.declickEndTime,
-      voice.startTime,
-      DECLICK_FADE_MS,
-      ampLevelAt(voice.ampPeak, amp, voice.startTime, fadeStart),
-    );
     voice.declickFadeStart = fadeStart;
     voice.contourFrozenAt = fadeStart;
+    voice.declickLevel = ampLevelAt(voice.ampPeak, amp, voice.startTime, fadeStart);
+    scheduleAmpDeclick(param, voice.declickEndTime, voice.startTime, DECLICK_FADE_MS, voice.declickLevel);
+    this.layNoteOff(voice);
   }
 
   /**
@@ -758,33 +820,80 @@ export class VoicePool {
     // reading the last fade start would walk the level down the frozen contour a step per
     // window (issue #144).
     voice.contourFrozenAt = Math.min(voice.contourFrozenAt, fadeStart);
-    const level = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, voice.contourFrozenAt);
+    // {@link preDeclickLevel} rather than `ampLevelAt` directly, because a voice whose §5.4
+    // note-off has already been laid is on its release line by the time the new fade begins,
+    // not on the §6 contour. With no note-off the two are the same number: `contourFrozenAt`
+    // has just been clamped to at most `fadeStart`.
+    const level = this.preDeclickLevel(voice, fadeStart);
     scheduleAmpDeclick(voice.ampGain.gain, endTime, at, DECLICK_FADE_MS, level);
     voice.declickFadeStart = fadeStart;
     voice.declickEndTime = endTime;
+    voice.declickLevel = level;
   }
 
   /**
-   * The level this voice's amp timeline holds at `when` — what a §5.4 note-off, steal or choke
-   * fade must depart from (spec §5.4, §6).
+   * Lay this voice's §5.4 note-off: the §6 release ramp, and whatever the end of its region
+   * still owns afterwards (spec §5.4, §6, issue #145).
    *
-   * Before the fade start it is the contour's value where the contour STOPPED — at `when`, or
-   * at `contourFrozenAt` if an earlier lay froze it before then (issue #144). That is the one
-   * model of the timeline this file keeps, and `rescheduleDeclick` reads the same field for the
-   * same reason; whether the model is right at all is issue #146, and the two must not answer
-   * it differently. Inside the fade it is the fade's own line, which departs from that frozen
-   * level and reaches zero at the region's end — an interruption in the last three milliseconds
-   * of a voice is a corner, and this is what stops it stepping UP.
+   * **A release and the end-of-buffer declick must not fight over the same milliseconds**, and
+   * which of them owns the voice's end is decided by where the release LANDS:
+   *
+   *  - Lands inside the region: the release IS this voice's end. `scheduleAmpRelease` erases
+   *    the declick beyond the note-off as part of its own cancel, and the source then runs on
+   *    into silence until the buffer ends — which is spec §5.4 read exactly as written, "the
+   *    `ended` event finalises voice teardown". Stopping the source on the release instead
+   *    would be a second policy, and one a §7.8 `amp.release` lane could no longer move.
+   *  - Outlives the region: §5.4's declick still owns the region's end, because the voice does
+   *    still play to it. It is re-laid from the level the RELEASE line holds where the fade
+   *    begins, so the ramp is truncated into the fade rather than left to end above zero at the
+   *    moment the buffer stops — which is the click the declick exists to prevent.
+   *  - Falls at or after the fade start: nothing is laid at all. That fade already reaches true
+   *    zero at the region's end, sooner than any §6 release could, so a release there has
+   *    nothing left to fade and could only lift the level back up.
+   */
+  private layNoteOff(voice: Voice): void {
+    const off = voice.noteOffAt;
+    if (off === null || off >= voice.declickFadeStart) return;
+    const level = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, Math.min(off, voice.contourFrozenAt));
+    const end = scheduleAmpRelease(voice.ampGain.gain, off, voice.amp.release, level);
+    if (end < voice.declickFadeStart) return;
+    voice.declickLevel = this.preDeclickLevel(voice, voice.declickFadeStart);
+    scheduleAmpDeclick(voice.ampGain.gain, voice.declickEndTime, off, DECLICK_FADE_MS, voice.declickLevel);
+  }
+
+  /**
+   * The level this voice's amp holds at `when` BEFORE the §5.4 end-of-region declick — the §6
+   * contour where the voice has no note-off, and the release line from the note-off onwards.
+   *
+   * The contour's value is read where the contour STOPPED: at `when`, or at `contourFrozenAt`
+   * if an earlier lay froze it before then (issue #144). That is the one model of the timeline
+   * this file keeps, and `rescheduleDeclick` reads the same field for the same reason; whether
+   * the model is right at all is issue #146, and the two must not answer it differently.
+   */
+  private preDeclickLevel(voice: Voice, when: number): number {
+    const off = voice.noteOffAt;
+    const contour = (at: number): number =>
+      ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, Math.min(at, voice.contourFrozenAt));
+    if (off === null || when <= off) return contour(when);
+    const span = voice.amp.release / 1000;
+    if (span <= 0) return 0;
+    return contour(off) * Math.max(0, 1 - (when - off) / span);
+  }
+
+  /**
+   * The level this voice's amp timeline holds at `when` — what a §5.4 steal or choke fade must
+   * depart from (spec §5.4, §6).
+   *
+   * Inside the end-of-region fade it is that fade's own line, departing from the level the lay
+   * in force was GIVEN and reaching zero at the region's end — an interruption in the last
+   * three milliseconds of a voice is a corner, and this is what stops it stepping UP. Before
+   * the fade it is {@link preDeclickLevel}.
    */
   private ampLevelNow(voice: Voice, when: number): number {
-    if (when <= voice.declickFadeStart) {
-      const at = Math.min(when, voice.contourFrozenAt);
-      return ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, at);
-    }
+    if (when <= voice.declickFadeStart) return this.preDeclickLevel(voice, when);
     const span = voice.declickEndTime - voice.declickFadeStart;
     if (span <= 0) return 0;
-    const departure = ampLevelAt(voice.ampPeak, voice.amp, voice.startTime, voice.contourFrozenAt);
-    return departure * Math.max(0, 1 - (when - voice.declickFadeStart) / span);
+    return voice.declickLevel * Math.max(0, 1 - (when - voice.declickFadeStart) / span);
   }
 
   /** The base detune of the sounding voice on a pad (mono glide origin, spec §6), or undefined. */
@@ -808,12 +917,7 @@ export class VoicePool {
       laneLinks.push({ from: node, to: param });
     };
     const routes = spec.modMatrix ?? [];
-    const stat = staticModulation(
-      routes,
-      noteFromPadKey(spec.padKey),
-      spec.velocity,
-      deterministicRandom(spec.id),
-    );
+    const stat = staticModulation(routes, spec.note, spec.velocity, deterministicRandom(spec.id));
 
     // The §6 trim resolved against the buffer, then the source that plays it (spec §5.2
     // stage 1): the §5.7.9 granular engine for a warp pad, else an `AudioBufferSourceNode`.
@@ -936,7 +1040,8 @@ export class VoicePool {
     // asked for it — the declick is the last thing on that timeline, so `cancelAndHoldAtTime`
     // has nothing to rewrite and pins nothing (issue #144).
     const fadeStart = declickFadeStart(endTime, now, DECLICK_FADE_MS);
-    scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS, ampLevelAt(peak, amp, now, fadeStart));
+    const declickLevel = ampLevelAt(peak, amp, now, fadeStart);
+    scheduleAmpDeclick(ampGain.gain, endTime, now, DECLICK_FADE_MS, declickLevel);
 
     source.start(now);
     for (const osc of oscillators) osc.start(now);
@@ -954,6 +1059,7 @@ export class VoicePool {
       laneLinks,
       padKey: spec.padKey,
       programId: spec.programId,
+      note: spec.note,
       chokeGroup: spec.chokeGroup,
       oneShot: spec.playbackMode === 'oneShot',
       amp,
@@ -965,7 +1071,9 @@ export class VoicePool {
       consumedUntil: now,
       declickFadeStart: fadeStart,
       declickEndTime: endTime,
+      declickLevel,
       contourFrozenAt: fadeStart,
+      noteOffAt: null,
       startTime: now,
       released: false,
       stopScheduled: false,
@@ -1229,11 +1337,17 @@ export class VoicePool {
     voice.filter?.disconnect();
   }
 
-  private voiceRefs(): VoiceRef[] {
+  /**
+   * The §5.4 allocation facts, as of `now`. A voice is "released" once an interruption fade
+   * has begun on it OR its §5.4 note-off has passed — a note-off laid ahead of time for a
+   * voice still in its sustain has released nothing yet, and stealing it first would take the
+   * loudest voice in the pool (spec §5.4 "steal the oldest released voice").
+   */
+  private voiceRefs(now: number): VoiceRef[] {
     return [...this.voices.values()].map((v) => ({
       id: v.id,
       startTime: v.startTime,
-      released: v.released,
+      released: v.released || (v.noteOffAt !== null && v.noteOffAt <= now),
     }));
   }
 
@@ -1276,12 +1390,6 @@ export function playRegion(buffer: AudioBuffer, startFrame = 0, endFrame = 0): P
     offsetSeconds: start / buffer.sampleRate,
     durationSeconds: (end - start) / buffer.sampleRate,
   };
-}
-
-/** Extract the pad index from a `${programId}:${padIndex}` key for the noteNumber source. */
-function noteFromPadKey(padKey: string): number {
-  const index = Number(padKey.slice(padKey.lastIndexOf(':') + 1));
-  return Number.isFinite(index) ? index : 0;
 }
 
 /**
