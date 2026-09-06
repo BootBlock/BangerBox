@@ -9,6 +9,7 @@ import {
 import { createFakeAudioContext } from '@/test/mocks/audioContext';
 import {
   keygroupDetuneCents,
+  padKeyForNote,
   programChannelId,
   resolveDrumVoice,
   resolveKeygroupVoice,
@@ -250,5 +251,55 @@ describe('resolvedVoiceToTrigger — the §6 layer flags the pool acts on (issue
     const trigger = triggerFor(pad);
     expect(trigger.startFrame).toBe(0);
     expect(trigger.endFrame).toBe(1000);
+  });
+
+  it('carries the note’s own length and note number to the pool (spec §5.4, issue #145)', () => {
+    // The one seam both the §7.1.4 dispatcher and the §9.5 render map through, so the note-off
+    // a bounce lays and the one live playback lays are the same field read the same way.
+    const program = {
+      ...createDefaultDrumProgram('P', 'prog'),
+      pads: [{ ...createDefaultPad(4), layers: [layer({})] }],
+    };
+    const resolved = resolveVoice(program, 4, 100);
+    if (!resolved) throw new Error('nothing resolved');
+    const withDuration = resolvedVoiceToTrigger(resolved, {
+      id: 'v1',
+      buffer,
+      destination: context.createGain(),
+      when: 0,
+      velocity: 100,
+      programId: 'prog',
+      durationSec: 0.25,
+    });
+    expect(withDuration.durationSec).toBe(0.25);
+    expect(withDuration.note).toBe(4);
+    // A §7.6 live audition states none: its note-off arrives later, through `VoicePool.release`.
+    expect(triggerFor({ ...createDefaultPad(0), layers: [layer({})] }).durationSec).toBeUndefined();
+  });
+});
+
+describe('padKeyForNote — the §5.4 pad key a note-off addresses (issue #145)', () => {
+  it('keys a drum program by pad index and a keygroup by the program', () => {
+    const drum = { ...createDefaultDrumProgram('Kit', 'kit'), pads: [createDefaultPad(7)] };
+    expect(padKeyForNote(drum, 7)).toBe('kit:7');
+    // It answers for a note no pad covers: a note-off has no velocity to resolve a §6 layer
+    // with, and the voice it releases was resolved by the note-ON that built it.
+    expect(padKeyForNote(drum, 99)).toBe('kit:99');
+
+    const keys = createDefaultKeygroupProgram('Keys', 'keys');
+    expect(padKeyForNote(keys, 60)).toBe('keys:keygroup');
+    // Every note of a keygroup shares one key, which is why `release` matches the note too.
+    expect(padKeyForNote(keys, 64)).toBe('keys:keygroup');
+  });
+
+  it('agrees with the key `resolveVoice` puts on the voice', () => {
+    const drum = {
+      ...createDefaultDrumProgram('Kit', 'kit'),
+      pads: [{ ...createDefaultPad(7), layers: [layer({})] }],
+    };
+    expect(resolveVoice(drum, 7, 100)?.padKey).toBe(padKeyForNote(drum, 7));
+
+    const keys = { ...createDefaultKeygroupProgram('Keys', 'keys'), zones: [zone({})] };
+    expect(resolveVoice(keys, 60, 100)?.padKey).toBe(padKeyForNote(keys, 60));
   });
 });

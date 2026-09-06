@@ -32,6 +32,7 @@ function spec(context: AudioContext, over: Partial<VoiceTriggerSpec> = {}): Voic
     chokeGroup: 0,
     programId: 'p1',
     padKey: 'p1:0',
+    note: 0,
     amp: createDefaultEnvelope(),
     gainDb: 0,
     tuneSemitones: 0,
@@ -183,7 +184,7 @@ describe('LfoConfig.retrigger (spec §6)', () => {
   it('leaves the shared oscillator running when a voice using it ends', () => {
     const { context, fake, pool } = setup();
     pool.trigger(spec(context, { id: 'a', lfos: lfos({ retrigger: false }) }));
-    pool.release('p1:0', 1);
+    pool.release('p1:0', 0, 0.1);
     expect(oscillators(fake)[0]!.stopped).toBe(false);
   });
 

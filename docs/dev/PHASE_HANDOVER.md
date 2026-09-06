@@ -1,13 +1,13 @@
-# BangerBox — Phase Handover (after the keygroup program-scope mixer closure)
+# BangerBox — Phase Handover (after the voice-release closure)
 
-Generated at the close of the §4.2 keygroup-mixer work per Protocol Alpha (spec §13.1). A
+Generated at the close of the §5.4 voice-release work per Protocol Alpha (spec §13.1). A
 new session MUST read `docs/todo/_spec.md` in full **and** this document before writing any code,
 and MUST reuse the patterns recorded here rather than inventing parallel ones.
 
-**State:** the keygroup-mixer work merged to `main` (`--no-ff`). All eight §12 phases were
-already complete; this was a defect closure against §4.2/§6, not a new phase, so
-`package.json` `config.phase` remains **"8"**. Suite: **2051 unit tests**, `test:e2e`
-real-browser smoke (dev + offline, **88/88 steps**), plus `lint`, `type-check`, `format:check`
+**State:** the voice-release work merged to `main` (`--no-ff`). All eight §12 phases were
+already complete; this was a defect closure against §5.4, not a new phase, so
+`package.json` `config.phase` remains **"8"**. Suite: **2071 unit tests**, `test:e2e`
+real-browser smoke (dev + offline, **90/90 steps**), plus `lint`, `type-check`, `format:check`
 and `verify` (**no open stubs**).
 
 **A KEYGROUP program's §6 program-scope `mixer` and `inserts` are a §4.2 strip, and they take
@@ -64,11 +64,44 @@ weaker, and its own fix put a `setValueAtTime` at the declick's fade start where
 been — so it broke `scheduleAmpRelease` at the moment it fixed `scheduleAmpDeclick`. Every
 steal and choke since faded from a line drawn from the note-on. Fixed; see §2 (az) and §4.
 
-**Nothing in the application RELEASES a voice** (issue #145). `VoicePool.release` has no
-production caller: the §7.1.4 dispatcher discards `noteOff`, `durationSec` is read by nobody,
-and `triggerLiveNote(…, false)` reaches only the scheduler. So every voice plays its whole
-region and ends on the §5.4 declick, and the §6 release stage is silent live and in every
-bounce. A §7.8 `amp.release` lane reaches the voice's envelope and waits on that.
+**A NOTE-OFF applies the §6 amp release, and a sequenced note's off is laid at that note's own
+NOTE-ON.** Nothing used to release a voice at all: the §7.1.4 dispatcher discarded `noteOff`,
+`ScheduledEvent.durationSec` was read by nobody, `VoiceTriggerSpec` had no duration field, and
+`triggerLiveNote(…, false)` reached only the scheduler — so every voice played its whole region
+and ended on the §5.4 declick, and §8.5.5's Release control changed nothing audible. See §2 (bb)
+and §4.
+
+**The length is carried on the note-ON because nothing else BINDS an off to a voice.** §6 `poly`
+lets two hits of one pad overlap, and a §7.1.3 `noteOff` carries a track and a note, which names
+both of them equally. A §9.5 render forces the same answer from the other side: it builds every
+voice of the span before it applies any ramp, so a pass issuing offs afterwards would be choosing
+between voices it cannot tell apart. The `noteOff` kind therefore stays declared and unemitted.
+`VoicePool.release(padKey, note, when)` remains for §7.6's live path, where a held pad can only be
+held once, and matches the NOTE as well as the key because a keygroup's whole program shares one.
+
+**A release and the §5.4 declick never fight, and where the release LANDS decides which owns the
+voice's end.** Inside the region the release IS the end and erases the declick as part of its own
+cancel; outliving the region it is truncated into a declick re-laid from the RELEASE line's own
+level there; at or after the fade start nothing is laid, because that fade already reaches true
+zero sooner than any §6 release could.
+
+**The source is never stopped early on a note-off.** §5.4 gives note-off the envelope release and
+the `ended` event the teardown, and a stop already scheduled is one a §7.8 `amp.release` lane
+could no longer move. `release` used to call `safeStop`; that is the line that went.
+
+**`createDefaultPad` is `oneShot`, and that is a §13.3.2 decision by the human developer**, not a
+reading of §5.4. Under `poly` a §8.5.2 Grid-drawn hit is 240 ticks, so it would be cut at 125 ms
+at 120 bpm; the §9.8 factory content already set `oneShot` on every pad by hand for that reason.
+Changing the default protects no EXISTING project — a project saved before this carries its own
+mode in its §6 payload, and rewriting those payloads would be the destructive change §13.3.2
+forbids. A keygroup has no pads and resolves its mode from §6 `glideMs`, so it is `poly` without
+glide and DOES answer a note-off.
+
+**One recorded §11.4 figure moved, and it is the answer to "what does an unchanged project sound
+like".** `keygroupMixProof` renders a glide-free keygroup, which is `poly`, so its voices now
+release: **0.08474 RMS unity and 0.02129 at the saved fader**, where §14 (ba) recorded **0.10540
+and 0.02648** and the unfixed build still does. Every ratio it asserts is unchanged (×0.2512,
+×0.5000), because a release shortens both sides equally.
 
 **A claim about how a voice sounds over its life needs a PROFILE, and an envelope time needs a
 RISE TIME.** Neither a level reading nor a length reading can see an attack: the contour
@@ -277,6 +310,39 @@ All nineteen stand unchanged. Four that bear on recent work:
 
 Phase 0–8 entries stand. The §14 entries since the last handover, newest first:
 
+- **(bb) — the voice-release closure (§5.4, §6, §7.1.3, §7.6, §9.5, §11.2, §11.4).** The ⚑ items
+  below are settled policy a new session should treat as binding:
+  - **A sequenced note's §5.4 note-off is laid at that note's own NOTE-ON**, from
+    `ScheduledEvent.durationSec` (§7.1.3), which reaches the pool through
+    `VoiceTriggerSpec.durationSec`. §5.4 was revised to record it.
+  - ⚑ **The reason is that nothing else BINDS an off to a voice.** §6 `poly` lets two hits of
+    one pad overlap and a `ScheduledEvent` carries a track and a note, which names both
+    equally; a §9.5 render, which builds every voice before it applies any ramp, has the same
+    problem. The §7.1.3 `noteOff` kind is therefore declared and never emitted, and the
+    §7.1.4 dispatcher says so rather than falling through.
+  - ⚑ **`VoicePool.release(padKey, note, when)` is the §7.6 LIVE path only**, and it matches
+    the note because `resolveKeygroupVoice` gives a whole keygroup program one pad key.
+    `padKeyForNote` is the one place the two key forms are written and answers for a note no
+    §6 layer or zone covers — a note-off has no velocity to resolve one with.
+  - ⚑ **The source is NEVER stopped early on a note-off.** §5.4 gives note-off the release and
+    the `ended` event the teardown; a stop already scheduled is one a §7.8 `amp.release` lane
+    could no longer move. `release` used to call `safeStop`.
+  - ⚑ **Where the release LANDS decides whether it or the §5.4 declick owns the voice's end** —
+    see §4. `Voice.declickLevel` banks what the fade in force was GIVEN, and `preDeclickLevel`
+    is the release-aware half `ampLevelNow` and `rescheduleDeclick` both read.
+  - **`createDefaultPad` is `oneShot`**, a §13.3.2 decision by the human developer recorded in
+    §5.4, not a reading of it. It reaches new pads only; an existing project carries its own
+    mode in its §6 payload, and rewriting those would be a destructive data change.
+  - ⚑ **A glide-free KEYGROUP is `poly` and now releases**, which moved `keygroupMixProof`'s
+    absolute RMS from 0.10540 to 0.08474 while every ratio it asserts stayed put. That is the
+    only recorded §11.4 figure this work moved.
+  - ⚑ **A note that states no length is released by nothing.** A §7.3 note-repeat hit emits
+    `durationSec: 0` — it has no gate, and §7.7's minimum note is one tick. The arpeggiator
+    states its gate and IS released.
+  - **`noteFromPadKey` is gone**, and with it the 0 it gave every keygroup voice for the §6
+    `noteNumber` mod source. A keygroup with such a route sounds different.
+  - **No §9.2 migration.** Nothing on disk changed shape.
+
 - **(ba) — the keygroup program-scope mixer closure (§4.2, §4.3, §5.2, §6, §8.5.6, §9.3,
   §9.5).** The ⚑ items below are settled policy a new session should treat as binding:
   - **A keygroup's §6 `mixer` and `inserts` project onto ONE §4.2 strip**, at
@@ -333,8 +399,11 @@ Phase 0–8 entries stand. The §14 entries since the last handover, newest firs
   - ⚑ **`rescheduleDeclick`'s departure level is UNRESOLVED and untouched** (issue #146). It
     rests on the same reading of `cancelAndHoldAtTime` this work narrowed, and (ay)'s figures
     for it come from the §11.3 fake context rather than a browser.
-  - ⚑ **`amp.release` reaches the voice and cannot yet be HEARD** (issue #145). It stays
-    registered: removing the §7.8 address alone would move the dead control, not close it.
+  - ⚑ **`amp.release` reached the voice and could not be HEARD, and (bb) closed that** (issue
+    #145). It stayed registered through (az) because removing the §7.8 address alone would have
+    moved the dead control rather than closing it. Since (bb) its release branch RE-LAYS the
+    ramp: this entry's "a release is read at the note-off, so moving it schedules nothing" was
+    true only while nothing scheduled one.
 
 - **(ay) — the end-of-buffer declick closure (§5.4, §5.9, §6, §9.5, §11.2, §11.4).** The ⚑ items
   below are settled policy a new session should treat as binding, not as spec text:
@@ -1065,13 +1134,13 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
   those files on its FIRST pass, before any mutation has been applied.
 - **A removed worktree can leave an EMPTY directory behind under `.claude/worktrees/`.** A
   lingering shell holds its CWD, so `git worktree remove` and `rm -rf` both fail with
-  "Permission denied" / "Device or resource busy". `keygroupmix` is the one still standing, and
-  it is THIS work's own: `git worktree remove` deregistered it and the branch is deleted, but
-  the directory would not go. `slotshift`, `padchannel`, `slotlimit`, `trackwithdraw`,
-  `bouncemix`, `padstrip`, `declick`, `voicelane` and `envlane` were others, and every one of
-  those DID delete once its shell had gone — `envlane` went at the start of this work — so try
-  again before assuming otherwise. `git worktree list` shows only `main`, so `keygroupmix` is
-  not another agent's work: delete it if you can and ignore it if you cannot.
+  "Permission denied" / "Device or resource busy". `slotshift`, `padchannel`, `slotlimit`,
+  `trackwithdraw`, `bouncemix`, `padstrip`, `declick`, `voicelane`, `envlane` and `keygroupmix`
+  were all like this, and every one of them DID delete once its shell had gone — `envlane` at
+  the start of the keygroup-mixer work, `keygroupmix` at the start of the voice-release work —
+  so try again before assuming otherwise. `git worktree list` is what says whether a directory
+  is a registered worktree: one it does not list is not another agent's work, so delete it if
+  you can and ignore it if you cannot.
 - **A §11.4 probe's own precondition guard must not fire where the DEFECT is what breaks
   it.** `keygroupMixProof` threw "the keygroup strip took no insert" against the unfixed
   build, because `addInsert` on a channel with no §4.2 strip writes nothing — so the step
@@ -1093,6 +1162,64 @@ enabled: false, params: {}`), so an emptied slot is indistinguishable from one
 Everything from Phases 0–8, the §9.8 factory chain, the §14 (ag) assignment seam, the (ah)
 automation seam, the (ai) voice-source/scheduler/tempo seams, the (ak) guard layer and the (al)
 transient channel still stand. New this work:
+
+**Releasing a voice (spec §5.4, §6, §7.1.3, §7.6, §9.5):**
+
+- **`VoiceTriggerSpec.durationSec` is where a note's LENGTH reaches the pool**, and
+  `VoicePool.trigger` lays that voice's §5.4 note-off from it. A new caller that knows a note's
+  length passes it there; one that does not (a §7.6 audition) omits it and releases the voice
+  later through `VoicePool.release`. Non-positive means "no length stated", never "zero long".
+- **`resolvedVoiceToTrigger` is the ONE seam the live dispatcher and the §9.5 render both map
+  through**, so the note-off a bounce lays and the one live playback lays are the same field
+  read the same way. `SchedulerCore` fills it at its own tempo; `bounceService` at the SEGMENT's.
+- **`VoicePool.layNoteOff` is the one place a note-off reaches the timeline**, and it decides
+  which of the release and the §5.4 declick owns the voice's end by where the release LANDS:
+  inside the region the release is the end (its own cancel erases the declick); outliving the
+  region the declick is re-laid from the RELEASE line's level at its fade start; at or after
+  that fade start nothing is laid. A new way to end a voice early goes through it.
+- **`VoicePool.preDeclickLevel` is what the voice's amp holds BEFORE the end-of-region fade** —
+  the §6 contour, or the release line from the note-off onwards. `ampLevelNow` and
+  `rescheduleDeclick` both read it, so this file keeps ONE model of the timeline; whether that
+  model is right at all is still issue #146, and the two must not answer it differently.
+- **`Voice.declickLevel` banks what the fade in force was GIVEN.** Every lay writes it —
+  `buildVoice`, `rescheduleDeclick`, `relayAmpContour`, `layNoteOff` — because a release still
+  in flight at the fade start is what that fade departs from, and the §6 contour is not.
+- **`relayAmpContour` re-lays the NOTE-OFF as well**, last, so it erases the part of the fresh
+  contour it supersedes. A §7.8 `amp.release` lane reaches a voice built ahead of the write,
+  whose release ramp was written from the value being replaced.
+- **`voiceRefs(now)` decides "released" AS OF a time.** A note-off laid ahead of time has
+  released nothing yet, and §5.4's "steal the oldest released voice" must not take the loudest
+  voice in the pool.
+- **`padKeyForNote` in `programVoice.ts` is the ONE place the two §5.4 pad-key forms are
+  written**, and `drumVoice` and `resolveKeygroupVoice` build theirs through it. It answers for
+  a note no §6 layer or zone covers, because a note-off has no velocity to resolve one with.
+- **`VoiceTriggerSpec.note` is the voice's own note**, used to match a §7.6 note-off and as the
+  §6 `noteNumber` mod source. `noteFromPadKey` derived the second from the pad key and is gone —
+  two derivations of one fact is what "ONE place" exists to stop.
+- **Every lay of the amp timeline calls `layNoteOff` LAST** — the trigger, `rescheduleDeclick`
+  and `relayAmpContour`. All three move the fade start its lay/skip decision is made against,
+  and two of them rewrite the very ramp it lays. A new lay does the same, or a note-off outside
+  the old region is never revisited once a retune grows the region past it.
+- **`Voice.declickLaid` says whether the end-of-region fade is still ON the timeline.** A
+  note-off landing inside the region erases it, as part of `scheduleAmpRelease`'s own cancel,
+  and `ampLevelNow` must stop reading its line or a later steal steps the gain UP out of
+  silence — which `voiceRefs` makes the common case rather than a corner, by preferring exactly
+  those voices.
+- **`VoicePool.releaseSeconds` is the one rule for how long a note-off fades**: the §6 release,
+  or `DECLICK_FADE_MS` where §6 asks for zero. It is one function because `layNoteOff` WRITES
+  that ramp and `preDeclickLevel` READS it, and §6 `release` is `nonNegative` with an §8.5.5
+  field that offers 0 — a zero-length ramp is the hard cut §5.4 forbids every way a voice ends.
+- **`AudioEngine.heldLiveNotes` is what closes the §7.6 decode race.** The first hit of a pad
+  waits on the sample decode, so a tap short enough to end before that promise settles reaches
+  no voice — and a live hit carries no length, so it would then sustain for the whole sample.
+  `soundResolvedVoice` applies the note-off on the way out instead. A new deferred trigger path
+  takes the same `heldKey`, or it inherits the race.
+- **The §11.4 `voiceReleaseProof` reads a DURATION in all three halves**: a fall time from three
+  §9.5 bounces, the fraction of a live bar the §5.8 meter sees signal for, and the same fraction
+  after a §7.6 tap released mid-decode. A release cannot be seen in a peak — the contour reaches
+  the same plateau whatever ends it. Its `oneShot` render is the anti-over-correction guard, its
+  §8.5.5 writes go through `upsertPad` so what is proven is that the CONTROL changes the sound,
+  and the race pass runs FIRST because it needs the engine's own sample cache cold.
 
 **A keygroup's program-scope mixer (spec §4.2, §5.2, §6, §8.5.6):**
 
@@ -1998,7 +2125,9 @@ per §14 (ak) — clamp in range, refuse a non-finite one, throw on a bad struct
 **`check:stubs` reports ZERO open stubs.** Outstanding work lives in GitHub issues, not in code
 comments.
 
-**A keygroup program's §6 program-scope mixer is a §4.2 strip** (#139), reachable in §8.5.6,
+**A NOTE-OFF applies the §6 amp release** (#145), live and in every §9.5 bounce, laid at the
+note's own note-on from the length it states. **A keygroup program's §6 program-scope mixer is a
+§4.2 strip** (#139), reachable in §8.5.6,
 persisted through `programs.payload`, and reaching every track that plays the program.
 **A §7.8 lane on a §6 amp-envelope TIME shapes the voices it reaches** (#143), by the rule that
 a voice's §6 amp envelope is the pad's as of its own note-on. **The §5.4 declick is 3 ms long**
@@ -2011,8 +2140,63 @@ EMPTIES its slot** (#142). **A §7.8 lane on a §6 sound-design parameter sounds
 - **The live hardware sign-off (§12, issue #13) is NOT done and cannot be self-certified.** It
   needs the human developer, a physical ESP32 BLE-MIDI controller and a Windows pairing.
 
-**#139 is CLOSED by this work.** No new issue was filed while closing it, and one entry LEFT
-the `check:orphans` allowlist: `programChannelId`, which §8.5.6 and `padStrips.ts` now import.
+**#145 is CLOSED by this work.** No new issue was filed while closing it, and nothing was added
+to the `check:orphans` allowlist.
+
+**Honest scope notes for the voice-release work:**
+
+- **A `poly` or `mono` project sounds SHORTER afterwards**, by exactly the difference between
+  its note lengths and its sample lengths. That is measured rather than predicted: the §11.4
+  `keygroupMixProof` renders a glide-free keygroup, which `resolveKeygroupVoice` resolves as
+  `poly`, and its bounce moved from **0.10540 / 0.02648 RMS** to **0.08474 / 0.02129** while
+  every ratio it asserts stayed at ×0.2512 and ×0.5000. The unfixed build reproduces (ba)'s
+  numbers to every digit. No other recorded §11.4 figure moved, because every other probe pad
+  is explicitly `oneShot`.
+- **The §9.8 factory content is unaffected**, because `scripts/factory/snapshot.mjs` already
+  sets `oneShot` on every pad by hand — the shipped content was working around the §6 default
+  rather than using it.
+- **Every steal and choke now has released voices to prefer**, which §5.4 always asked for and
+  which nothing could satisfy while nothing released a voice. A note-off laid ahead of time
+  deliberately does not count until it has passed.
+- **A keygroup with a §6 `noteNumber` mod route sounds different.** `noteFromPadKey` gave 0 for
+  every keygroup voice; the note now travels on the trigger spec. Recorded rather than
+  smuggled — see §14 (bb) item (7).
+- **`rescheduleDeclick`'s departure level is untouched and still unresolved** (#146).
+  `preDeclickLevel` is where a note-off joins that one model, so both answers still move
+  together; settling #146 still needs a browser profile of a RETUNED voice.
+- **Four of the six review findings are defects this work made REACHABLE rather than
+  introduced**, which is what closing a path nothing used to take does: a §6 release of ZERO
+  wrote a zero-length ramp (a hard cut, one §8.5.5 control away); an in-region note-off erased
+  the end-of-region declick while the voice's record of it went on describing the timeline, so a
+  steal stepped the gain UP out of silence; `rescheduleDeclick` never re-decided a note-off a
+  retune had brought back inside the region; and a §7.6 tap could be released before its own
+  voice existed. The other two are stale two-argument `pool.release` calls that had gone
+  vacuous — `tsconfig.app.json` excludes tests, so `type-check` cannot see an arity error, which
+  is the gate's own blind spot and worth knowing before the next signature change.
+- **Every regression test was proven against the code it was written to catch**, by thirteen
+  mutations: the defect as filed (**10** failures); no guard on the declick fade start (**1**);
+  a release departing from the peak rather than the contour (**2**); no declick re-lay where the
+  release outlives the region (**1**); a `oneShot` pad honouring its note-off (**2**); a note
+  stating no length released at once (**26** — the whole §5.4 declick suite, the sharpest guard
+  here); a release addressed by pad key alone (**1**); a future note-off counted as released
+  (**1**); and a §7.8 release lane that never re-lays its ramp (**1**). The review round adds
+  four more: no floor under a §6 release of zero (**1**); `ampLevelNow` reading an erased fade
+  (**1**); `rescheduleDeclick` never re-deciding the note-off (**1**); and the §7.6 decode race
+  left open, which is a browser mutation rather than a unit one — the smoke step reports
+  **78.7 %** against **1.2 %**. One EXISTING test pinned the old behaviour and was replaced:
+  `padLane.test.ts`'s "schedules nothing for a release write".
+- **Measured in a real browser**: 90/90 smoke steps at ports 5342/5343, dev and offline, no
+  console errors. One hit of a constant 1.2 s sample per bar, a note-off 240 ticks (0.125 s) in:
+  the bounce fell in **0.0190 s** at a 20 ms §8.5.5 Release, **0.4750 s** at 500 ms and
+  **1.0749 s** as `oneShot` over its whole region. Live, the §5.8 master meter saw signal for
+  **5.9 %** of the bar as `poly` against **66.9 %** as `oneShot`, at a peak of 0.27839, and a
+  §7.6 tap released mid-decode sounded for **1.2 %** of a 1.5 s window at a peak of 0.16703.
+  **Against the unfixed build** the `poly` bar fell in **1.0749 s** — the `oneShot` figure to
+  four decimal places, because the two are the same file — and the mid-decode tap sounded for
+  **78.7 %**.
+
+**#139 was CLOSED by the previous work.** No new issue was filed while closing it, and one entry
+LEFT the `check:orphans` allowlist: `programChannelId`, which §8.5.6 and `padStrips.ts` import.
 
 **Honest scope notes for the keygroup-mixer work:**
 
@@ -2049,17 +2233,18 @@ the `check:orphans` allowlist: `programChannelId`, which §8.5.6 and `padStrips.
   **0.28479 filtered against 0.29149 open (×0.977)**.
 
 **#143 was CLOSED by the previous work.** Two new issues were filed while closing it — nothing
-releases a voice, so the §6 release stage is silent everywhere (#145), and `rescheduleDeclick`'s
-departure level rests on a reading of `cancelAndHoldAtTime` that work narrowed (#146). Nothing
-was added to the `check:orphans` allowlist.
+released a voice, so the §6 release stage was silent everywhere (#145, closed by this work), and
+`rescheduleDeclick`'s departure level rests on a reading of `cancelAndHoldAtTime` that work
+narrowed (#146, still open). Nothing was added to the `check:orphans` allowlist.
 
 **Honest scope notes for the amp-envelope-lane work:**
 
-- **`amp.release` reaches the voice and cannot yet be HEARD.** `VoicePool.release` has no
-  production caller (#145), so no voice in the application ever runs its §6 release stage.
-  The leaf stays registered because §6's own `release` field is edited by §8.5.5, addressed by
-  this leaf and bound by §10.3 — removing the §7.8 address alone would move the dead control
-  rather than close it. Its proof therefore drives `VoicePool.release` directly.
+- **`amp.release` reached the voice and could not be HEARD, until (bb).** `VoicePool.release`
+  had no production caller (#145), so no voice in the application ran its §6 release stage.
+  The leaf stayed registered because §6's own `release` field is edited by §8.5.5, addressed by
+  this leaf and bound by §10.3 — removing the §7.8 address alone would have moved the dead
+  control rather than closing it. Its proof therefore drives `VoicePool.release` directly, which
+  is still where the sounding-voice half is measured.
 - **An envelope-time lane is applied at the §7.1.4 WINDOW resolution**, not continuously,
   because the value is consumed once per note rather than sampled. That is not a shortcut: at
   the moment a voice is built live the window that follows it has not arrived, so holding the
@@ -2425,17 +2610,11 @@ sound-design parameter still renders as nothing (#138), listed below. Nothing wa
 `check:orphans` allowlist; one entry's export (`resolveEffectivePoints`) became module-private
 instead.
 
-**#139, #143, #144, #142, #141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**, and
-#140, #145 and #146 remain open.
+**#145, #139, #143, #144, #142, #141, #138, #137, #135, #134, #133, #132 and #131 are CLOSED**,
+and #140 and #146 remain open.
 
 **Nearest neighbours now, in rough order of how much they cost a musician:**
 
-- **#145** nothing releases a voice: `VoicePool.release` has no production caller, the §7.1.4
-  dispatcher discards `noteOff`, and `triggerLiveNote(…, false)` reaches only the scheduler.
-  Every voice plays its whole region, so the §6 release stage is silent live and in every
-  §9.5 bounce, §8.5.5's Release control changes nothing and a §7.8 `amp.release` lane reaches
-  the voice and cannot be heard. Implementing §5.4 literally cuts every sequenced drum hit at
-  its recorded note length, so it is a §13.3.2 question about the §6 `poly` default.
 - **#146** `rescheduleDeclick` reads its departure level at `Voice.contourFrozenAt` on a claim
   about `cancelAndHoldAtTime` that §14 (az) narrowed, and the figures behind that claim come
   from the §11.3 fake context. Settling it needs a browser profile of a RETUNED voice, which
@@ -2723,6 +2902,12 @@ instead.
 
 ## 12. Verification commands (all green at handover, inside the worktree and after the merge)
 
-`npm run type-check` · `lint` · `test` (**2033**) · `format:check` · `verify` (**no open stubs**)
-· `test:e2e` (dev + offline, **86/86 steps**, ports overridden per #105) · `build` ·
+`npm run type-check` · `lint` · `test` (**2071**) · `format:check` · `verify` (**no open stubs**)
+· `test:e2e` (dev + offline, **90/90 steps**, ports overridden per #105) · `build` ·
 `build:wasm` · `build:factory`.
+
+**`factoryPacks.test.ts`'s determinism test is marginal on a loaded machine.** It builds every
+§9.8 pack once at module scope and once inside the test against vitest's 5 s default, and the
+second build takes about two seconds when the machine is quiet and over five when it is not. A
+`Test timed out in 5000ms` there is machine load, not a §9.8 regression — re-run the file on its
+own before believing it. Pre-existing; the voice-release work neither caused nor fixed it.

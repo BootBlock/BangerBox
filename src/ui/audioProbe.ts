@@ -198,6 +198,8 @@ export interface AudioProbe {
   /** A keygroup's §6 program-scope mixer is reachable, persists and reaches every track
    * playing it (§4.2, §5.2, §6, §9.3, #139). */
   keygroupMixProof: () => Promise<KeygroupMixResult>;
+  /** A note-off applies the §6 amp release, live and in a §9.5 bounce (§5.4, §9.5, #145). */
+  voiceReleaseProof: () => Promise<VoiceReleaseResult>;
 }
 
 /**
@@ -443,6 +445,51 @@ export interface AmpEnvelopeLaneProofResult {
   readonly liveSlowPeak: number;
   /** The direct §11.2 profile of two voices split by one lane — the release half (#143). */
   readonly voices: AmpEnvelopeLaneResult;
+}
+
+/** One §9.5 bounce of the §5.4 note-off proof, read as the SHAPE after its own note-off. */
+export interface VoiceReleaseBeat {
+  /**
+   * Seconds from the note-off until the hit falls below 5 % of the level it held there — the
+   * §6 release stage, which nothing in the application used to reach (issue #145).
+   *
+   * The hit plays a CONSTANT sample, so every rendered frame IS the voice's own amp gain and
+   * a 20 ms release can be told from a 500 ms one. Neither a peak nor a note count could see
+   * this: the contour reaches the same plateau either way.
+   */
+  readonly fallSeconds: number;
+  /** The level held at the note-off, so a silent bounce cannot pass as an instant release. */
+  readonly level: number;
+}
+
+/** Outcome of the §5.4 note-off proof (see {@link AudioProbe.voiceReleaseProof}). */
+export interface VoiceReleaseResult {
+  /** Seconds into the bar the note-off falls — the §9.3 `duration_ticks` the probe wrote. */
+  readonly noteOffSeconds: number;
+  /** Seconds of region each hit has, which is what a voice that ignores its note-off plays. */
+  readonly regionSeconds: number;
+  /** A §9.5 bounce of a `poly` pad whose §8.5.5 Release control is at 20 ms. */
+  readonly shortRelease: VoiceReleaseBeat;
+  /** The same bar after §8.5.5 moves Release to 500 ms. The defect leaves the two equal. */
+  readonly longRelease: VoiceReleaseBeat;
+  /** The same bar as a §5.4 `oneShot` pad, which ignores note-off and plays to the sample end. */
+  readonly oneShot: VoiceReleaseBeat;
+  /** The two §8.5.5 Release values the two bounces above were rendered at, in ms. */
+  readonly shortReleaseMs: number;
+  readonly longReleaseMs: number;
+  /** Fraction of a live bar the §5.8 master meter reads signal for, with the pad `poly`. */
+  readonly livePolySounding: number;
+  /** The same with the pad `oneShot`. The defect leaves the two equal. */
+  readonly liveOneShotSounding: number;
+  /** The live master peak, so a silent live pass cannot pass as a short one. */
+  readonly livePeak: number;
+  /**
+   * Fraction of a window the master meter reads signal for after a §7.6 tap RELEASED before
+   * the pad's first, uncached sample finished decoding — the race `soundResolvedVoice` closes.
+   */
+  readonly liveRaceSounding: number;
+  /** That pass's own peak, so a hit that never sounded cannot pass as one that was released. */
+  readonly liveRacePeak: number;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -4596,6 +4643,253 @@ async function ampEnvelopeLaneProof(engine: AudioEngine): Promise<AmpEnvelopeLan
   return { attackPath, unautomated, attackSwept, liveFastPeak, liveSlowPeak, voices };
 }
 
+/**
+ * Seconds from `from` until the signal falls below 5 % of the level it held there — the §6
+ * release of the hit whose note-off is at `from` (spec §5.4, §6, §11.2, issue #145).
+ *
+ * The departure level is read over the two milliseconds BEFORE the note-off rather than at the
+ * single frame on it, so a §4.3 dezipper or a rounded frame boundary cannot decide the answer.
+ */
+function fallSeconds(data: Float32Array, sampleRate: number, from: number, to: number): VoiceReleaseBeat {
+  const start = Math.max(0, Math.round(from * sampleRate));
+  const end = Math.min(data.length, Math.round(to * sampleRate));
+  let level = 0;
+  for (let i = Math.max(0, start - Math.round(0.002 * sampleRate)); i < start; i += 1) {
+    level = Math.max(level, Math.abs(data[i]!));
+  }
+  if (level <= 0) return { fallSeconds: 0, level: 0 };
+  for (let i = start; i < end; i += 1) {
+    if (Math.abs(data[i]!) < level * 0.05) return { fallSeconds: (i - start) / sampleRate, level };
+  }
+  return { fallSeconds: (end - start) / sampleRate, level };
+}
+
+/**
+ * A note-off applies the §6 amp envelope release (spec §5.4, issue #145).
+ *
+ * Nothing in the application released a voice: the §7.1.4 dispatcher discarded `noteOff`,
+ * `ScheduledEvent.durationSec` was read by nobody, `VoiceTriggerSpec` had no duration field at
+ * all, and `triggerLiveNote(…, false)` reached only the scheduler. Every voice played its whole
+ * region and ended on the §5.4 declick, so the §6 release stage was silent live and in every
+ * §9.5 bounce, and §8.5.5's Release control changed nothing audible.
+ *
+ * **Two halves, and the reading in both is a duration rather than a level.** A release cannot
+ * be seen in a peak — the contour reaches the same plateau whatever ends it — nor in a note
+ * count, which is the blindness §14 `(ay)` and `(az)` both record.
+ *
+ *  1. **A §9.5 bounce** of one bar carrying ONE hit of a CONSTANT sample, read back from
+ *     `/bounces/` over real OPFS as the FALL TIME from the note-off. Three renders: the pad's
+ *     §8.5.5 Release at 20 ms, the same at 500 ms, and the pad as §5.4 `oneShot`. Against the
+ *     unfixed build all three are the same file.
+ *  2. **A live pass**, read as the fraction of a bar the §5.8 master meter sees signal for.
+ *     A `poly` pad releasing 20 ms after a 125 ms note sounds for a fourteenth of the bar; the
+ *     same pad as `oneShot` sounds for its whole 1.2 s region. That is what says the §7.1.4
+ *     dispatcher hands the note's length to the pool, which no offline render can show.
+ *  3. **A §7.6 tap released before its own sample finished decoding**, read the same way. The
+ *     FIRST hit of a pad waits on that decode, so the note-off used to reach a voice that did
+ *     not exist yet — and a live hit carries no length, so it then sustained for the whole
+ *     region. It runs before the live passes because it needs the engine's cache COLD.
+ *
+ * The §8.5.5 write goes through `useProgramStore.upsertPad`, the action that control calls, so
+ * what is proven is that the CONTROL changes the sound rather than that the pool can be made
+ * to. It neutralises the §5.2 strips before it renders, as `ampEnvelopeLaneProof` does and for
+ * the same reason: by the time the smoke reaches this step the project carries a 350 ms delay
+ * at 35 % feedback on its master strip, and a smeared hit has no readable fall.
+ */
+async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResult> {
+  const { bounceActiveSequence } = await import('@/core/audio/bounceService');
+  const { readFile } = await import('@/core/storage/opfs');
+
+  const projectId = useProjectStore.getState().projectId || (await loadOrCreateActiveProject());
+  // Load it fresh before anything else: the app opens a project asynchronously at start-up,
+  // and a probe reaching the stores mid-load would have its own work replaced by that load.
+  await projectService.loadProject(projectId);
+  const ctx = sampleEditContext();
+  const sampleRate = ctx.projectSampleRate;
+
+  // A constant sample, so the render IS the amp gain (§14 `(ay)`). Its region is far longer
+  // than the note, which is the whole point: a voice that ignores its note-off plays all of it.
+  const REGION_SECONDS = 1.2;
+  const NOTE_OFF_SECONDS = 0.125; // 240 ticks at 120 bpm — one §8.5.2 Grid cell
+  const SHORT_RELEASE_MS = 20;
+  const LONG_RELEASE_MS = 500;
+  const flat = engine.context.createBuffer(1, Math.floor(sampleRate * REGION_SECONDS), sampleRate);
+  flat.getChannelData(0).fill(0.5);
+  const sample = await importDecodedSample(flat, 'voice release probe', ['probe'], {
+    ...ctx,
+    context: engine.context,
+  });
+
+  const programId = crypto.randomUUID();
+  const seqId = crypto.randomUUID();
+  const trackId = crypto.randomUUID();
+
+  const basePad = createDefaultPad(0, 'Voice release probe');
+  basePad.layers = [layer({ sampleId: sample.id })];
+  basePad.filter = { ...basePad.filter, type: 'off' }; // nothing may colour the constant sample
+  // A 1 ms attack straight to full sustain: the only thing that can move the gain after the
+  // attack is the §6 release and the §5.4 declick at the region's end.
+  basePad.envelopes = {
+    ...basePad.envelopes,
+    amp: { attack: 1, hold: 0, decay: 0, sustain: 1, release: SHORT_RELEASE_MS, curve: 'linear' },
+  };
+
+  const program = { ...createDefaultDrumProgram('Voice release probe'), id: programId, pads: [basePad] };
+  useProgramStore.getState().setPrograms({ [programId]: program });
+  useProgramStore.getState().setActiveProgram(programId);
+
+  /** §8.5.5's own write: the Playback mode select and the Release control both call this. */
+  const editPad = (patch: Partial<typeof basePad>): void => {
+    useProgramStore.getState().upsertPad(programId, { ...basePad, ...patch });
+  };
+
+  // The sequence carries its OWN §9.3 tempo: every window below is placed in seconds, and an
+  // earlier probe leaving a different project tempo behind would move the note-off.
+  const sequence = {
+    ...createDefaultSequence(projectId, 0, 'Voice release probe', seqId),
+    lengthBars: 1,
+    tempo: 120,
+  };
+  const track = createDefaultTrack(seqId, programId, 0, 'Voice release probe', 'drum', trackId);
+  // ONE hit per two-second bar, so nothing overlaps the fall being measured. 240 ticks is what
+  // the §8.5.2 Grid draws by default, which is the length a real project's hits carry.
+  const hit = {
+    id: crypto.randomUUID(),
+    tickStart: 0,
+    durationTicks: 240,
+    note: 0,
+    velocity: 100,
+    extra: null,
+  };
+  useSequenceStore.getState().hydrate({
+    sequences: { [seqId]: sequence },
+    tracks: { [trackId]: track },
+    events: { [trackId]: [hit] },
+    automation: {},
+    songEntries: [],
+  });
+
+  const transport = () => useTransportStore.getState();
+  transport().setActiveSequenceId(seqId);
+  transport().setPlaybackMode('sequence');
+  transport().setMetronomeEnabled(false);
+  transport().setCountInBars(0);
+  transport().setRecording(false);
+  transport().setLoop({ enabled: true, startTick: 0, endTick: 3_840 });
+  commitTempo(120);
+
+  // Every §5.2 strip back to its §4.2 default, `bounceMixProof`'s own `neutral()`. Nothing here
+  // is committed, so the closing `loadProject` puts the project's own strips back.
+  useMixerStore.getState().setChannels({
+    master: createDefaultChannelStrip('master'),
+    'return:0': createDefaultChannelStrip('return:0'),
+    'return:1': createDefaultChannelStrip('return:1'),
+    'return:2': createDefaultChannelStrip('return:2'),
+    'return:3': createDefaultChannelStrip('return:3'),
+    [`track:${trackId}`]: createDefaultChannelStrip(`track:${trackId}`),
+  });
+
+  const measure = async (name: string): Promise<VoiceReleaseBeat> => {
+    const path = await bounceActiveSequence(name, ctx);
+    const decoded = decodeWav(new Uint8Array(await (await readFile(path)).arrayBuffer()));
+    const left = decoded.channels[0]!;
+    const right = decoded.channels[1] ?? left;
+    const mono = new Float32Array(left.length);
+    for (let i = 0; i < mono.length; i += 1) mono[i] = (left[i]! + right[i]!) / 2;
+    // The window runs to just short of the bar's end, so it is long enough to contain the
+    // whole 1.2 s region a voice that ignores its note-off plays.
+    return fallSeconds(mono, decoded.sampleRate, NOTE_OFF_SECONDS, 1.9);
+  };
+
+  editPad({ playbackMode: 'poly' });
+  const shortRelease = await measure('probe-voice-release-short');
+  editPad({
+    playbackMode: 'poly',
+    envelopes: {
+      ...basePad.envelopes,
+      amp: { ...basePad.envelopes.amp, release: LONG_RELEASE_MS },
+    },
+  });
+  const longRelease = await measure('probe-voice-release-long');
+  editPad({ playbackMode: 'oneShot' });
+  const oneShot = await measure('probe-voice-release-oneshot');
+
+  // --- the live half ------------------------------------------------------------------------
+  //
+  // Every render above built its own offline graph, so nothing has sounded live yet. This is
+  // where the §7.1.4 dispatcher is under test rather than `bounceService`.
+  const soundingOver = async (ms: number): Promise<{ fraction: number; peak: number }> => {
+    const slot = engine.meterRegistry.slotOf('master');
+    const readings: number[] = [];
+    const until = performance.now() + ms;
+    while (performance.now() < until) {
+      if (slot !== undefined) {
+        const reading = engine.meterRegistry.read(slot);
+        readings.push(Math.max(reading.peakL, reading.peakR));
+      }
+      await delay(16);
+    }
+    const peak = readings.reduce((most, value) => Math.max(most, value), 0);
+    if (peak <= 0) return { fraction: 0, peak: 0 };
+    const sounding = readings.filter((value) => value > peak * 0.05).length;
+    return { fraction: sounding / readings.length, peak };
+  };
+  // The decode race, FIRST, because it needs the engine's own sample cache to be cold: the
+  // bounces above decode into `bounceService`'s cache, not this one. The first hit of a pad
+  // waits on that decode, so a tap short enough to end before the promise settles used to
+  // release a voice that did not exist yet — and a §7.6 live hit carries no length, so the
+  // voice then sustained for the whole 1.2 s region rather than the 20 ms release.
+  editPad({
+    playbackMode: 'poly',
+    envelopes: {
+      ...basePad.envelopes,
+      amp: { ...basePad.envelopes.amp, release: SHORT_RELEASE_MS },
+    },
+  });
+  engine.triggerLiveNote(trackId, 0, 100, true);
+  engine.triggerLiveNote(trackId, 0, 0, false);
+  const race = await soundingOver(1_500);
+  await delay(400);
+
+  const livePass = async (): Promise<{ fraction: number; peak: number }> => {
+    transport().play();
+    await delay(300); // past the first hit, so the meter is reading programme material
+    const result = await soundingOver(2_400); // more than one 2 s bar, whatever the phase
+    transport().stop();
+    await delay(400); // long enough for the 1.2 s region of the last hit to run out
+    return result;
+  };
+  editPad({
+    playbackMode: 'poly',
+    envelopes: {
+      ...basePad.envelopes,
+      amp: { ...basePad.envelopes.amp, release: SHORT_RELEASE_MS },
+    },
+  });
+  const poly = await livePass();
+  editPad({ playbackMode: 'oneShot' });
+  const oneShotLive = await livePass();
+
+  // Put the project back: the stores return to the §9.3 rows, taking the probe's program and
+  // arrangement with them.
+  await projectService.loadProject(projectId);
+
+  return {
+    noteOffSeconds: NOTE_OFF_SECONDS,
+    regionSeconds: REGION_SECONDS,
+    shortRelease,
+    longRelease,
+    oneShot,
+    shortReleaseMs: SHORT_RELEASE_MS,
+    longReleaseMs: LONG_RELEASE_MS,
+    livePolySounding: poly.fraction,
+    liveOneShotSounding: oneShotLive.fraction,
+    livePeak: Math.max(poly.peak, oneShotLive.peak),
+    liveRaceSounding: race.fraction,
+    liveRacePeak: race.peak,
+  };
+}
+
 export function installAudioProbe(engine: AudioEngine): void {
   window.__bangerboxAudioProbe = {
     masterPeak: () => {
@@ -4644,6 +4938,7 @@ export function installAudioProbe(engine: AudioEngine): void {
     keygroupMixProof: () => keygroupMixProof(engine),
     padLaneProof: () => padLaneProof(engine),
     ampEnvelopeLaneProof: () => ampEnvelopeLaneProof(engine),
+    voiceReleaseProof: () => voiceReleaseProof(engine),
     noteRepeatOwnerProof: () => noteRepeatOwnerProof(engine),
     schedulerBoundaryProof,
     declickContourProof,
