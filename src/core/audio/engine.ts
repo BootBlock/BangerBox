@@ -75,6 +75,8 @@ export class AudioEngine {
   private lastCoarseAt = 0;
   /** Count of scheduled notes the dispatcher has realised (test probe, §11.4). */
   private scheduledNotes = 0;
+  /** Seconds the last raced §7.6 tap waited on its decode (test probe, §11.4) — see below. */
+  private lastLiveRaceSeconds = 0;
   private initialised = false;
 
   constructor(readonly context: AudioContext) {
@@ -268,6 +270,22 @@ export class AudioEngine {
   }
 
   /**
+   * How long the last §7.6 tap that ended before its own voice existed had to WAIT, in
+   * seconds — the sample decode it raced, or 0 where no tap has raced one.
+   *
+   * It exists because a §11.4 proof of that race cannot otherwise tell "the note-off released
+   * a voice" from "the decode settled inside a render quantum, so the note-off landed at the
+   * note-on and §5.4's own clamp made the voice silent". The two look identical from the §5.8
+   * meter, they are the same on every build, and only the engine knows which happened
+   * (issue #146). It is the DURATION rather than a count because that is what says whether the
+   * hit could have been audible at all: the voice sounds from its note-on to its note-off, and
+   * this is exactly that span.
+   */
+  liveRaceSeconds(): number {
+    return this.lastLiveRaceSeconds;
+  }
+
+  /**
    * Watch what the dispatcher realises, and stop watching (spec §11.4). Returns an
    * unsubscribe.
    *
@@ -422,6 +440,10 @@ export class AudioEngine {
         }),
       );
       if (heldKey !== undefined && !this.heldLiveNotes.has(heldKey)) {
+        // The tap ended before this voice existed. How long it waited is what decides whether
+        // the hit could be heard at all — the voice sounds from `event.when` to here — so it is
+        // banked for the §11.4 proof (issue #146).
+        this.lastLiveRaceSeconds = Math.max(0, this.context.currentTime - event.when);
         this.releaseLiveNote(trackId, resolved.note);
       }
     };

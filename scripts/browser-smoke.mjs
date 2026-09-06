@@ -1452,9 +1452,17 @@ async function assertShellAndSelfTest(page, label) {
     }
     // A §7.6 tap released before its own sample finished decoding. The hit must SOUND — a
     // note-off that silenced it altogether would pass a fraction test and fail the instrument.
-    if (!(r.liveRacePeak > 0.05)) {
+    //
+    // It is asserted only where the tap really DID wait on a decode, and the engine is what
+    // says so (issue #146). The voice sounds from its note-on to its note-off, which in this
+    // race IS the decode — so where that settles inside a render quantum there is nothing to
+    // hear, on every build, by §5.4's own clamp on a voice shorter than its own attack. Read
+    // unconditionally the assertion measures how fast the machine is: the same tap has been
+    // seen at 0.16703, 0.05568, 0.01856 and 0.00000 with the engine identical call for call.
+    const RACE_AUDIBLE_SECONDS = 0.005;
+    if (r.liveRaceSeconds >= RACE_AUDIBLE_SECONDS && !(r.liveRacePeak > 0.05)) {
       throw new Error(
-        `the tap released during the decode never sounded at all (peak ${r.liveRacePeak.toFixed(5)}) — a note-off must release a voice, not prevent one`,
+        `a tap that waited ${(r.liveRaceSeconds * 1000).toFixed(1)} ms on its decode never sounded at all (peak ${r.liveRacePeak.toFixed(5)}) — a note-off must release a voice, not prevent one`,
       );
     }
     if (!(r.liveRaceSounding < 0.2)) {
@@ -1463,7 +1471,7 @@ async function assertShellAndSelfTest(page, label) {
       );
     }
     console.log(
-      `       voice release: bounce fell ${r.shortRelease.fallSeconds.toFixed(4)} s at ${r.shortReleaseMs} ms release → ${r.longRelease.fallSeconds.toFixed(4)} s at ${r.longReleaseMs} ms, oneShot ${r.oneShot.fallSeconds.toFixed(4)} s over its ${r.regionSeconds} s region; live bar sounded ${(r.livePolySounding * 100).toFixed(1)} % poly → ${(r.liveOneShotSounding * 100).toFixed(1)} % oneShot (peak ${r.livePeak.toFixed(5)}); tap released mid-decode sounded ${(r.liveRaceSounding * 100).toFixed(1)} % at peak ${r.liveRacePeak.toFixed(5)}`,
+      `       voice release: bounce fell ${r.shortRelease.fallSeconds.toFixed(4)} s at ${r.shortReleaseMs} ms release → ${r.longRelease.fallSeconds.toFixed(4)} s at ${r.longReleaseMs} ms, oneShot ${r.oneShot.fallSeconds.toFixed(4)} s over its ${r.regionSeconds} s region; live bar sounded ${(r.livePolySounding * 100).toFixed(1)} % poly → ${(r.liveOneShotSounding * 100).toFixed(1)} % oneShot (peak ${r.livePeak.toFixed(5)}); tap released mid-decode waited ${(r.liveRaceSeconds * 1000).toFixed(1)} ms and sounded ${(r.liveRaceSounding * 100).toFixed(1)} % at peak ${r.liveRacePeak.toFixed(5)}`,
     );
   });
 

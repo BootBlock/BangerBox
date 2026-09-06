@@ -493,6 +493,15 @@ export interface VoiceReleaseResult {
   readonly liveRaceSounding: number;
   /** That pass's own peak, so a hit that never sounded cannot pass as one that was released. */
   readonly liveRacePeak: number;
+  /**
+   * Seconds that tap actually waited on its decode — 0 where it never raced one.
+   *
+   * The peak above is only a claim about the ENGINE where the race really happened: the voice
+   * sounds from its note-on to its note-off, so a decode that settles inside a render quantum
+   * leaves nothing to hear, on every build, by §5.4's own clamp. Without this the step asserts
+   * how fast the machine is (issue #146).
+   */
+  readonly liveRaceSeconds: number;
 }
 
 /** Outcome of the §7.1.3 track-withdrawal proof (see {@link AudioProbe.trackWithdrawalProof}). */
@@ -4862,6 +4871,7 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
   engine.triggerLiveNote(trackId, 0, 100, true);
   engine.triggerLiveNote(trackId, 0, 0, false);
   const race = await soundingOver(1_500);
+  const raceSeconds = engine.liveRaceSeconds();
   await delay(400);
 
   const livePass = async (): Promise<{ fraction: number; peak: number }> => {
@@ -4900,6 +4910,7 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
     livePeak: Math.max(poly.peak, oneShotLive.peak),
     liveRaceSounding: race.fraction,
     liveRacePeak: race.peak,
+    liveRaceSeconds: raceSeconds,
   };
 }
 
