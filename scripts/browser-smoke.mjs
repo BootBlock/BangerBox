@@ -1343,6 +1343,66 @@ async function assertShellAndSelfTest(page, label) {
     );
   });
 
+  // §5.4: "note-off applies the amp envelope release; the `ended` event finalises voice
+  // teardown." Nothing in the application did it. The §7.1.4 dispatcher discarded `noteOff`,
+  // `ScheduledEvent.durationSec` was read by nobody, `VoiceTriggerSpec` had no duration field
+  // at all, and `triggerLiveNote(…, false)` reached only the scheduler — so every voice played
+  // its whole region, ended on the §5.4 declick, and §8.5.5's Release control changed nothing
+  // audible, live or in any §9.5 bounce (issue #145).
+  //
+  // The reading is a DURATION, in both halves. A release cannot be seen in a peak — the
+  // contour reaches the same plateau whatever ends it — nor in a note count, which is the
+  // blindness §14 (ay) and (az) both record. It sits beside the two steps above because it
+  // ends on the same fresh `loadProject`.
+  await step(`${label}: a note-off applies the §6 amp release, live and rendered (#145)`, async () => {
+    const r = await page.evaluate(() => globalThis.__bangerboxAudioProbe.voiceReleaseProof());
+    // A silent bounce would make every fall time below meaningless, so it is asserted first.
+    if (!(r.shortRelease.level > 0.05 && r.longRelease.level > 0.05 && r.oneShot.level > 0.05)) {
+      throw new Error(
+        `the bounces held ${r.shortRelease.level.toFixed(5)}, ${r.longRelease.level.toFixed(5)} and ${r.oneShot.level.toFixed(5)} at the note-off — nothing sounded, so this proves nothing`,
+      );
+    }
+    // The whole of the render half of #145: against the unfixed build a `poly` hit plays its
+    // full region, so this reads the region rather than the release.
+    if (!(r.shortRelease.fallSeconds < 0.1)) {
+      throw new Error(
+        `a §5.4 note-off at ${r.noteOffSeconds} s left the hit falling for ${r.shortRelease.fallSeconds.toFixed(4)} s against the ${r.shortReleaseMs} ms §8.5.5 Release — the voice played its whole ${r.regionSeconds} s region, so nothing released it`,
+      );
+    }
+    // §8.5.5's own control, written through the action that panel calls. Without this a fix
+    // that cut every voice at its note length with a fixed fade would pass.
+    if (!(r.longRelease.fallSeconds > 0.3 && r.longRelease.fallSeconds > r.shortRelease.fallSeconds * 5)) {
+      throw new Error(
+        `§8.5.5's Release moved from ${r.shortReleaseMs} ms to ${r.longReleaseMs} ms and the hit fell in ${r.shortRelease.fallSeconds.toFixed(4)} s → ${r.longRelease.fallSeconds.toFixed(4)} s — the control changes nothing audible`,
+      );
+    }
+    // The anti-over-correction guard, and it is §5.4's own sentence: `oneShot` ignores note-off
+    // and plays to the sample end. A fix that released every voice would fail here.
+    if (!(r.oneShot.fallSeconds > 0.9)) {
+      throw new Error(
+        `a §5.4 oneShot pad fell in ${r.oneShot.fallSeconds.toFixed(4)} s over a ${r.regionSeconds} s region — oneShot must ignore its note-off and play to the sample end`,
+      );
+    }
+    // The live half, which is where the §7.1.4 dispatcher is under test rather than
+    // `bounceService`: no offline render can show that the note's length reaches the pool live.
+    if (!(r.livePeak > 0.05)) {
+      throw new Error(`the master bus was silent on both live passes (peak ${r.livePeak.toFixed(5)})`);
+    }
+    if (!(r.liveOneShotSounding > 0.4)) {
+      throw new Error(
+        `a live oneShot bar carried signal for ${(r.liveOneShotSounding * 100).toFixed(1)} % of its length — a ${r.regionSeconds} s region in a 2 s bar is over half of it, so the live pass measured nothing`,
+      );
+    }
+    if (!(r.livePolySounding < r.liveOneShotSounding * 0.5)) {
+      throw new Error(
+        `a live poly bar carried signal for ${(r.livePolySounding * 100).toFixed(1)} % against ${(r.liveOneShotSounding * 100).toFixed(1)} % as oneShot — the §7.1.4 dispatcher gave the pool no note length, so nothing released live`,
+      );
+    }
+    console.log(
+      `       voice release: bounce fell ${r.shortRelease.fallSeconds.toFixed(4)} s at ${r.shortReleaseMs} ms release → ${r.longRelease.fallSeconds.toFixed(4)} s at ${r.longReleaseMs} ms, oneShot ${r.oneShot.fallSeconds.toFixed(4)} s over its ${r.regionSeconds} s region; live bar sounded ${(r.livePolySounding * 100).toFixed(1)} % poly → ${(r.liveOneShotSounding * 100).toFixed(1)} % oneShot (peak ${r.livePeak.toFixed(5)})`,
+    );
+  });
+
   // §7.9 makes song mode the way to play several sequences in order, which only means
   // something if sequence mode plays ONE. The unit tests drive the core with an injected
   // clock; the wire is what they cannot reach, and the defect lived on both sides of it —
