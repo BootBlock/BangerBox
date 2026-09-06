@@ -3171,13 +3171,16 @@ async function keygroupMixProof(engine: AudioEngine): Promise<KeygroupMixResult>
   const filterIndex =
     mixer().channels[keygroupChannel]?.inserts.findIndex((slot) => slot.effectType !== null) ?? -1;
   const filterSlotId = mixer().channels[keygroupChannel]?.inserts[filterIndex]?.id;
-  if (!added.ok || filterIndex < 0 || filterSlotId === undefined) {
-    throw new Error(
-      'keygroupMixProof: the keygroup strip took no insert, so it has no rack to reach at all.',
-    );
+  const rackReached = added.ok && filterIndex >= 0 && filterSlotId !== undefined;
+  // Where there is no strip at all there is nothing to hold an insert, and the smoke's own
+  // FIRST assertion — that a strip exists — is the defect as filed and is reached before
+  // anything below. Throwing here would report the symptom in place of the defect, so the
+  // throw is kept for the case it can only mean a genuine refusal.
+  if (!rackReached && stripPresentOnLoad) {
+    throw new Error('keygroupMixProof: the keygroup strip refused an insert, so its rack is unreachable.');
   }
   // §7.8 numbers a slot 1-based over the §4.2 array (spec §7.8, §14 (ar)).
-  mixer().commit(insertParamPath(keygroupChannel, filterIndex + 1, 'cutoff'), 80);
+  if (rackReached) mixer().commit(insertParamPath(keygroupChannel, filterIndex + 1, 'cutoff'), 80);
   await projectService.saveNow();
 
   const savedRow = await repos.programs.getById(program.id);
