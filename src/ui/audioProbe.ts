@@ -4735,6 +4735,8 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
   const NOTE_OFF_SECONDS = 0.125; // 240 ticks at 120 bpm — one §8.5.2 Grid cell
   const SHORT_RELEASE_MS = 20;
   const LONG_RELEASE_MS = 500;
+  /** The §6 release the decode-race tap uses — see where it is applied (issue #146). */
+  const RACE_RELEASE_MS = 150;
   const flat = engine.context.createBuffer(1, Math.floor(sampleRate * REGION_SECONDS), sampleRate);
   flat.getChannelData(0).fill(0.5);
   const sample = await importDecodedSample(flat, 'voice release probe', ['probe'], {
@@ -4860,12 +4862,21 @@ async function voiceReleaseProof(engine: AudioEngine): Promise<VoiceReleaseResul
   // bounces above decode into `bounceService`'s cache, not this one. The first hit of a pad
   // waits on that decode, so a tap short enough to end before the promise settles used to
   // release a voice that did not exist yet — and a §7.6 live hit carries no length, so the
-  // voice then sustained for the whole 1.2 s region rather than the 20 ms release.
+  // voice then sustained for the whole 1.2 s region rather than its own §6 release.
+  //
+  // It uses `RACE_RELEASE_MS` rather than the 20 ms above, because the §5.8 meter reports the
+  // peak of its LAST render quantum and `soundingOver` polls every 16 ms: a burst of a
+  // 10 ms decode plus a 20 ms release is shorter than the gap between two polls, so whether
+  // the reading lands on it at all is a lottery — the same tap has been seen at 0.16703,
+  // 0.05568, 0.01856 and 0.00000 with the engine identical call for call (issue #146). The
+  // race under test is `heldLiveNotes`, not the release LENGTH, which the two bounces above
+  // already prove at 0.0190 s and 0.4750 s; a burst several polls long makes the reading a
+  // measurement rather than a coin toss, and stays far short of the whole region.
   editPad({
     playbackMode: 'poly',
     envelopes: {
       ...basePad.envelopes,
-      amp: { ...basePad.envelopes.amp, release: SHORT_RELEASE_MS },
+      amp: { ...basePad.envelopes.amp, release: RACE_RELEASE_MS },
     },
   });
   engine.triggerLiveNote(trackId, 0, 100, true);
