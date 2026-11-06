@@ -21,3 +21,6 @@ scripts/smoke-artefacts/
 
 # Local-only files
 *.local
+
+# Drive.NET workspace artifacts
+.drive-net/

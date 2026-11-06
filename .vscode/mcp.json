@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "Drive.NET": {
+      "type": "stdio",
+      "command": "P:\\Source\\DotNet\\_MCP Servers\\Drive.NET\\!Distribution\\DriveNet.Server.exe"
+    }
+  }
+}
